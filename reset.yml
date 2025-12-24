@@ -1,0 +1,39 @@
+---
+- hosts: reality_nodes
+  become: yes
+  
+  pre_tasks:
+    # 1. 同样的逻辑：扫描并加载用户列表
+    # (只有加载了用户，才能知道要删哪些容器)
+    - name: 扫描用户配置文件
+      find:
+        paths: "{{ playbook_dir }}/users"
+        patterns: '*.yml,*.yaml'
+      register: user_config_files
+
+    - name: 加载所有用户配置
+      set_fact:
+        reality_instances: "{{ reality_instances | default([]) + [ lookup('file', item.path) | from_yaml ] }}"
+      loop: "{{ user_config_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+  tasks:
+    # 2. 删除容器
+    - name: 停止并删除所有 Reality 容器
+      community.docker.docker_container:
+        name: "reality_{{ item.name }}"
+        state: absent # 关键参数：不存在
+      loop: "{{ reality_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # 3. (可选) 清理数据目录
+    # 如果你想测试"从零生成配置文件"的逻辑，把下面这段解开注释
+    - name: 清理用户数据目录 (data/xxx)
+      file:
+        path: "{{ playbook_dir }}/data/{{ item.name }}"
+        state: absent
+      loop: "{{ reality_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
