@@ -12,7 +12,7 @@ main() {
 
     echo "配置文件检测通过，正在启动 Xray..."
     # 运行 xray
-    exec /xray -config /config.json
+    exec xray -config /config.json
 }
 
 # 执行主函数

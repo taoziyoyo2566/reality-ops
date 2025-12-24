@@ -7,7 +7,7 @@
         cache_valid_time: 3600
     - name: 安装 Docker
       apt:
-        name: ["docker.io", "docker-compose", "rsync"] # rsync 依然装上，以备不时之需
+        name: ["rsync", "curl", "wget", "tar"] # rsync 和其他工具依然通过 apt 安装
         state: present
 
 - name: 拉取 Xray Docker 镜像
@@ -47,18 +47,30 @@
     volumes:
       - "/opt/docker/reality/{{ item.name }}/config.json:/config.json:ro"
       - "/opt/docker/reality/{{ item.name }}/logs:/var/log/xray"
-    env:
-      URL_ID: "{{ item.uuid | regex_replace('-', '') | truncate(8, True, '') }}" # 模拟你脚本里的 URL_ID
+    # 如果上面的配置生成步骤显示 changed，则重启对应容器
+    restart: "{{ item.name in config_changed.results | selectattr('changed') | map(attribute='item.name') | list }}"
   loop: "{{ reality_instances }}"
-  # 如果上面的配置生成步骤显示 changed，则重启对应容器
-  restart: "{{ item.name in config_changed.results | selectattr('changed') | map(attribute='item.name') | list }}"
 
-- name: 输出连接信息
+# 1. 始终输出 IPv4 链接
+- name: 输出 IPv4 连接信息
   debug:
     msg: 
       - "用户: {{ item.name }}"
-      - "端口: {{ item.port }}"
-      - "VLESS链接: vless://{{ item.uuid }}@{{ ansible_host }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}"
+      - "地址: {{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}"
+      - "VLESS(IPv4): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv4"
   loop: "{{ reality_instances }}"
   loop_control:
     label: "{{ item.name }}"
+
+# 2. 只有当检测到 IPv6 地址时，才输出 IPv6 链接
+- name: 输出 IPv6 连接信息 (如果存在)
+  debug:
+    msg: 
+      - "用户: {{ item.name }}"
+      - "检测到 IPv6: {{ ansible_default_ipv6.address }}"
+      - "VLESS(IPv6): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
+  loop: "{{ reality_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  # 核心判断逻辑：只有当 Ansible 收集到默认 IPv6 地址时才执行
+  when: ansible_default_ipv6.address is defined
