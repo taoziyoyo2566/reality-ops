@@ -1,0 +1,5 @@
+---
+- hosts: reality_nodes
+  become: yes
+  roles:
+    - reality_multi

@@ -1,0 +1,64 @@
+---
+- name: 安装 Docker 环境
+  block:
+    - name: 更新 apt 缓存
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    - name: 安装 Docker
+      apt:
+        name: ["docker.io", "docker-compose", "rsync"] # rsync 依然装上，以备不时之需
+        state: present
+
+- name: 拉取 Xray Docker 镜像
+  community.docker.docker_image:
+    name: "{{ xray_image }}"
+    source: pull
+
+# 核心循环：为每个实例准备环境
+- name: 为每个用户创建配置目录
+  file:
+    path: "/opt/docker/reality/{{ item.name }}"
+    state: directory
+    mode: '0755'
+    recurse: yes
+  loop: "{{ reality_instances }}"
+
+- name: 生成每个用户的 config.json
+  template:
+    src: config.json.j2
+    dest: "/opt/docker/reality/{{ item.name }}/config.json"
+    mode: '0600'
+  loop: "{{ reality_instances }}"
+  register: config_changed # 记录配置是否发生变化
+
+# 核心循环：启动容器
+- name: 管理 Reality 多实例容器
+  community.docker.docker_container:
+    name: "reality_{{ item.name }}"
+    image: "{{ xray_image }}"
+    state: started
+    restart_policy: always
+    # 限制资源（可选，复刻你想要的隔离效果）
+    memory: "300m" 
+    cpus: "0.5"
+    ports:
+      - "{{ item.port }}:443" # 关键：端口映射
+    volumes:
+      - "/opt/docker/reality/{{ item.name }}/config.json:/config.json:ro"
+      - "/opt/docker/reality/{{ item.name }}/logs:/var/log/xray"
+    env:
+      URL_ID: "{{ item.uuid | regex_replace('-', '') | truncate(8, True, '') }}" # 模拟你脚本里的 URL_ID
+  loop: "{{ reality_instances }}"
+  # 如果上面的配置生成步骤显示 changed，则重启对应容器
+  restart: "{{ item.name in config_changed.results | selectattr('changed') | map(attribute='item.name') | list }}"
+
+- name: 输出连接信息
+  debug:
+    msg: 
+      - "用户: {{ item.name }}"
+      - "端口: {{ item.port }}"
+      - "VLESS链接: vless://{{ item.uuid }}@{{ ansible_host }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}"
+  loop: "{{ reality_instances }}"
+  loop_control:
+    label: "{{ item.name }}"

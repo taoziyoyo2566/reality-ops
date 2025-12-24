@@ -1,0 +1,23 @@
+# host_vars/dzire.yml
+
+# 服务器特定的域名后缀 (对应脚本中的 DOMAIN_SUFFIX)
+domain_suffix: "taoziyoyo.com"
+
+# 多实例用户列表
+reality_instances:
+  # 对应原来的 yhbb.json
+  - name: "reap"
+    port: 35693
+    uuid: "aed755510-526b-46c6-b0ba-6d14148b19ba" # 请生成一个新的 UUID
+    # 下面这三项可以用 xray x25519 命令预先生成好填入
+    private_key: "gGNaAbgLIr08E5sdA66HBTJTide5kH6bnixAghA4LEg"
+    public_key: "przuw7n7plj858U12IiGWVq2ewmSEd6zBRUj--RLg0k" 
+    short_id: "2734a458fd1412e9"
+    
+  # 对应原来的 frank.json
+  - name: "frank"
+    port: 38470
+    uuid: "f1e2d3c4-1111-2222-3333-444455556666"
+    private_key: "你的私钥..."
+    public_key: "你的公钥..."
+    short_id: "c3d4"
