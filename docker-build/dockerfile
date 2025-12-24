@@ -31,11 +31,25 @@ RUN chmod +x /entrypoint.sh
 # 4. 设置环境
 ENV TZ=Asia/Shanghai
 
+# -D: 不设置密码, -u: 指定UID
+RUN adduser -D -u 10000 xray
+
+# 【新增】处理权限问题
+# 1. 把 Xray 二进制文件的所有权给 xray 用户 (虽然读权限通常够，但为了保险)
+# 2. 预先创建日志目录，并把所有权给 xray 用户，否则它没权限写
+RUN chown xray /usr/bin/xray \
+    && mkdir -p /var/log/xray \
+    && chown -R xray /var/log/xray
+
 # 【新增】构建时的冒烟测试 (Smoke Test)
 # 这一步至关重要！它会在构建过程中尝试运行 xray。
 # 如果报错 "not found" 或 "exec format error"，构建会直接失败，不会推送到 Docker Hub。
 RUN xray -version
 
+# 【新增】切换到非 Root 用户
+USER 10000
+
 # 5. 设置入口点和暴露端口
 ENTRYPOINT ["/entrypoint.sh"]
-EXPOSE 443
+# 【修改】非 Root 用户不能监听 443，我们改用 8443
+EXPOSE 8443
