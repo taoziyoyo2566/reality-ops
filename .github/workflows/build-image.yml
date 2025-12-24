@@ -5,37 +5,59 @@ on:
   push:
     branches:
       - main
+    # 只有当 Docker 相关文件变动时才触发，避免改个 README 也重新构建
     paths:
       - 'docker-build/**'
       - '.github/workflows/build-image.yml'
 
 jobs:
-  build:
+  build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
     steps:
       - name: Checkout codebase
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
+      # 1. 配置 QEMU (支持 ARM64/AMD64 多架构构建)
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
 
+      # 2. 配置 Buildx (构建核心)
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
+      # 3. 登录 Docker Hub
       - name: Login to Docker Hub
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # 4. 自动生成镜像元数据 (Tags & Labels)
+      # 这会自动生成 latest 标签，以及基于 commit sha 的标签 (如 :sha-1234567)
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: taoziyoyo2566/xray_docker
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=,format=long
 
+      # 5. 构建并推送 (核心步骤)
       - name: Build and push Docker image
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           context: ./docker-build
           file: ./docker-build/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            taoziyoyo2566/xray_docker:latest
-            taoziyoyo2566/xray_docker:${{ github.sha }}
+          # 引用上面生成的 tags 和 labels
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 【关键】开启 GitHub Actions 缓存，第二次构建秒级完成
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

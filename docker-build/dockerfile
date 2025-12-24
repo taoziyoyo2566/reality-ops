@@ -30,5 +30,12 @@ RUN chmod +x /entrypoint.sh
 
 # 4. 设置环境
 ENV TZ=Asia/Shanghai
+
+# 【新增】构建时的冒烟测试 (Smoke Test)
+# 这一步至关重要！它会在构建过程中尝试运行 xray。
+# 如果报错 "not found" 或 "exec format error"，构建会直接失败，不会推送到 Docker Hub。
+RUN xray -version
+
+# 5. 设置入口点和暴露端口
 ENTRYPOINT ["/entrypoint.sh"]
 EXPOSE 443
