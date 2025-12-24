@@ -1,0 +1,93 @@
+{
+  "log": {
+    "loglevel": "warning",
+    "access": "/var/log/xray/access.log",
+    "error": "/var/log/xray/error.log"
+  },
+  "api": {
+    "tag": "api",
+    "services": ["HandlerService", "LoggerService", "StatsService"]
+  },
+  "policy": {
+    "levels": {
+      "0": {
+        "statsUserUplink": true,
+        "statsUserDownlink": true,
+        "handshake": 4,
+        "connIdle": 300,
+        "uplinkOnly": 0,
+        "downlinkOnly": 0,
+        "bufferSize": 0,
+        "connLimit": 6
+      }
+    },
+    "system": {
+      "statsInboundUplink": true,
+      "statsInboundDownlink": true,
+      "checkAccount": true,
+      "strict": true
+    }
+  },
+  "stats": {},
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["api"],
+        "outboundTag": "direct"
+      }
+    ]
+  },
+  "inbounds": [
+    {
+      "port": 443, 
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "1ae9db34-6ecc-4e0a-91e2-28369e046508",
+            "email": "starry.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0,
+            "expire": ""
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "4J4oiIgoGhna-rGAoyPsfSiyCTyUhoa4VAkHn9_fhmA",
+          "shortIds": ["e602ad057d921094"]
+        }
+      }
+    },
+    {
+      "port": 10085,
+      "listen": "127.0.0.1",
+      "protocol": "dokodemo-door",
+      "settings": {
+        "address": "127.0.0.1"
+      },
+      "tag": "api"
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "settings": {},
+      "tag": "direct"
+    },
+    {
+      "protocol": "blackhole",
+      "settings": {},
+      "tag": "blocked"
+    }
+  ]
+}

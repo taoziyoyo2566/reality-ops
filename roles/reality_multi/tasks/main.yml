@@ -18,7 +18,7 @@
 # 核心循环：为每个实例准备环境
 - name: 为每个用户创建配置目录
   file:
-    path: "/opt/docker/reality/{{ item.name }}"
+    path: "{{ playbook_dir }}/data/{{ item.name }}"
     state: directory
     mode: '0755'
     recurse: yes
@@ -27,7 +27,7 @@
 - name: 生成每个用户的 config.json
   template:
     src: config.json.j2
-    dest: "/opt/docker/reality/{{ item.name }}/config.json"
+    dest: "{{ playbook_dir }}/data/{{ item.name }}/config.json"
     mode: '0600'
   loop: "{{ reality_instances }}"
   register: config_changed # 记录配置是否发生变化
@@ -45,8 +45,11 @@
     ports:
       - "{{ item.port }}:443" # 关键：端口映射
     volumes:
-      - "/opt/docker/reality/{{ item.name }}/config.json:/config.json:ro"
-      - "/opt/docker/reality/{{ item.name }}/logs:/var/log/xray"
+      # 使用 item.name 区分每个用户的配置文件
+      - "{{ playbook_dir }}/data/{{ item.name }}/config.json:/config.json:ro"
+      # 使用 item.name 区分每个用户的日志
+      - "{{ playbook_dir }}/data/{{ item.name }}/logs:/var/log/xray"
+
     # 如果上面的配置生成步骤显示 changed，则重启对应容器
     restart: "{{ item.name in config_changed.results | selectattr('changed') | map(attribute='item.name') | list }}"
   loop: "{{ reality_instances }}"
@@ -74,3 +77,30 @@
     label: "{{ item.name }}"
   # 核心判断逻辑：只有当 Ansible 收集到默认 IPv6 地址时才执行
   when: ansible_default_ipv6.address is defined
+
+# ... (前面的任务保持不变) ...
+
+- name: 生成用户节点 JSON 文件 (users/用户名.json)
+  delegate_to: localhost
+  copy:
+    # 文件名格式：reap.json
+    dest: "{{ playbook_dir }}/users/{{ item.name }}_{{ inventory_hostname }}.json"
+    mode: '0644'
+    content: |
+      [
+        {
+          "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
+          "id": "{{ item.uuid }}",
+          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv4"
+        }
+        {% if ansible_default_ipv6.address is defined %}
+        ,{
+          "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
+          "id": "{{ item.uuid }}",
+          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
+        }
+        {% endif %}
+      ]
+  loop: "{{ reality_instances }}"
+  loop_control:
+    label: "{{ item.name }}"

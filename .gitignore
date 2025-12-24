@@ -1,0 +1,5 @@
+**/logs
+logs/
+data/**/logs
+data/logs/
+*.log

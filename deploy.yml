@@ -1,5 +1,33 @@
 ---
 - hosts: reality_nodes
   become: yes
+  
+  pre_tasks:
+    # 1. 查找 users 目录下所有的 .yml 或 .yaml 文件
+    - name: 扫描用户配置文件
+      find:
+        paths: "{{ playbook_dir }}/users"
+        patterns: '*.yml,*.yaml'
+      register: user_config_files
+
+    # 2. 循环读取每个文件的内容，追加到 reality_instances 列表中
+    - name: 加载所有用户配置
+      set_fact:
+        # 核心逻辑：
+        # 1. default([]): 初始化为空列表
+        # 2. lookup('file', item.path): 读取文件文本内容
+        # 3. from_yaml: 把文本解析为 YAML/JSON 对象
+        # 4. + [...]: 把解析出的对象追加到列表末尾
+        reality_instances: "{{ reality_instances | default([]) + [ lookup('file', item.path) | from_yaml ] }}"
+      loop: "{{ user_config_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}" # 让输出日志只显示文件名，简洁一点
+
+    # 3. 调试：确认加载结果 (确保是一个列表，且包含 name 属性)
+    - name: DEBUG - 验证加载结果
+      debug:
+        msg: "成功加载 {{ reality_instances | length }} 个用户。第一个用户是: {{ reality_instances[0].name }} (UUID: {{ reality_instances[0].uuid }})"
+      run_once: true
+
   roles:
     - reality_multi

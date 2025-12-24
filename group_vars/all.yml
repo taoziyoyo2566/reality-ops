@@ -1,6 +1,7 @@
-# Docker 镜像名 (你 Dockerfile 构建的镜像)
-xray_image: "taoziyoyo2566/xray_docker:latest"
+# group_vars/all.yml
 
-# 目标网站 (Reality dest)
-reality_dest: "www.apple.com:443"
+xray_image: "taoziyoyo2566/xray_docker:latest"
+domain_suffix: "taoziyoyo.com"
+server_hash_suffix: "o9drrm5l1d7uopaguucnxohzc3ul2yazxrldzpuoduu"
 reality_server_names: ["www.apple.com", "images.apple.com"]
+reality_dest: "www.apple.com:443"
