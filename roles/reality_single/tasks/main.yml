@@ -1,0 +1,156 @@
+---
+- name: 系统网络优化 (BBR + FastOpen + MTU Probing)
+  block:
+    # 1. 尝试加载 tcp_bbr 模块
+    - name: 确保 tcp_bbr 模块已加载
+      community.general.modprobe:
+        name: tcp_bbr
+        state: present
+      failed_when: false  # 兼容内核已内置 BBR 的情况
+
+    # 2. 写入配置文件
+    - name: 写入 BBR 及优化配置文件
+      copy:
+        dest: /etc/sysctl.d/99-reality-optimizations.conf
+        content: |
+          net.core.default_qdisc = fq
+          net.ipv4.tcp_congestion_control = bbr
+          net.ipv4.tcp_fastopen = 3
+          net.ipv4.tcp_mtu_probing = 1
+        mode: '0644'
+
+    # 3. 应用系统配置
+    - name: 应用 sysctl 配置
+      command: sysctl --system
+      changed_when: true
+
+    # 4. 验证
+    - name: 获取当前拥塞控制算法
+      command: sysctl -n net.ipv4.tcp_congestion_control
+      register: current_cc
+      changed_when: false
+
+    - name: 获取当前队列算法
+      command: sysctl -n net.core.default_qdisc
+      register: qdisc
+      changed_when: false
+
+    - name: 验证 BBR 是否成功开启
+      assert:
+        that:
+          - "'bbr' in current_cc.stdout"
+          - "'fq' in qdisc.stdout"
+        fail_msg: |
+          BBR 开启失败！
+          当前算法: {{ current_cc.stdout }} (预期: bbr)
+          当前队列: {{ qdisc.stdout }} (预期: fq)
+          请检查内核版本是否 >= 4.9，或是否存在云服务商限制。
+  become: yes
+
+- name: 安装 Docker 环境
+  block:
+    - name: 更新 apt 缓存
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    - name: 安装 Docker 及依赖
+      apt:
+        name: ["rsync", "curl", "wget", "tar"]
+        state: present
+
+- name: 拉取 Xray Docker 镜像
+  community.docker.docker_image:
+    name: "{{ xray_image }}"
+    source: pull
+
+# --- 单实例核心配置开始 ---
+
+- name: 创建统一配置目录
+  file:
+    path: "{{ playbook_dir }}/data/reality_core"
+    state: directory
+    mode: '0755'
+    recurse: yes
+
+- name: 生成聚合版 config.json
+  template:
+    src: config.json.j2
+    dest: "{{ playbook_dir }}/data/reality_core/config.json"
+    mode: '0644'
+  register: config_changed
+
+- name: 创建日志目录
+  become: yes
+  file:
+    path: "{{ playbook_dir }}/data/reality_core/logs"
+    state: directory
+    owner: "10000"
+    group: "10000"
+    mode: '0755'
+    recurse: yes
+
+- name: 启动 Reality 单实例容器 (管理所有用户)
+  community.docker.docker_container:
+    name: "reality_core"
+    image: "{{ xray_image }}"
+    state: started
+    restart_policy: always
+    # 【必须】单实例管理多端口，必须用 Host 模式，否则端口映射写起来会非常麻烦
+    network_mode: host
+    
+    # 显式指定用户
+    user: "10000:10000"
+    
+    # 挂载
+    volumes:
+      - "{{ playbook_dir }}/data/reality_core/config.json:/config.json:ro"
+      - "{{ playbook_dir }}/data/reality_core/logs:/var/log/xray"
+
+    # 只有当配置文件变动时才重启
+    restart: "{{ config_changed.changed }}"
+
+# --- 下面的任务依然需要 Loop，因为我们要输出每个用户的信息 ---
+
+- name: 输出 IPv4 连接信息
+  debug:
+    msg: 
+      - "用户: {{ item.name }}"
+      - "VLESS(IPv4): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
+  loop: "{{ reality_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# (可选) 输出 IPv6 信息，逻辑同上，略...
+
+- name: 生成用户节点 JSON 文件
+  delegate_to: localhost
+  copy:
+    dest: "{{ playbook_dir }}/users/{{ item.name }}_{{ inventory_hostname }}.json"
+    mode: '0644'
+    content: |
+      [
+        {
+          "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
+          "id": "{{ item.uuid }}",
+          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
+        }
+        {% if ansible_default_ipv6.address is defined %}
+        ,{
+          "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
+          "id": "{{ item.uuid }}",
+          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
+        }
+        {% endif %}
+      ]
+  loop: "{{ reality_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: 配置 UFW 防火墙 (自动放行所有用户端口)
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: tcp
+  loop: "{{ reality_instances }}"
+  loop_control:
+    label: "Allow port {{ item.port }} for {{ item.name }}"

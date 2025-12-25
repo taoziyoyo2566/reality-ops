@@ -1,13 +1,64 @@
 ---
-- name: 安装 Docker 环境
+- name: 系统网络优化 (BBR + FastOpen + MTU Probing)
+  block:
+    # 1. 尝试加载 tcp_bbr 模块
+    # 使用 failed_when: false 是为了兼容那些 BBR 已经编译进内核（非模块化）的系统
+    - name: 确保 tcp_bbr 模块已加载
+      community.general.modprobe:
+        name: tcp_bbr
+        state: present
+      failed_when: false
+
+    # 2. 写入配置文件
+    - name: 写入 BBR 及优化配置文件
+      copy:
+        dest: /etc/sysctl.d/99-reality-optimizations.conf
+        content: |
+          net.core.default_qdisc = fq
+          net.ipv4.tcp_congestion_control = bbr
+          net.ipv4.tcp_fastopen = 3
+          net.ipv4.tcp_mtu_probing = 1
+        mode: '0644'
+
+    # 3. 应用系统配置 (使用 --system 确保加载所有配置，防止覆盖其他设置)
+    - name: 应用 sysctl 配置
+      command: sysctl --system
+      changed_when: true
+
+    # --- 4. 验证环节 (关键步骤) ---
+    
+    - name: 获取当前拥塞控制算法
+      command: sysctl -n net.ipv4.tcp_congestion_control
+      register: current_cc
+      changed_when: false
+
+    - name: 获取当前队列算法
+      command: sysctl -n net.core.default_qdisc
+      register: qdisc
+      changed_when: false
+
+    # 5. 断言检查：如果内核没有真正开启 BBR，则任务失败
+    - name: 验证 BBR 是否成功开启
+      assert:
+        that:
+          - "'bbr' in current_cc.stdout"
+          - "'fq' in qdisc.stdout"
+        fail_msg: |
+          BBR 开启失败！
+          当前算法: {{ current_cc.stdout }} (预期: bbr)
+          当前队列: {{ qdisc.stdout }} (预期: fq)
+          请检查内核版本是否 >= 4.9，或是否存在云服务商限制。
+  become: yes
+
+- name: 安装 软件包 环境
   block:
     - name: 更新 apt 缓存
       apt:
         update_cache: yes
         cache_valid_time: 3600
-    - name: 安装 Docker 及依赖
+    - name: 安装 软件包 及依赖
       apt:
-        name: ["rsync", "curl", "wget", "tar"]
+        name: ["rsync", "curl", "wget", "tar","jq"]
         state: present
 
 - name: 拉取 Xray Docker 镜像
@@ -69,24 +120,24 @@
 
 # --- 输出部分 ---
 
-- name: 输出 IPv4 连接信息
-  debug:
-    msg: 
-      - "用户: {{ item.name }}"
-      - "VLESS(IPv4): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv4"
-  loop: "{{ reality_instances }}"
-  loop_control:
-    label: "{{ item.name }}"
+# - name: 输出 IPv4 连接信息
+#   debug:
+#     msg: 
+#       - "用户: {{ item.name }}"
+#       - "VLESS(IPv4): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
+#   loop: "{{ reality_instances }}"
+#   loop_control:
+#     label: "{{ item.name }}"
 
-- name: 输出 IPv6 连接信息 (如果存在)
-  debug:
-    msg: 
-      - "用户: {{ item.name }}"
-      - "VLESS(IPv6): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
-  loop: "{{ reality_instances }}"
-  loop_control:
-    label: "{{ item.name }}"
-  when: ansible_default_ipv6.address is defined
+# - name: 输出 IPv6 连接信息 (如果存在)
+#   debug:
+#     msg: 
+#       - "用户: {{ item.name }}"
+#       - "VLESS(IPv6): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
+#   loop: "{{ reality_instances }}"
+#   loop_control:
+#     label: "{{ item.name }}"
+#   when: ansible_default_ipv6.address is defined
 
 # --- 本地 JSON 生成部分 ---
 
@@ -115,3 +166,12 @@
   loop: "{{ reality_instances }}"
   loop_control:
     label: "{{ item.name }}"
+
+- name: 配置 UFW 防火墙 (自动放行所有用户端口)
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: tcp
+  loop: "{{ reality_instances }}"
+  loop_control:
+    label: "Allow port {{ item.port }} for {{ item.name }}"

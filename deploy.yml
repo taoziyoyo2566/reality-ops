@@ -9,6 +9,8 @@
         paths: "{{ playbook_dir }}/users"
         patterns: '*.yml,*.yaml'
       register: user_config_files
+      delegate_to: localhost  # <--- 【关键修改】强制在本机查找文件，而不是去远程服务器找
+      run_once: true          # (可选优化) 既然是本机找，找一次就够了，不用每台机器都重复找一遍
 
     # 2. 循环读取每个文件的内容，追加到 reality_instances 列表中
     - name: 加载所有用户配置
@@ -30,4 +32,4 @@
       run_once: true
 
   roles:
-    - reality_multi
+    - reality_single

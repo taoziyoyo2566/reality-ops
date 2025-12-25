@@ -1,0 +1,441 @@
+{
+  "log": {
+    "loglevel": "warning",
+    "access": "/var/log/xray/access.log",
+    "error": "/var/log/xray/error.log"
+  },
+  "api": {
+    "tag": "api",
+    "services": ["HandlerService", "LoggerService", "StatsService"]
+  },
+  "policy": {
+    "levels": {
+      "0": {
+        "handshake": 4,
+        "connIdle": 300,
+        "uplinkOnly": 0,
+        "downlinkOnly": 0,
+        "bufferSize": 0,
+        "connLimit": 0
+      }
+    },
+    "system": {
+      "statsInboundUplink": true,
+      "statsInboundDownlink": true,
+      "checkAccount": true,
+      "strict": true
+    }
+  },
+  "stats": {},
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["api"],
+        "outboundTag": "direct"
+      }
+    ]
+  },
+  "inbounds": [
+            {
+      "port": 33693,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a7d0a178-3779-4253-b38d-eb132a61f276",
+            "email": "yhbb.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "wKOErjhL-Z17xw8T0RbUBj26I0qwOrSXisJf74NXBEg",
+          "shortIds": ["348e3fa20b8c4d06"]
+        }
+      }
+    },        {
+      "port": 34077,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "11ea97a1-8942-41f6-8e62-daf3b84e1657",
+            "email": "zhi.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "CPnR5MDH3s73IyQPMMX9ReC0wrbj5SUSCX4n40gAlmk",
+          "shortIds": ["6d4aac252a75b8f1"]
+        }
+      }
+    },        {
+      "port": 29440,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "1dbad9c3-80b9-40b4-8b96-a4a1286470b9",
+            "email": "ying.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "MErFBm8BGIu2DdCJopimUKl30ogT8GH-HjMTuVpqWEE",
+          "shortIds": ["b74f5ea0b4b1d66d"]
+        }
+      }
+    },        {
+      "port": 23684,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "d0f77c9b-ea86-4440-b68a-b0f79e2c7c63",
+            "email": "han.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "OFCJzUZFQzrROukmriDjDG-7PhnPsJ9AO5D3leaW4nk",
+          "shortIds": ["9e661a30c864d7b0"]
+        }
+      }
+    },        {
+      "port": 38470,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "8640057d-1d6a-4cfb-a119-7ab27670bba0",
+            "email": "frank.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "sJpl-DvZlsGR4aWahS7EW0POeN2zOqDdKg4CtGJa4GU",
+          "shortIds": ["7b72332bd289ee68"]
+        }
+      }
+    },        {
+      "port": 30855,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "1ae9db34-6ecc-4e0a-91e2-28369e046508",
+            "email": "starry.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "4J4oiIgoGhna-rGAoyPsfSiyCTyUhoa4VAkHn9_fhmA",
+          "shortIds": ["e602ad057d921094"]
+        }
+      }
+    },        {
+      "port": 49391,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "a94410c5-92c8-4457-80ab-045f39951630",
+            "email": "lis.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "0AHCmNuWSDOkrj3sQNQB1fhPLzLsxu2j8asoM7St7WA",
+          "shortIds": ["623e033d054b4f5c"]
+        }
+      }
+    },        {
+      "port": 30845,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "d01b4f0b-b7ab-43ff-ba65-5b5426cddf1f",
+            "email": "yinlu.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "gLLKUI8yzbn16h4UkWUyKq0uURAodZtiQ7qZ4jeylkc",
+          "shortIds": ["1e9771054867598c"]
+        }
+      }
+    },        {
+      "port": 35106,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "eaf243c2-cb03-465e-812b-8db0236c69dd",
+            "email": "kyler.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "cAt6fiEFLcpTkObn3E3QkNT-7Sst8Yf96M7V9AicEHM",
+          "shortIds": ["06e5c173e194a453"]
+        }
+      }
+    },        {
+      "port": 45426,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "1032b7a2-6187-480d-abb1-811118b01225",
+            "email": "rsp.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "yF0YktRmLyIdoGLOhH_sS1nNk9RR0qK-4-rJkh39XHY",
+          "shortIds": ["fa72558b4140e737"]
+        }
+      }
+    },        {
+      "port": 35108,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "86f2197d-b457-486f-860a-d5511074b19f",
+            "email": "lin.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "KFARvVEOiRoo-cEyLzQNLOOJNWDxvf8BRRhUCJOfY2Y",
+          "shortIds": ["81aed2480e1fb08b"]
+        }
+      }
+    },        {
+      "port": 30854,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "fb66fda4-b396-415f-ba0f-c3329f085a5f",
+            "email": "reap.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "WA317ve9xpTCuOV9wkMClaYZASoFTdHcPZtBsVXgQGE",
+          "shortIds": ["1506b96210c772e0"]
+        }
+      }
+    },        {
+      "port": 48891,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "1f081de0-f1bf-42de-be36-c08a5852253a",
+            "email": "yinbenhai.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "YG3SQx8uuXPEGVXcu6ECown0ZpP9dIV_zqpgtYK60GU",
+          "shortIds": ["121a52ef6856dd51"]
+        }
+      }
+    },        {
+      "port": 35068,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "e24f183a-8685-4a2e-a61b-8d2147bc68eb",
+            "email": "cpp.spt@taoziyoyo.com",
+            "flow": "xtls-rprx-vision",
+            "level": 0,
+            "alterId": 0
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "www.apple.com:443",
+          "xver": 0,
+          "serverNames": ["www.apple.com", "images.apple.com"],
+          "privateKey": "WAlKvX930P3gRGkYkDLbeYgSvXRhH4vmotQ5iEWermc",
+          "shortIds": ["a57db8a9ce365ae0"]
+        }
+      }
+    }        ,
+    {
+      "port": 10085,
+      "listen": "127.0.0.1",
+      "protocol": "dokodemo-door",
+      "settings": {
+        "address": "127.0.0.1"
+      },
+      "tag": "api"
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "settings": {},
+      "tag": "direct"
+    },
+    {
+      "protocol": "blackhole",
+      "settings": {},
+      "tag": "blocked"
+    }
+  ]
+}
