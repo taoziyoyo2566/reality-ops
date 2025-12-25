@@ -1,0 +1,12 @@
+[
+  {
+    "user": "cpp.netcup@taoziyoyo.com",
+    "id": "e24f183a-8685-4a2e-a61b-8d2147bc68eb",
+    "subscription": "vless://e24f183a-8685-4a2e-a61b-8d2147bc68eb@netcupo9drrm5l1d7uopaguucnxohzc3ul2yazxrldzpuoduu.taoziyoyo.com:35068?encryption=none&security=reality&type=tcp&sni=www.apple.com&fp=chrome&pbk=ONIOaFjmLQQCZRuK88IyE1-uLpQWNhfbK0fOgYXZSwI&sid=a57db8a9ce365ae0&flow=xtls-rprx-vision#cpp.netcup@taoziyoyo.com"
+  }
+    ,{
+    "user": "cpp.netcup@taoziyoyo.com",
+    "id": "e24f183a-8685-4a2e-a61b-8d2147bc68eb",
+    "subscription": "vless://e24f183a-8685-4a2e-a61b-8d2147bc68eb@netcupo9drrm5l1d7uopaguucnxohzc3ul2yazxrldzpuoduu.taoziyoyo.com:35068?encryption=none&security=reality&type=tcp&sni=www.apple.com&fp=chrome&pbk=ONIOaFjmLQQCZRuK88IyE1-uLpQWNhfbK0fOgYXZSwI&sid=a57db8a9ce365ae0&flow=xtls-rprx-vision#cpp.netcup@taoziyoyo.com_ipv6"
+  }
+  ]

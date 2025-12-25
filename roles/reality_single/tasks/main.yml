@@ -111,14 +111,14 @@
 
 # --- 下面的任务依然需要 Loop，因为我们要输出每个用户的信息 ---
 
-- name: 输出 IPv4 连接信息
-  debug:
-    msg: 
-      - "用户: {{ item.name }}"
-      - "VLESS(IPv4): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
-  loop: "{{ reality_instances }}"
-  loop_control:
-    label: "{{ item.name }}"
+# - name: 输出 IPv4 连接信息
+#   debug:
+#     msg: 
+#       - "用户: {{ item.name }}"
+#       - "VLESS(IPv4): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
+#   loop: "{{ reality_instances }}"
+#   loop_control:
+#     label: "{{ item.name }}"
 
 # (可选) 输出 IPv6 信息，逻辑同上，略...
 
@@ -146,11 +146,22 @@
   loop_control:
     label: "{{ item.name }}"
 
-- name: 配置 UFW 防火墙 (自动放行所有用户端口)
-  community.general.ufw:
-    rule: allow
-    port: "{{ item.port }}"
-    proto: tcp
-  loop: "{{ reality_instances }}"
-  loop_control:
-    label: "Allow port {{ item.port }} for {{ item.name }}"
+# - name: 配置 UFW 防火墙 (自动放行所有用户端口)
+#   community.general.ufw:
+#     rule: allow
+#     port: "{{ item.port }}"
+#     proto: tcp
+#   loop: "{{ reality_instances }}"
+#   loop_control:
+#     label: "Allow port {{ item.port }} for {{ item.name }}"
+
+- name: UFW - 批量放行所有端口 (一次性执行)
+  shell: |
+    ufw allow OpenSSH
+    {% for item in reality_instances %}
+    ufw allow {{ item.port }}/tcp
+    {% endfor %}
+    ufw --force enable
+    ufw default deny incoming
+  register: ufw_result
+  changed_when: "'Rule added' in ufw_result.stdout"

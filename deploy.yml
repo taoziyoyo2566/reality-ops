@@ -33,3 +33,20 @@
 
   roles:
     - reality_single
+
+# --- 自动更新 Gist 订阅 ---
+- hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    # ✅ 【直接保留执行脚本的任务】
+    - name: 执行脚本更新 GitHub Gist
+      command: python3 {{ playbook_dir }}/generate_subs_gist.py
+      register: gist_result
+      changed_when: "'Gist 更新成功' in gist_result.stdout"
+      
+    - name: 显示订阅链接信息
+      debug:
+        var: gist_result.stdout_lines
