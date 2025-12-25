@@ -55,10 +55,12 @@
     # 【新增】显式指定容器运行用户，双重保险 (配合 Dockerfile)
     user: "10000:10000"
     memory: "300m" 
-    cpus: "0.5"
+    cpus: "1"
     ports:
       # 【确认】非Root容器内部监听 8443，映射到宿主机的 item.port
       - "{{ item.port }}:8443"
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: "1"
     volumes:
       - "{{ playbook_dir }}/data/{{ item.name }}/config.json:/config.json:ro"
       - "{{ playbook_dir }}/data/{{ item.name }}/logs:/var/log/xray"
