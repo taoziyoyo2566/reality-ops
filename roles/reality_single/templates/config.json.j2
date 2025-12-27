@@ -8,6 +8,7 @@
     "tag": "api",
     "services": ["HandlerService", "LoggerService", "StatsService"]
   },
+  "stats": {},
   "policy": {
     "levels": {
       "0": {
@@ -16,28 +17,37 @@
         "uplinkOnly": 0,
         "downlinkOnly": 0,
         "bufferSize": 0,
-        "connLimit": 0
+        "connLimit": 0,
+        "statsUserUplink": true,    {# 开启统计核心：用户上行 #}
+        "statsUserDownlink": true   {# 开启统计核心：用户下行 #}
       }
     },
     "system": {
       "statsInboundUplink": true,
       "statsInboundDownlink": true,
-      "checkAccount": true,
-      "strict": true
+      "statsOutboundUplink": true,
+      "statsOutboundDownlink": true
     }
   },
-  "stats": {},
   "routing": {
+    "domainStrategy": "IPIfNonMatch",
     "rules": [
       {
         "type": "field",
         "inboundTag": ["api"],
-        "outboundTag": "direct"
+        "outboundTag": "api"
+      },
+      {# 可以在这里加屏蔽规则，比如屏蔽 bt 下载等 #}
+      {
+        "type": "field",
+        "protocol": ["bittorrent"],
+        "outboundTag": "blocked"
       }
+      {# 注意：不需要写 catch-all 的 direct 规则，默认会走第一个 outbound #}
     ]
   },
   "inbounds": [
-    {# 使用循环为每个用户生成一个独立的 inbound 节点 #}
+    {# 1. 业务端口：循环生成每个用户的 Reality 节点 #}
     {% for item in reality_instances %}
     {
       "port": {{ item.port }},
@@ -46,7 +56,7 @@
         "clients": [
           {
             "id": "{{ item.uuid }}",
-            "email": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
+            "email": "{{ item.name }}.{{ inventory_hostname }},
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -69,6 +79,7 @@
     }{% if not loop.last %},{% endif %}
     {% endfor %}
     ,
+    {# 2. 管理端口：API 服务 #}
     {
       "port": 10085,
       "listen": "127.0.0.1",

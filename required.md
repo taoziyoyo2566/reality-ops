@@ -2,7 +2,13 @@ eval "$(ssh-agent -s)"
 ssh-add ~/.ssh/id_ed25519
 # 这里输入一次密码，之后当前会话中 Ansible 连接所有服务器都不需要再输密码
 
-
+对于非1000的用户，需要手动sudo文件
+```
+sudo visudo
+kagoya ALL=(ALL) NOPASSWD: ALL
+```
+spartan@taoziyoyo:~/workspace/reality-ops$ id
+uid=1000(spartan) gid=1000(spartan) groups=1000(spartan),27(sudo),990(docker)
 
 ansible -i inventory.ini all -m ping
 dzire | SUCCESS => {
@@ -46,3 +52,28 @@ grep -hEo '"?port"?: ?[0-9]+' users/*.yml users/*.json \
 | awk '$1 != 10085' \
 | sort -u \
 | xargs -I{} sudo ufw allow {}\/tcp
+
+#
+docker ps -a \
+  --filter name=reality_ \
+  --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}'
+
+#
+docker ps -a \
+  --filter name=reality_ \
+  --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}' \
+| grep -Ev 'reality_tom_TIVGQQAF|reality_zhi_TG736HNZ|reality_starry_3IUIXRGY'
+
+docker ps -a \
+  --filter name=reality_ \
+  --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}' \
+| grep -Ev 'reality_tom_TIVGQQAF|reality_zhi_TG736HNZ|reality_starry_3IUIXRGY' \
+| awk '{print $1}' \
+| xargs docker stop
+
+docker ps -a \
+  --filter name=reality_ \
+  --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}' \
+| grep -Ev 'reality_tom_TIVGQQAF|reality_zhi_TG736HNZ|reality_starry_3IUIXRGY' \
+| awk '{print $1}' \
+| xargs docker rm
