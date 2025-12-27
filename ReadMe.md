@@ -23,6 +23,9 @@ ansible-playbook -i inventory.ini deploy.yml --check --diff
 
 ansible-playbook -i inventory.ini deploy.yml
 
+ansible-playbook -i inventory.ini deploy.yml --limit free
+ansible-playbook -i inventory.ini deploy.yml --limit normal,premium
+
 # 提取所有 .yml 和 .json 文件中的端口号
 grep -hEo '"?port"?: ?[0-9]+' users/*.yml users/*.json | grep -oE '[0-9]+'
 
