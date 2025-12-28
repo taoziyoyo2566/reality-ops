@@ -3,7 +3,7 @@
 
 - name: 确保系统安装了基础依赖
   apt:
-    name: ["python3-pip", "python3-venv"]
+    name: ["python3-pip", "python3-venv", "cron"]
     state: present
     update_cache: yes
 

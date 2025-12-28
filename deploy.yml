@@ -3,51 +3,39 @@
   become: yes
   
   pre_tasks:
-    # 1. 查找 users 目录下所有的 .yml 或 .yaml 文件
     - name: 扫描用户配置文件
       find:
         paths: "{{ playbook_dir }}/users"
         patterns: '*.yml,*.yaml'
       register: user_config_files
-      delegate_to: localhost  # <--- 【关键修改】强制在本机查找文件，而不是去远程服务器找
-      run_once: true          # (可选优化) 既然是本机找，找一次就够了，不用每台机器都重复找一遍
+      delegate_to: localhost
+      run_once: true
 
-    # 2. 循环读取每个文件的内容，追加到 reality_instances 列表中
     - name: 加载所有用户配置
       set_fact:
-        # 核心逻辑：
-        # 1. default([]): 初始化为空列表
-        # 2. lookup('file', item.path): 读取文件文本内容
-        # 3. from_yaml: 把文本解析为 YAML/JSON 对象
-        # 4. + [...]: 把解析出的对象追加到列表末尾
         reality_instances: "{{ reality_instances | default([]) + [ lookup('file', item.path) | from_yaml ] }}"
       loop: "{{ user_config_files.files }}"
       loop_control:
-        label: "{{ item.path | basename }}" # 让输出日志只显示文件名，简洁一点
-
-    # 3. 调试：确认加载结果 (确保是一个列表，且包含 name 属性)
-    - name: DEBUG - 验证加载结果
-      debug:
-        msg: "成功加载 {{ reality_instances | length }} 个用户。第一个用户是: {{ reality_instances[0].name }} (UUID: {{ reality_instances[0].uuid }})"
-      run_once: true
+        label: "{{ item.path | basename }}"
 
   roles:
     - reality_single
-    - monitor         # 新增的监控 Role
+    - monitor  # 【已包含监控角色】
 
-# --- 自动更新 Gist 订阅 ---
-- hosts: localhost
-  connection: local
-  gather_facts: no
-  vars:
-    ansible_python_interpreter: /usr/bin/python3
-  tasks:
-    # ✅ 【直接保留执行脚本的任务】
+  # =========================================================
+  # 🟢 核心修改：使用 post_tasks 代替独立的 localhost play
+  # =========================================================
+  post_tasks:
     - name: 执行脚本更新 GitHub Gist
       command: python3 {{ playbook_dir }}/generate_subs_gist.py
+      delegate_to: localhost  # 强制在本机执行
+      run_once: true          # 无论同时部署几台 VPS，这个脚本只跑一次
       register: gist_result
       changed_when: "'Gist 更新成功' in gist_result.stdout"
       
     - name: 显示订阅链接信息
       debug:
         var: gist_result.stdout_lines
+      run_once: true
+
+# 🔴 注意：文件末尾不要再有 - hosts: localhost 的段落了

@@ -3,3 +3,5 @@ logs/
 data/**/logs
 data/logs/
 *.log
+SUBSCRIPTIONS.txt
+.env

@@ -17,7 +17,7 @@
         "uplinkOnly": 0,
         "downlinkOnly": 0,
         "bufferSize": 0,
-        "connLimit": 0,
+        "connLimit": 24,
         "statsUserUplink": true,            "statsUserDownlink": true         }
     },
     "system": {
@@ -341,7 +341,7 @@
         }
       }
     },        {
-      "port": 30854,
+      "port": 30859,
       "protocol": "vless",
       "settings": {
         "clients": [
@@ -395,7 +395,7 @@
         }
       }
     },        {
-      "port": 35068,
+      "port": 35069,
       "protocol": "vless",
       "settings": {
         "clients": [

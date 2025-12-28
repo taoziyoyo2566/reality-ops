@@ -80,3 +80,23 @@ docker ps -a \
 | grep -Ev 'reality_tom_TIVGQQAF|reality_zhi_TG736HNZ|reality_starry_3IUIXRGY' \
 | awk '{print $1}' \
 | xargs docker rm
+
+#--
+tail -n 500 ~/workspace/reality-ops/data/reality_core/logs/access.log \
+| grep "email:" \
+| awk '{print $9, $4}' \
+| awk '{sub(/@.*/, "", $1); sub(/^tcp:/, "", $2); sub(/:[0-9]*$/, "", $2); print $1, $2}' \
+| sort | uniq \
+| awk '{
+    # 统计数量
+    count[$1]++;
+    # 将 IP 拼接到列表中
+    if (ips[$1] == "") { ips[$1] = $2 } else { ips[$1] = ips[$1] ", " $2 }
+}
+END {
+    # 格式化输出: 数量 用户 IP列表
+    for (user in count) {
+        printf "%-3s %-15s : %s\n", count[user], user, ips[user]
+    }
+}' \
+| sort -nr
