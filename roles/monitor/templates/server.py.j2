@@ -1,0 +1,93 @@
+from fastapi import FastAPI, HTTPException, Header
+from pydantic import BaseModel
+import sqlite3
+import time
+import os
+
+app = FastAPI(title="Reality Monitor")
+
+API_TOKEN = "{{ monitor.token }}"
+DB_PATH = "{{ playbook_dir }}/data/traffic_monitor.db"
+
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS records
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  node TEXT, user TEXT, up INTEGER, down INTEGER, timestamp INTEGER)''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+class TrafficReport(BaseModel):
+    node: str
+    user: str
+    up_delta: int
+    down_delta: int
+
+@app.post("/report")
+async def receive_report(report: TrafficReport, token: str = Header(None)):
+    if token != API_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid Token")
+    
+    if report.up_delta > 0 or report.down_delta > 0:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("INSERT INTO records (node, user, up, down, timestamp) VALUES (?, ?, ?, ?, ?)",
+                  (report.node, report.user, report.up_delta, report.down_delta, int(time.time())))
+        conn.commit()
+        conn.close()
+    return {"status": "ok"}
+
+# --- 【核心修改】 ---
+@app.get("/stats/daily")
+async def get_daily_stats(hours: int = 24, detail: bool = True):
+    """
+    获取流量报表
+    - detail=True (默认): 按 [用户 + 节点] 分组，显示每个用户在每个节点的用量
+    - detail=False: 仅按 [用户] 分组，显示总账
+    """
+    start_time = int(time.time()) - (hours * 3600)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    if detail:
+        # 详细模式：同时按 user 和 node 分组
+        c.execute('''SELECT user, node, SUM(up), SUM(down) FROM records WHERE timestamp > ? 
+                     GROUP BY user, node ORDER BY user, SUM(down) DESC''', (start_time,))
+        rows = c.fetchall()
+        result = [
+            {
+                "user": r[0],
+                "node": r[1], # 多了节点字段
+                "upload_mb": round(r[2]/1024/1024, 2),
+                "download_mb": round(r[3]/1024/1024, 2),
+                "total_mb": round((r[2]+r[3])/1024/1024, 2)
+            } 
+            for r in rows
+        ]
+    else:
+        # 汇总模式：只按 user 分组 (算总账)
+        c.execute('''SELECT user, SUM(up), SUM(down) FROM records WHERE timestamp > ? 
+                     GROUP BY user ORDER BY SUM(down) DESC''', (start_time,))
+        rows = c.fetchall()
+        result = [
+            {
+                "user": r[0],
+                "node": "ALL", # 标记为所有节点
+                "upload_mb": round(r[1]/1024/1024, 2),
+                "download_mb": round(r[2]/1024/1024, 2),
+                "total_mb": round((r[1]+r[2])/1024/1024, 2)
+            } 
+            for r in rows
+        ]
+        
+    conn.close()
+    return result
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port={{ monitor.port }})

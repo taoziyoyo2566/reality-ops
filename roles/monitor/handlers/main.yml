@@ -1,0 +1,7 @@
+---
+- name: 重启监控服务
+  systemd:
+    name: reality-monitor
+    state: restarted
+    enabled: yes
+    daemon_reload: yes

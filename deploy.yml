@@ -33,6 +33,7 @@
 
   roles:
     - reality_single
+    - monitor         # 新增的监控 Role
 
 # --- 自动更新 Gist 订阅 ---
 - hosts: localhost

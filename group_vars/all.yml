@@ -5,3 +5,10 @@ domain_suffix: "taoziyoyo.com"
 server_hash_suffix: "o9drrm5l1d7uopaguucnxohzc3ul2yazxrldzpuoduu"
 reality_server_names: ["www.apple.com", "images.apple.com"]
 reality_dest: "www.apple.com:443"
+
+# --- 监控系统配置 ---
+monitor:
+  server_host: "spt"           # 指定 Inventory 中哪台机器跑数据库
+  server_public_ip: "45.145.75.134"  # 【必须修改】spt 的公网 IP (用于其他节点上报)
+  port: 8000                   # 监控服务端口
+  token: "x8zK9#mP2$vL5@nQ"  # 上报认证 Token (客户端和服务端必须一致，建议修改为复杂字符串)

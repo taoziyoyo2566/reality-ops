@@ -1,0 +1,72 @@
+---
+# roles/monitor/tasks/main.yml
+
+# 0. 基础系统依赖 (增加 python3-venv)
+- name: 确保系统安装了基础依赖
+  apt:
+    name: ["python3-pip", "python3-venv"]
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+
+# 1. 创建虚拟环境并安装依赖
+# 【核心修改】不在系统环境安装，而是安装到项目目录下的 venv 中
+- name: 在虚拟环境中安装 Python 依赖
+  pip:
+    name: ["requests", "fastapi", "uvicorn"]
+    virtualenv: "{{ playbook_dir }}/monitor_venv"
+    virtualenv_command: /usr/bin/python3 -m venv
+
+# 2. 服务端部署 (仅在 spt 节点执行)
+- name: "[Server] 部署监控服务端"
+  when: inventory_hostname == monitor.server_host
+  block:
+    - name: 确保数据目录存在
+      file:
+        path: "{{ playbook_dir }}/data"
+        state: directory
+        mode: '0755'
+
+    - name: 部署服务端脚本
+      template:
+        src: server.py.j2
+        dest: "{{ playbook_dir }}/monitor_server.py"
+        mode: '0755'
+    
+    - name: 配置 Systemd 服务
+      copy:
+        dest: /etc/systemd/system/reality-monitor.service
+        content: |
+          [Unit]
+          Description=Reality Traffic Monitor
+          After=network.target
+          [Service]
+          User=root
+          WorkingDirectory={{ playbook_dir }}
+          # 【核心修改】使用虚拟环境中的 python3 启动
+          ExecStart={{ playbook_dir }}/monitor_venv/bin/python3 {{ playbook_dir }}/monitor_server.py
+          Restart=always
+          [Install]
+          WantedBy=multi-user.target
+      notify: 重启监控服务
+
+    # 放行监控端口
+    - name: UFW 放行监控端口
+      community.general.ufw:
+        rule: allow
+        port: "{{ monitor.port | string }}"
+        proto: tcp
+
+# 3. 客户端部署 (所有节点)
+- name: "[Agent] 部署上报脚本"
+  template:
+    src: agent.py.j2
+    dest: "/usr/local/bin/traffic_agent.py"
+    mode: '0755'
+
+- name: "[Agent] 设置 Crontab"
+  cron:
+    name: "Reality Traffic Report"
+    minute: "*"
+    # 【核心修改】使用虚拟环境中的 python3 运行脚本
+    job: "{{ playbook_dir }}/monitor_venv/bin/python3 /usr/local/bin/traffic_agent.py > /dev/null 2>&1"

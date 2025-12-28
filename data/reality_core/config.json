@@ -8,6 +8,7 @@
     "tag": "api",
     "services": ["HandlerService", "LoggerService", "StatsService"]
   },
+  "stats": {},
   "policy": {
     "levels": {
       "0": {
@@ -16,25 +17,30 @@
         "uplinkOnly": 0,
         "downlinkOnly": 0,
         "bufferSize": 0,
-        "connLimit": 0
-      }
+        "connLimit": 0,
+        "statsUserUplink": true,            "statsUserDownlink": true         }
     },
     "system": {
       "statsInboundUplink": true,
       "statsInboundDownlink": true,
-      "checkAccount": true,
-      "strict": true
+      "statsOutboundUplink": true,
+      "statsOutboundDownlink": true
     }
   },
-  "stats": {},
   "routing": {
+    "domainStrategy": "IPIfNonMatch",
     "rules": [
       {
         "type": "field",
         "inboundTag": ["api"],
-        "outboundTag": "direct"
+        "outboundTag": "api"
+      },
+            {
+        "type": "field",
+        "protocol": ["bittorrent"],
+        "outboundTag": "blocked"
       }
-    ]
+          ]
   },
   "inbounds": [
             {
@@ -44,7 +50,7 @@
         "clients": [
           {
             "id": "a7d0a178-3779-4253-b38d-eb132a61f276",
-            "email": "yhbb.spt@taoziyoyo.com",
+            "email": "yhbb.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -71,7 +77,7 @@
         "clients": [
           {
             "id": "11ea97a1-8942-41f6-8e62-daf3b84e1657",
-            "email": "zhi.spt@taoziyoyo.com",
+            "email": "zhi.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -98,7 +104,7 @@
         "clients": [
           {
             "id": "1dbad9c3-80b9-40b4-8b96-a4a1286470b9",
-            "email": "ying.spt@taoziyoyo.com",
+            "email": "ying.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -125,7 +131,7 @@
         "clients": [
           {
             "id": "d0f77c9b-ea86-4440-b68a-b0f79e2c7c63",
-            "email": "han.spt@taoziyoyo.com",
+            "email": "han.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -152,7 +158,7 @@
         "clients": [
           {
             "id": "8640057d-1d6a-4cfb-a119-7ab27670bba0",
-            "email": "frank.spt@taoziyoyo.com",
+            "email": "frank.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -179,7 +185,7 @@
         "clients": [
           {
             "id": "1ae9db34-6ecc-4e0a-91e2-28369e046508",
-            "email": "starry.spt@taoziyoyo.com",
+            "email": "starry.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -206,7 +212,7 @@
         "clients": [
           {
             "id": "a94410c5-92c8-4457-80ab-045f39951630",
-            "email": "zhao.spt@taoziyoyo.com",
+            "email": "zhao.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -233,7 +239,7 @@
         "clients": [
           {
             "id": "d01b4f0b-b7ab-43ff-ba65-5b5426cddf1f",
-            "email": "yinlu.spt@taoziyoyo.com",
+            "email": "yinlu.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -260,7 +266,7 @@
         "clients": [
           {
             "id": "eaf243c2-cb03-465e-812b-8db0236c69dd",
-            "email": "kyler.spt@taoziyoyo.com",
+            "email": "kyler.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -287,7 +293,7 @@
         "clients": [
           {
             "id": "1032b7a2-6187-480d-abb1-811118b01225",
-            "email": "rsp.spt@taoziyoyo.com",
+            "email": "rsp.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -314,7 +320,7 @@
         "clients": [
           {
             "id": "86f2197d-b457-486f-860a-d5511074b19f",
-            "email": "lin.spt@taoziyoyo.com",
+            "email": "lin.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -341,7 +347,7 @@
         "clients": [
           {
             "id": "fb66fda4-b396-415f-ba0f-c3329f085a5f",
-            "email": "reap.spt@taoziyoyo.com",
+            "email": "reap.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -368,7 +374,7 @@
         "clients": [
           {
             "id": "1f081de0-f1bf-42de-be36-c08a5852253a",
-            "email": "yinbenhai.spt@taoziyoyo.com",
+            "email": "yinbenhai.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -395,7 +401,7 @@
         "clients": [
           {
             "id": "e24f183a-8685-4a2e-a61b-8d2147bc68eb",
-            "email": "cpp.spt@taoziyoyo.com",
+            "email": "cpp.spt",
             "flow": "xtls-rprx-vision",
             "level": 0,
             "alterId": 0
@@ -416,7 +422,7 @@
         }
       }
     }        ,
-    {
+        {
       "port": 10085,
       "listen": "127.0.0.1",
       "protocol": "dokodemo-door",

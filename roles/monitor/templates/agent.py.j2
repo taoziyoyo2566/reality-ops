@@ -1,0 +1,70 @@
+import subprocess
+import json
+import requests
+import os
+
+NODE_NAME = "{{ inventory_hostname }}"
+# 【核心】此处引用 monitor.server_public_ip 和 monitor.port
+SERVER_URL = "http://{{ monitor.server_public_ip }}:{{ monitor.port }}/report"
+# 【核心】此处引用 monitor.token
+API_TOKEN = "{{ monitor.token }}"
+CACHE_FILE = "/tmp/reality_traffic_cache.json"
+
+def get_core_stats():
+    # 只查询 reality_core 容器
+    cmd = "docker exec reality_core xray api statsquery --server=127.0.0.1:10085"
+    try:
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if res.returncode != 0: return {}
+        data = json.loads(res.stdout)
+        
+        stats = {}
+        if 'stat' in data:
+            for item in data['stat']:
+                parts = item['name'].split('>>>')
+                if len(parts) == 4 and parts[0] == 'user':
+                    raw_user = parts[1]
+                    # 清洗用户名，去掉主机名后缀
+                    real_user = raw_user.split('.')[0] if '.' in raw_user else raw_user
+                    
+                    type_ = parts[3]
+                    val = int(item['value'])
+                    
+                    if real_user not in stats: stats[real_user] = {'up': 0, 'down': 0}
+                    if type_ == 'uplink': stats[real_user]['up'] += val
+                    if type_ == 'downlink': stats[real_user]['down'] += val
+        return stats
+    except:
+        return {}
+
+def main():
+    current = get_core_stats()
+    last = {}
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, 'r') as f: last = json.load(f)
+        except: pass
+    
+    for user, flow in current.items():
+        last_flow = last.get(user, {'up': 0, 'down': 0})
+        
+        up_delta = flow['up'] - last_flow['up']
+        if up_delta < 0: up_delta = flow['up']
+        
+        down_delta = flow['down'] - last_flow['down']
+        if down_delta < 0: down_delta = flow['down']
+        
+        if up_delta > 0 or down_delta > 0:
+            try:
+                # 【核心】Header 中携带 Token
+                requests.post(SERVER_URL, json={
+                    "node": NODE_NAME, "user": user, 
+                    "up_delta": up_delta, "down_delta": down_delta
+                }, headers={"token": API_TOKEN}, timeout=5)
+            except: pass
+
+    with open(CACHE_FILE, 'w') as f:
+        json.dump(current, f)
+
+if __name__ == "__main__":
+    main()
