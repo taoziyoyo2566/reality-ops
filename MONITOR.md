@@ -6,8 +6,8 @@
 * **客户端**: 部署在所有节点，每分钟采集 `reality_core` 容器流量并上报。
 
 ## 2. 访问地址
-* **仪表盘**: `https://monitor.taoziyoyo.com:8443/stats/daily`
-* **API 文档**: `https://monitor.taoziyoyo.com:8443/docs`
+* **仪表盘**: `https://monitor.taoziyoyo.com/stats/daily`
+* **API 文档**: `https://monitor.taoziyoyo.com/docs`
 
 > **注意**: 如果浏览器提示证书风险，请检查域名解析是否正确，并等待几分钟让 Caddy 自动申请证书。
 

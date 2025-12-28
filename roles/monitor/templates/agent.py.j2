@@ -5,7 +5,7 @@ import os
 
 NODE_NAME = "{{ inventory_hostname }}"
 # 【核心】此处引用 monitor.server_public_ip 和 monitor.port
-SERVER_URL = "http://{{ monitor.server_public_ip }}:{{ monitor.port }}/report"
+SERVER_URL = "{{ monitor.server_url }}/report"
 # 【核心】此处引用 monitor.token
 API_TOKEN = "{{ monitor.token }}"
 CACHE_FILE = "/tmp/reality_traffic_cache.json"
