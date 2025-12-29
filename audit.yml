@@ -1,0 +1,70 @@
+---
+# 第一步：去所有节点抓取日志
+- hosts: reality_nodes
+  gather_facts: yes
+  tasks:
+    - name: 提取最近的访问日志 (User + IP)
+      shell: |
+        # 自动判断日志路径 (兼容修复前后的路径)
+        # 优先找当前用户的路径
+        LOG_FILE="{{ ansible_user_dir }}/workspace/reality-ops/data/reality_core/logs/access.log"
+        
+        # 如果找不到，尝试找硬编码的旧路径 (针对 dcc/netcup 等可能没修复路径的节点)
+        if [ ! -f "$LOG_FILE" ]; then
+           LOG_FILE="/home/spartan/workspace/reality-ops/data/reality_core/logs/access.log"
+        fi
+        
+        # 如果找到了，提取 用户名 和 IP
+        if [ -f "$LOG_FILE" ]; then
+            tail -n 2000 "$LOG_FILE" | grep "email:" | awk '{print $9, $4}'
+        fi
+      register: log_output
+      changed_when: false
+      # 忽略错误，防止某台机器日志不存在导致整体中断
+      ignore_errors: yes
+
+# 第二步：在本机汇总分析
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: 汇总所有节点数据到临时文件
+      copy:
+        content: |
+          {% for host in groups['reality_nodes'] %}
+          {% if hostvars[host]['log_output'] is defined and hostvars[host]['log_output']['stdout'] is defined %}
+          {{ hostvars[host]['log_output']['stdout'] }}
+          {% endif %}
+          {% endfor %}
+        dest: "/tmp/global_reality_logs.txt"
+
+    - name: 生成全网审计报告
+      shell: |
+        cat /tmp/global_reality_logs.txt \
+        | awk '{
+            # 1. 清洗数据：去掉后缀、去掉tcp前缀、去掉端口号
+            sub(/@.*/, "", $1); 
+            sub(/^tcp:/, "", $2); 
+            sub(/:[0-9]*$/, "", $2); 
+            print $1, $2
+          }' \
+        | sort | uniq \
+        | awk '{
+            # 2. 聚合统计
+            count[$1]++;
+            if(ips[$1]==""){ips[$1]=$2}else{ips[$1]=ips[$1]", "$2}
+          } 
+          END {
+            # 3. 格式化输出
+            print "------------------------------------------------------------"
+            printf "%-5s %-15s : %s\n", "IP数", "用户", "IP列表 (全网去重)"
+            print "------------------------------------------------------------"
+            for(u in count) {
+                printf "%-5s %-15s : %s\n", count[u], u, ips[u]
+            }
+          }' \
+        | sort -nr
+      register: audit_report
+
+    - name: 显示结果
+      debug:
+        msg: "{{ audit_report.stdout_lines }}"
