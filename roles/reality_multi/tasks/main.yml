@@ -69,7 +69,7 @@
 # 核心循环：为每个实例准备环境
 - name: 为每个用户创建配置目录
   file:
-    path: "{{ playbook_dir }}/data/{{ item.name }}"
+    path: "{{ reality_data_dir }}/{{ item.name }}"
     state: directory
     mode: '0755'
     recurse: yes
@@ -78,7 +78,7 @@
 - name: 生成每个用户的 config.json
   template:
     src: config.json.j2
-    dest: "{{ playbook_dir }}/data/{{ item.name }}/config.json"
+    dest: "{{ reality_data_dir }}/{{ item.name }}/config.json"
     mode: '0644' # 【建议】配置文件的 owner 不需要改，0644 足够让容器里的用户读取
   loop: "{{ reality_instances }}"
   register: config_changed
@@ -87,7 +87,7 @@
 - name: 修正日志目录权限 (归属给 UID 10000)
   become: yes
   file:
-    path: "{{ playbook_dir }}/data/{{ item.name }}/logs"
+    path: "{{ reality_data_dir }}/{{ item.name }}/logs"
     state: directory
     # 【确认】这步非常关键，配合 Dockerfile 的 USER 10000
     owner: "10000"
@@ -113,8 +113,8 @@
     sysctls:
       net.ipv6.conf.all.disable_ipv6: "1"
     volumes:
-      - "{{ playbook_dir }}/data/{{ item.name }}/config.json:/config.json:ro"
-      - "{{ playbook_dir }}/data/{{ item.name }}/logs:/var/log/xray"
+      - "{{ reality_data_dir }}/{{ item.name }}/config.json:/config.json:ro"
+      - "{{ reality_data_dir }}/{{ item.name }}/logs:/var/log/xray"
     restart: "{{ item.name in config_changed.results | selectattr('changed') | map(attribute='item.name') | list }}"
   loop: "{{ reality_instances }}"
 

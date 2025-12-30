@@ -7,7 +7,7 @@ import os
 app = FastAPI(title="Reality Monitor")
 
 API_TOKEN = "x8zK9#mP2$vL5@nQ"
-DB_PATH = "/home/spartan/workspace/reality-ops/data/traffic_monitor.db"
+DB_PATH = "/opt/data/traffic_monitor.db"
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 

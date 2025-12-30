@@ -6,17 +6,25 @@
     # 1. 同样的逻辑：扫描并加载用户列表
     # (只有加载了用户，才能知道要删哪些容器)
     - name: 扫描用户配置文件
+      delegate_to: localhost
+      run_once: true
       find:
         paths: "{{ playbook_dir }}/users"
         patterns: '*.yml,*.yaml'
       register: user_config_files
 
     - name: 加载所有用户配置
+      delegate_to: localhost
+      run_once: true
       set_fact:
         reality_instances: "{{ reality_instances | default([]) + [ lookup('file', item.path) | from_yaml ] }}"
       loop: "{{ user_config_files.files }}"
       loop_control:
         label: "{{ item.path | basename }}"
+
+    - name: 注入用户配置到远端主机
+      set_fact:
+        reality_instances: "{{ hostvars['localhost'].reality_instances | default([]) }}"
 
   tasks:
     # 2. 删除容器
@@ -32,7 +40,7 @@
     # 如果你想测试"从零生成配置文件"的逻辑，把下面这段解开注释
     - name: 清理用户数据目录 (data/xxx)
       file:
-        path: "{{ playbook_dir }}/data/{{ item.name }}"
+        path: "{{ reality_data_dir }}/{{ item.name }}"
         state: absent
       loop: "{{ reality_instances }}"
       loop_control:

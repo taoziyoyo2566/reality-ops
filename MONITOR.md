@@ -23,7 +23,7 @@
 ### 手动测试上报 (在任意节点执行)
 如果发现数据没更新，可以在节点上运行：
 ```bash
-sudo ~/workspace/reality-ops/monitor_venv/bin/python3 /usr/local/bin/traffic_agent.py
+sudo /opt/monitor/venv/bin/python3 /usr/local/bin/traffic_agent.py
 ```
 无报错即为成功。
 
@@ -37,10 +37,10 @@ sudo journalctl -u caddy -f
 ```
 
 ### 数据库维护
-数据文件位于: `~/workspace/reality-ops/data/traffic_monitor.db`
+数据文件位于: `/opt/data/traffic_monitor.db`
 如果需要清空数据重来：
 ```bash
-rm ~/workspace/reality-ops/data/traffic_monitor.db
+rm /opt/data/traffic_monitor.db
 sudo systemctl restart reality-monitor
 ```
 

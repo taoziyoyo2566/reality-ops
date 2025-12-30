@@ -1,102 +1,108 @@
+# Reality Ops
+
+通过 Ansible 部署 Reality (Xray) 与流量监控。数据路径已统一为 `/opt/data`，便于集中管理与备份。
+
+## 目录结构
+- `deploy.yml`: 主部署入口 (Reality 单实例 + 监控)
+- `reset.yml`: 删除容器 + 清理数据
+- `audit.yml`: 统计最近访问日志
+- `group_vars/all.yml`: 全局变量
+- `users/*.yml`: 用户配置
+- `roles/`: 角色定义
+
+## 关键路径 (本地与远端统一)
+- 数据目录: `/opt/data`
+- 监控运行目录: `/opt/monitor`
+- 监控虚拟环境: `/opt/monitor/venv`
+
+## 前置条件
+- 控制机: 已安装 `ansible`，可 SSH 连接远端
+- 远端: `sudo` 权限 + `python3`
+- Ansible 集合: `community.general`、`community.docker`
+
+安装集合:
+```bash
+ansible-galaxy collection install community.general community.docker
+```
+
+## SSH 连接准备
+```bash
 eval "$(ssh-agent -s)"
 ssh-add ~/.ssh/id_ed25519
-# 这里输入一次密码，之后当前会话中 Ansible 连接所有服务器都不需要再输密码
-
-对于非1000的用户，需要手动sudo文件
 ```
+
+若非 UID=1000 用户，建议配置免密 sudo:
+```bash
 sudo visudo
 kagoya ALL=(ALL) NOPASSWD: ALL
 ```
-spartan@taoziyoyo:~/workspace/reality-ops$ id
-uid=1000(spartan) gid=1000(spartan) groups=1000(spartan),27(sudo),990(docker)
 
+## Inventory 说明
+`inventory.ini` 中包含分组:
+- `reality_nodes`: 所有 Reality 节点
+- `free`、`normal`、`premium`: 分级分组
+- `spt`: 本机节点 (使用 `ansible_connection=local`)
+
+## 配置入口
+`group_vars/all.yml` 里常用变量:
+- `reality_data_dir`: `/opt/data`
+- `monitor_root_dir`: `/opt/monitor`
+- `monitor_venv_dir`: `/opt/monitor/venv`
+- `monitor.server_host`: 监控服务部署的节点名
+
+## 部署
+```bash
 ansible -i inventory.ini all -m ping
-dzire | SUCCESS => {
-    "ansible_facts": {
-        "discovered_interpreter_python": "/usr/bin/python3.11"
-    },
-    "changed": false,
-    "ping": "pong"
-}
-
 ansible-playbook -i inventory.ini deploy.yml --check --diff
+ansible-playbook -i inventory.ini deploy.yml --limit premium
+```
 
-ansible-playbook -i inventory.ini deploy.yml
+> `deploy.yml` 默认使用 `roles/reality_single`。如需多实例，切换为 `roles/reality_multi`。
 
-ansible-playbook -i inventory.ini deploy.yml --limit free
-ansible-playbook -i inventory.ini deploy.yml --limit normal,premium
+## 监控
+- 服务名: `reality-monitor`
+- 数据库: `/opt/data/traffic_monitor.db`
+- 手动上报:
+```bash
+sudo /opt/monitor/venv/bin/python3 /usr/local/bin/traffic_agent.py
+```
+- 日志:
+```bash
+sudo journalctl -u reality-monitor -f
+```
+更多细节见 `MONITOR.md`。
 
-# 提取所有 .yml 和 .json 文件中的端口号
-grep -hEo '"?port"?: ?[0-9]+' users/*.yml users/*.json | grep -oE '[0-9]+'
+## 常用操作
+查看日志:
+```bash
+tail -n 500 /opt/data/reality_core/logs/access.log
+```
 
+审计日志:
+```bash
+ansible-playbook -i inventory.ini audit.yml
+```
 
-# allow tcp
+重置容器与数据:
+```bash
+ansible-playbook -i inventory.ini reset.yml --limit premium
+```
+
+## 防火墙放行端口
+```bash
 grep -hEo '"?port"?: ?[0-9]+' users/*.yml users/*.json \
 | grep -oE '[0-9]+' \
 | sort -u \
-| xargs -I{} sudo ufw allow {}\/tcp
+| xargs -I{} sudo ufw allow {}/tcp
+```
 
-# udp & tcp
-xargs -I{} sh -c 'sudo ufw allow {}/tcp && sudo ufw allow {}/udp'
-
-# 查看 xray 进程监听的 TCP 端口
-sudo ss -tulpn | grep xray
-
-# grep -v
-grep -hEo '"?port"?: ?[0-9]+' users/*.yml users/*.json \
-| grep -oE '[0-9]+' \
-| grep -v '^10085$' \
-| sort -u \
-| xargs -I{} sudo ufw allow {}\/tcp
-
-# awk
-grep -hEo '"?port"?: ?[0-9]+' users/*.yml users/*.json \
-| grep -oE '[0-9]+' \
-| awk '$1 != 10085' \
-| sort -u \
-| xargs -I{} sudo ufw allow {}\/tcp
-
-#
+## Docker 容器查看
+```bash
 docker ps -a \
   --filter name=reality_ \
   --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}'
+```
 
-#
-docker ps -a \
-  --filter name=reality_ \
-  --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}' \
-| grep -Ev 'reality_tom_TIVGQQAF|reality_zhi_TG736HNZ|reality_starry_3IUIXRGY'
-
-docker ps -a \
-  --filter name=reality_ \
-  --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}' \
-| grep -Ev 'reality_tom_TIVGQQAF|reality_zhi_TG736HNZ|reality_starry_3IUIXRGY' \
-| awk '{print $1}' \
-| xargs docker stop
-
-docker ps -a \
-  --filter name=reality_ \
-  --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}' \
-| grep -Ev 'reality_tom_TIVGQQAF|reality_zhi_TG736HNZ|reality_starry_3IUIXRGY' \
-| awk '{print $1}' \
-| xargs docker rm
-
-#--
-tail -n 500 ~/workspace/reality-ops/data/reality_core/logs/access.log \
-| grep "email:" \
-| awk '{print $9, $4}' \
-| awk '{sub(/@.*/, "", $1); sub(/^tcp:/, "", $2); sub(/:[0-9]*$/, "", $2); print $1, $2}' \
-| sort | uniq \
-| awk '{
-    # 统计数量
-    count[$1]++;
-    # 将 IP 拼接到列表中
-    if (ips[$1] == "") { ips[$1] = $2 } else { ips[$1] = ips[$1] ", " $2 }
-}
-END {
-    # 格式化输出: 数量 用户 IP列表
-    for (user in count) {
-        printf "%-3s %-15s : %s\n", count[user], user, ips[user]
-    }
-}' \
-| sort -nr
+## 备注
+- `monitor.yml` 为旧版脚本 (依赖 `monitor/` 目录)，当前不作为主流程使用。
+- 监控虚拟环境缺失 pip 时，会自动重建 `/opt/monitor/venv` 以提高可靠性。

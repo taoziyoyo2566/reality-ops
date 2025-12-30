@@ -5,14 +5,8 @@
   tasks:
     - name: 提取最近的访问日志 (User + IP)
       shell: |
-        # 自动判断日志路径 (兼容修复前后的路径)
-        # 优先找当前用户的路径
-        LOG_FILE="{{ ansible_user_dir }}/workspace/reality-ops/data/reality_core/logs/access.log"
-        
-        # 如果找不到，尝试找硬编码的旧路径 (针对 dcc/netcup 等可能没修复路径的节点)
-        if [ ! -f "$LOG_FILE" ]; then
-           LOG_FILE="/home/spartan/workspace/reality-ops/data/reality_core/logs/access.log"
-        fi
+        # 统一使用 /opt/data 路径
+        LOG_FILE="{{ reality_data_dir }}/reality_core/logs/access.log"
         
         # 如果找到了，提取 用户名 和 IP
         if [ -f "$LOG_FILE" ]; then
