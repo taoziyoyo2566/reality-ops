@@ -6,8 +6,8 @@ import os
 NODE_NAME = "{{ inventory_hostname }}"
 # 【核心】此处引用 monitor.server_public_ip 和 monitor.port
 SERVER_URL = "{{ monitor.server_url }}/report"
-# 【核心】此处引用 monitor.token
-API_TOKEN = "{{ monitor.token }}"
+# 【核心】此处引用 monitor.report_token (来自 vault)
+API_TOKEN = "{{ monitor.report_token }}"
 CACHE_FILE = "/tmp/reality_traffic_cache.json"
 
 def get_core_stats():

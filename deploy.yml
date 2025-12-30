@@ -32,6 +32,19 @@
       run_once: true          # 无论同时部署几台 VPS，这个脚本只跑一次
       register: gist_result
       changed_when: "'Gist 更新成功' in gist_result.stdout"
+      environment:
+        GITHUB_TOKEN: "{{ vault_github_token | default('') }}"
+        GIST_ID: "{{ vault_monitor_gist_id | default('0a7faae910b06151d643c7d5baa43818') }}"
+        GITHUB_USER: "{{ vault_monitor_gist_user | default('') }}"
+        SUBS_BASE_URL: "{{ monitor.subs_base_url | default(monitor.server_url) }}"
+        SUBS_TOKEN: "{{ vault_monitor_subs_token | default('') }}"
+      when: (vault_github_token | default('')) | length > 0
+
+    - name: 跳过 Gist 更新（未配置 GITHUB_TOKEN）
+      debug:
+        msg: "未设置 vault_github_token，已跳过 Gist 更新。"
+      run_once: true
+      when: (vault_github_token | default('')) | length == 0
       
     - name: 显示订阅链接信息
       debug:

@@ -88,6 +88,36 @@ ansible-playbook -i inventory.ini audit.yml
 ansible-playbook -i inventory.ini reset.yml --limit premium
 ```
 
+## 监控安全配置（IP 白名单 + Bearer + Vault）
+1) 生成随机 Token（示例命令）  
+```bash
+openssl rand -hex 32   # 生成上报/管理 token
+openssl rand -hex 24   # 生成订阅代理 token（可选）
+```  
+2) 填写并加密 Vault  
+- 编辑 `group_vars/all/vault.yml`，用上一步生成的随机串替换所有 `CHANGEME-...`。  
+- 加密：`ansible-vault encrypt group_vars/all/vault.yml`（如需编辑：`ansible-vault edit group_vars/all/vault.yml`）。  
+3) 配置白名单与可信头  
+- 在 `group_vars/all.yml` 设置 `monitor.ip_allowlist`（如 CF 出口 IP 或内网网段）。  
+- 如使用 Cloudflare，保持 `monitor.trust_proxy_header: CF-Connecting-IP`；否则改为 `X-Forwarded-For`。  
+4) 可选：订阅访问日志代理  
+- 设 `monitor.subs_proxy.enabled=true`，填写 `gist_user`/`gist_id`，并将订阅链接替换为 `https://monitor.taoziyoyo.com/subs/<sub_id>?token=<subs_token>`。  
+- 查看日志：`https://monitor.taoziyoyo.com/subs/logs?limit=200`（需 Bearer）。  
+5) 部署  
+```bash
+ansible-playbook -i inventory.ini deploy.yml --limit spt
+```  
+6) 访问方式  
+- 白名单 IP 可直接访问 `https://monitor.taoziyoyo.com/stats/ui` 等。  
+- 非白名单需携带 Header：`Authorization: Bearer <admin_or_stats_token>`。  
+- 上报仍用 `report_token`，curl 手动上报示例：  
+```bash
+curl -X POST https://monitor.taoziyoyo.com/report \
+  -H "token: 7aa0542d49ea68ae5547e262e8c9632116114e3a1cd55648" \
+  -H "Content-Type: application/json" \
+  -d '{"node":"netcup","user":"reap","up_delta":1,"down_delta":1}'
+```
+
 ## 防火墙放行端口
 ```bash
 grep -hEo '"?port"?: ?[0-9]+' users/*.yml users/*.json \

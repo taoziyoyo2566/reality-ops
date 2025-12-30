@@ -7,41 +7,38 @@ import datetime
 
 # --- 配置常量 ---
 USERS_DIR = 'users'
-ENV_FILE = '.env'
-SAVE_FILE = 'SUBSCRIPTIONS.txt'  # 【新增】本地保存的文件名
+SAVE_FILE = 'SUBSCRIPTIONS.txt'  # 本地保存的文件名
 
-def load_env_file():
-    """简易版 .env 加载器"""
-    env_vars = {}
-    if os.path.exists(ENV_FILE):
-        with open(ENV_FILE, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#'): continue
-                if '=' in line:
-                    key, value = line.split('=', 1)
-                    env_vars[key.strip()] = value.strip().strip("'").strip('"')
-    return env_vars
 
 def get_config():
-    """获取配置"""
-    file_env = load_env_file()
-    token = os.environ.get('GITHUB_TOKEN') or file_env.get('GITHUB_TOKEN')
-    gist_id = os.environ.get('GIST_ID') or file_env.get('GIST_ID')
-    # 获取 GitHub 用户名，用于拼接 raw 链接，如果没配置则用默认值
-    gh_user = os.environ.get('GITHUB_USER') or file_env.get('GITHUB_USER') or 'taoziyoyo2566'
+    """
+    获取配置（仅通过环境变量，避免依赖 .env 文件）
+    必需：GITHUB_TOKEN, GIST_ID, GITHUB_USER, SUBS_BASE_URL
+    可选：SUBS_TOKEN
+    """
+    token = os.environ.get('GITHUB_TOKEN')
+    gist_id = os.environ.get('GIST_ID')
+    gh_user = os.environ.get('GITHUB_USER')
+    subs_base_url = os.environ.get('SUBS_BASE_URL')
+    subs_token = os.environ.get('SUBS_TOKEN') or ''
 
     if not token or str(token).startswith("ghp_xxxx"):
-        print("❌ 错误: 未找到有效的 GITHUB_TOKEN，请检查 .env 文件。")
+        print("❌ 错误: 未找到有效的 GITHUB_TOKEN，请通过环境变量 GITHUB_TOKEN 提供。")
         exit(1)
     if not gist_id:
-        print("❌ 错误: 未找到 GIST_ID，请检查 .env 文件。")
+        print("❌ 错误: 未找到 GIST_ID，请通过环境变量 GIST_ID 提供。")
+        exit(1)
+    if not gh_user:
+        print("❌ 错误: 未找到 GITHUB_USER，请通过环境变量 GITHUB_USER 提供。")
+        exit(1)
+    if not subs_base_url:
+        print("❌ 错误: 未找到 SUBS_BASE_URL，请通过环境变量 SUBS_BASE_URL 提供（例如 https://subs.example.com）。")
         exit(1)
 
-    return token, gist_id, gh_user
+    return token, gist_id, gh_user, subs_base_url.rstrip('/'), subs_token
 
 # --- 初始化配置 ---
-GITHUB_TOKEN, GIST_ID, GITHUB_USER = get_config()
+GITHUB_TOKEN, GIST_ID, GITHUB_USER, SUBS_BASE_URL, SUBS_TOKEN = get_config()
 
 def update_gist(files_content):
     """更新 Gist"""
@@ -62,7 +59,6 @@ def update_gist(files_content):
 
 def generate_subscriptions():
     user_links = defaultdict(list)
-    user_uuids = {} 
 
     # 1. 读取本地节点信息
     if not os.path.exists(USERS_DIR):
@@ -82,8 +78,6 @@ def generate_subscriptions():
                 for node in data:
                     if 'subscription' in node:
                         user_links[username].append(node['subscription'])
-                    if 'id' in node:
-                        user_uuids[username] = node['id']
         except Exception:
             pass
 
@@ -102,11 +96,12 @@ def generate_subscriptions():
         encoded_content = base64.b64encode(content_raw.encode('utf-8')).decode('utf-8')
         
         # 文件名使用 UUID
-        file_uuid = user_uuids.get(user, user)
-        gist_files[file_uuid] = {"content": encoded_content}
+        file_id = user  # 使用用户名作为文件名，避免 UUID 难记
+        gist_files[file_id] = {"content": encoded_content}
         
-        # 生成订阅链接
-        sub_url = f"https://gist.githubusercontent.com/{GITHUB_USER}/{GIST_ID}/raw/{file_uuid}"
+        # 生成订阅链接（走 monitor 代理，保持域名一致；token 可选）
+        token_suffix = f"?token={SUBS_TOKEN}" if SUBS_TOKEN else ""
+        sub_url = f"{SUBS_BASE_URL}/{file_id}{token_suffix}"
         
         # 记录日志
         log_line = f"用户: {user:<15} 订阅链接: {sub_url}"

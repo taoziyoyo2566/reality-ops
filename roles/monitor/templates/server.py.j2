@@ -1,15 +1,33 @@
-from fastapi import FastAPI, HTTPException, Header
-from fastapi.responses import HTMLResponse, Response
+from fastapi import FastAPI, HTTPException, Header, Request, Depends, status
+from fastapi.responses import HTMLResponse, Response, JSONResponse, RedirectResponse
+from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel
 import csv
 import io
 import sqlite3
 import time
 import os
+from typing import Optional, List
 
-app = FastAPI(title="Reality Monitor")
+app = FastAPI(
+    title="Reality Monitor",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
+)
 
-API_TOKEN = "{{ monitor.token }}"
+REPORT_TOKEN = "{{ monitor.report_token }}"
+ADMIN_BEARER_TOKEN = "{{ monitor.admin_bearer_token }}"
+STATS_BEARER_TOKEN = "{{ monitor.stats_bearer_token }}"
+IP_ALLOWLIST: List[str] = {{ monitor.ip_allowlist | default(['127.0.0.1']) | to_json }}
+TRUST_PROXY_HEADER = "{{ monitor.trust_proxy_header | default('CF-Connecting-IP') }}"
+
+SUBS_PROXY_ENABLED = {{ monitor.subs_proxy.enabled | default(false) | bool }}
+SUBS_GIST_USER = "{{ monitor.subs_proxy.gist_user | default('') }}"
+SUBS_GIST_ID = "{{ monitor.subs_proxy.gist_id | default('') }}"
+SUBS_TOKEN = "{{ monitor.subs_proxy.token | default('') }}"
+SUBS_REQUIRE_TOKEN = {{ monitor.subs_proxy.require_token | default(true) | bool }}
+
 DB_PATH = "{{ reality_data_dir }}/traffic_monitor.db"
 
 DASHBOARD_HTML = r"""<!DOCTYPE html>
@@ -1268,6 +1286,16 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_records_timestamp ON records (timestamp)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_records_user ON records (user)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_records_node ON records (node)")
+    c.execute('''CREATE TABLE IF NOT EXISTS subscription_logs
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  sub_id TEXT,
+                  ip TEXT,
+                  forwarded_for TEXT,
+                  user_agent TEXT,
+                  query TEXT,
+                  timestamp INTEGER)''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_subscription_logs_sub_id ON subscription_logs (sub_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_subscription_logs_ts ON subscription_logs (timestamp)")
     conn.commit()
     conn.close()
 
@@ -1279,9 +1307,46 @@ class TrafficReport(BaseModel):
     up_delta: int
     down_delta: int
 
+def get_client_ip(request: Request) -> str:
+    if TRUST_PROXY_HEADER:
+        header_val = request.headers.get(TRUST_PROXY_HEADER)
+        if header_val:
+            return header_val.split(",")[0].strip()
+    return request.client.host if request.client else "0.0.0.0"
+
+def is_ip_allowed(ip: str) -> bool:
+    return ip in IP_ALLOWLIST
+
+async def auth_guard(request: Request, authorization: Optional[str] = Header(None)):
+    client_ip = get_client_ip(request)
+    if is_ip_allowed(client_ip):
+        return
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if token and token in (ADMIN_BEARER_TOKEN, STATS_BEARER_TOKEN):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Unauthorized",
+        headers={"WWW-Authenticate": "Bearer"}
+    )
+
+@app.get("/debug/whoami", dependencies=[Depends(auth_guard)])
+async def debug_whoami(request: Request):
+    # 带 Bearer 或白名单访问，用于排查真实 IP 识别
+    return {
+        "client_ip": get_client_ip(request),
+        "raw_client": request.client.host if request.client else None,
+        "trusted_header": TRUST_PROXY_HEADER,
+        "x_forwarded_for": request.headers.get("X-Forwarded-For", ""),
+        "cf_connecting_ip": request.headers.get("CF-Connecting-IP", ""),
+        "ip_allowlist": IP_ALLOWLIST,
+    }
+
 @app.post("/report")
 async def receive_report(report: TrafficReport, token: str = Header(None)):
-    if token != API_TOKEN:
+    if token != REPORT_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid Token")
     
     if report.up_delta > 0 or report.down_delta > 0:
@@ -1331,12 +1396,40 @@ def fetch_daily_stats(hours: int, detail: bool):
     conn.close()
     return result
 
-@app.get("/stats/ui", response_class=HTMLResponse, include_in_schema=False)
+def log_subscription_hit(sub_id: str, request: Request):
+    if not SUBS_PROXY_ENABLED:
+        return
+    try:
+        client_ip = get_client_ip(request)
+        forwarded_for = request.headers.get("X-Forwarded-For", "")
+        user_agent = request.headers.get("User-Agent", "")
+        query = request.url.query or ""
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO subscription_logs (sub_id, ip, forwarded_for, user_agent, query, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+            (sub_id, client_ip, forwarded_for, user_agent, query, int(time.time()))
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        # logging suppressed to keep UI clean
+        pass
+
+@app.get("/openapi.json", include_in_schema=False, dependencies=[Depends(auth_guard)])
+async def custom_openapi():
+    return JSONResponse(app.openapi())
+
+@app.get("/docs", include_in_schema=False, dependencies=[Depends(auth_guard)])
+async def custom_docs():
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="Reality Monitor Docs")
+
+@app.get("/stats/ui", response_class=HTMLResponse, include_in_schema=False, dependencies=[Depends(auth_guard)])
 async def stats_ui():
     return HTMLResponse(DASHBOARD_HTML)
 
 # --- 【核心修改】 ---
-@app.get("/stats/daily")
+@app.get("/stats/daily", dependencies=[Depends(auth_guard)])
 async def get_daily_stats(hours: int = 24, detail: bool = True):
     """
     获取流量报表
@@ -1345,7 +1438,7 @@ async def get_daily_stats(hours: int = 24, detail: bool = True):
     """
     return fetch_daily_stats(hours, detail)
 
-@app.get("/stats/timeseries")
+@app.get("/stats/timeseries", dependencies=[Depends(auth_guard)])
 async def get_timeseries(hours: int = 24, interval: int = 3600, user: str = None, node: str = None):
     hours = max(1, hours)
     interval = max(300, min(interval, 86400))
@@ -1380,7 +1473,7 @@ async def get_timeseries(hours: int = 24, interval: int = 3600, user: str = None
     ]
     return {"start": start_time, "end": now, "interval": interval, "series": series}
 
-@app.get("/stats/health")
+@app.get("/stats/health", dependencies=[Depends(auth_guard)])
 async def get_health(hours: int = 24, stale_minutes: int = 10):
     hours = max(1, hours)
     now = int(time.time())
@@ -1417,7 +1510,7 @@ async def get_health(hours: int = 24, stale_minutes: int = 10):
     result.sort(key=lambda item: (item["stale"], item["last_seen"] or 0), reverse=True)
     return result
 
-@app.get("/stats/export")
+@app.get("/stats/export", dependencies=[Depends(auth_guard)])
 async def export_stats(hours: int = 24, detail: bool = True, format: str = "csv"):
     data = fetch_daily_stats(hours, detail)
     if format.lower() == "json":
@@ -1439,9 +1532,9 @@ async def export_stats(hours: int = 24, detail: bool = True, format: str = "csv"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return Response(content=buffer.getvalue(), media_type="text/csv", headers=headers)
 
-@app.post("/stats/cleanup")
+@app.post("/stats/cleanup", dependencies=[Depends(auth_guard)])
 async def cleanup_stats(days: int = 90, token: str = Header(None)):
-    if token != API_TOKEN:
+    if token != REPORT_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid Token")
     days = max(1, days)
     cutoff = int(time.time()) - (days * 86400)
@@ -1452,6 +1545,53 @@ async def cleanup_stats(days: int = 90, token: str = Header(None)):
     conn.commit()
     conn.close()
     return {"deleted": deleted, "cutoff": cutoff}
+
+@app.get("/subs/logs", dependencies=[Depends(auth_guard)])
+async def get_subscription_logs(limit: int = 200, sub_id: Optional[str] = None):
+    if not SUBS_PROXY_ENABLED:
+        return []
+    limit = max(1, min(limit, 1000))
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    if sub_id:
+        c.execute(
+            "SELECT sub_id, ip, forwarded_for, user_agent, query, timestamp FROM subscription_logs WHERE sub_id = ? ORDER BY timestamp DESC LIMIT ?",
+            (sub_id, limit),
+        )
+    else:
+        c.execute(
+            "SELECT sub_id, ip, forwarded_for, user_agent, query, timestamp FROM subscription_logs ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        )
+    rows = c.fetchall()
+    conn.close()
+    return [
+        {
+            "sub_id": r[0],
+            "ip": r[1],
+            "forwarded_for": r[2],
+            "user_agent": r[3],
+            "query": r[4],
+            "timestamp": r[5],
+        }
+        for r in rows
+    ]
+
+def proxy_subscription_internal(sub_id: str, request: Request, token: Optional[str] = None):
+    if not SUBS_PROXY_ENABLED or not SUBS_GIST_USER or not SUBS_GIST_ID:
+        raise HTTPException(status_code=404, detail="Not configured")
+    if SUBS_REQUIRE_TOKEN and SUBS_TOKEN and token != SUBS_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid Token")
+    log_subscription_hit(sub_id, request)
+    target_url = f"https://gist.githubusercontent.com/{SUBS_GIST_USER}/{SUBS_GIST_ID}/raw/{sub_id}"
+    return RedirectResponse(url=target_url, status_code=307)
+
+@app.get("/{sub_id}")
+async def proxy_subscription_alias(sub_id: str, request: Request, token: Optional[str] = None):
+    reserved = {"stats", "docs", "openapi.json", "subs", "debug", "report"}
+    if sub_id in reserved:
+        raise HTTPException(status_code=404, detail="Not configured")
+    return proxy_subscription_internal(sub_id, request, token)
 
 if __name__ == "__main__":
     import uvicorn

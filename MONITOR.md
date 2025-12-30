@@ -6,9 +6,9 @@
 * **客户端**: 部署在所有节点，每分钟采集 `reality_core` 容器流量并上报。
 
 ## 2. 访问地址
-* **可视化仪表盘**: `https://monitor.taoziyoyo.com/stats/ui`
-* **JSON 报表**: `https://monitor.taoziyoyo.com/stats/daily`
-* **API 文档**: `https://monitor.taoziyoyo.com/docs`
+* **可视化仪表盘**: `https://monitor.taoziyoyo.com/stats/ui` （需白名单或 Bearer）
+* **JSON 报表**: `https://monitor.taoziyoyo.com/stats/daily` （需白名单或 Bearer）
+* **API 文档**: `https://monitor.taoziyoyo.com/docs` （需白名单或 Bearer）
 
 > **注意**: 如果浏览器提示证书风险，请检查域名解析是否正确，并等待几分钟让 Caddy 自动申请证书。
 
@@ -22,12 +22,12 @@
     * **示例**: `.../stats/daily?hours=72&detail=false`
 
 ### 导出报表
-* **CSV**: `.../stats/export?hours=24&detail=true&format=csv`
-* **JSON**: `.../stats/export?hours=24&detail=true&format=json`
+* **CSV**: `.../stats/export?hours=24&detail=true&format=csv` （需 Bearer）
+* **JSON**: `.../stats/export?hours=24&detail=true&format=json` （需 Bearer）
 
 ### 趋势与健康接口
-* **时序趋势**: `.../stats/timeseries?hours=24&interval=3600`
-* **节点健康**: `.../stats/health?hours=24&stale_minutes=10`
+* **时序趋势**: `.../stats/timeseries?hours=24&interval=3600` （需 Bearer）
+* **节点健康**: `.../stats/health?hours=24&stale_minutes=10` （需 Bearer）
 
 ### UI 日志面板
 仪表盘底部提供 **Client Logs**，会记录浏览器侧错误并保留本地历史（localStorage）。
@@ -59,7 +59,13 @@ sudo systemctl restart reality-monitor
 如果需要清理过旧数据（保留天数）：
 ```bash
 curl -X POST 'https://monitor.taoziyoyo.com/stats/cleanup?days=90' \
-  -H 'token: <MONITOR_TOKEN>'
+  -H 'Authorization: Bearer <ADMIN_OR_STATS_BEARER>' \
+  -H 'token: <REPORT_TOKEN>'
+```
+
+### 订阅访问日志（可选）
+如果启用 `monitor.subs_proxy.enabled=true`，并将订阅链接替换为 `https://monitor.taoziyoyo.com/subs/<sub_id>?token=<subs_token>`，服务端会记录 IP / User-Agent / 时间戳 到数据库。
+* 查看日志: `https://monitor.taoziyoyo.com/subs/logs?limit=200` （需 Bearer）
 ```
 
 ## 4. 故障排查
