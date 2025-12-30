@@ -1,5 +1,8 @@
 from fastapi import FastAPI, HTTPException, Header
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
+import csv
+import io
 import sqlite3
 import time
 import os
@@ -9,6 +12,1251 @@ app = FastAPI(title="Reality Monitor")
 API_TOKEN = "{{ monitor.token }}"
 DB_PATH = "{{ reality_data_dir }}/traffic_monitor.db"
 
+DASHBOARD_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reality Traffic Monitor</title>
+  <style>
+    :root {
+      --bg: #f5efe6;
+      --bg-accent: #d7f0ef;
+      --ink: #12151f;
+      --muted: #5e6676;
+      --card: #ffffff;
+      --accent: #ff7a59;
+      --accent-2: #21a8a4;
+      --accent-3: #f2b94c;
+      --shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+      --radius: 20px;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Space Grotesk", "Noto Sans SC", "PingFang SC", "Microsoft Yahei", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at 20% 20%, var(--bg-accent), var(--bg));
+    }
+    .backdrop {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(0);
+      opacity: 0.6;
+      mix-blend-mode: multiply;
+    }
+    .orb-1 {
+      width: 320px;
+      height: 320px;
+      background: rgba(255, 122, 89, 0.3);
+      top: -80px;
+      left: -80px;
+    }
+    .orb-2 {
+      width: 420px;
+      height: 420px;
+      background: rgba(33, 168, 164, 0.25);
+      bottom: -180px;
+      right: -120px;
+    }
+    .orb-3 {
+      width: 240px;
+      height: 240px;
+      background: rgba(242, 185, 76, 0.25);
+      top: 20%;
+      right: 15%;
+    }
+    main {
+      position: relative;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 40px 20px 80px;
+      display: grid;
+      gap: 22px;
+    }
+    .hero {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.24em;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    h1 {
+      margin: 8px 0;
+      font-size: clamp(28px, 4vw, 40px);
+    }
+    .sub {
+      margin: 0;
+      color: var(--muted);
+      max-width: 520px;
+    }
+    .hero-right {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .chip {
+      background: rgba(255, 255, 255, 0.8);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      box-shadow: var(--shadow);
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+    .controls label {
+      display: grid;
+      gap: 6px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .controls input,
+    .controls select {
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      background: #fff;
+      color: var(--ink);
+    }
+    .toggle {
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      text-transform: none;
+      letter-spacing: 0;
+      font-size: 14px;
+      color: var(--ink);
+    }
+    .toggle input {
+      width: 42px;
+      height: 24px;
+      appearance: none;
+      background: rgba(15, 23, 42, 0.15);
+      border-radius: 999px;
+      position: relative;
+      outline: none;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+    .toggle input::after {
+      content: "";
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      top: 3px;
+      left: 3px;
+      transition: transform 0.2s ease;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    }
+    .toggle input:checked {
+      background: linear-gradient(120deg, var(--accent), var(--accent-2));
+    }
+    .toggle input:checked::after {
+      transform: translateX(18px);
+    }
+    button {
+      border: none;
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #fff;
+      background: linear-gradient(120deg, var(--accent), var(--accent-3));
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 20px rgba(255, 122, 89, 0.3);
+    }
+    button.secondary {
+      background: linear-gradient(120deg, var(--accent-2), #2aa0ff);
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+    }
+    .metric h3 {
+      margin: 0;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--muted);
+    }
+    .metric-value {
+      font-size: 28px;
+      font-weight: 600;
+      margin: 10px 0 6px;
+    }
+    .metric-sub {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .card-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .card-head h3 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .bar-list {
+      display: grid;
+      gap: 12px;
+    }
+    .bar-row {
+      display: grid;
+      gap: 8px;
+    }
+    .bar-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .bar-track {
+      position: relative;
+      height: 12px;
+      background: rgba(15, 23, 42, 0.08);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 0.6s ease;
+    }
+    .chart-empty {
+      font-size: 13px;
+      color: var(--muted);
+      text-align: center;
+      padding: 12px 0;
+    }
+    .log-card {
+      padding: 18px 20px;
+    }
+    .log-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .log-list {
+      display: grid;
+      gap: 10px;
+      max-height: 240px;
+      overflow: auto;
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.04);
+      font-family: "IBM Plex Mono", "Fira Mono", ui-monospace, monospace;
+      font-size: 12px;
+    }
+    .log-item {
+      display: grid;
+      grid-template-columns: 120px 60px 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+    .log-time {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .log-level {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      align-self: start;
+      text-align: center;
+    }
+    .log-level.error {
+      background: rgba(240, 95, 113, 0.15);
+      color: #b91c1c;
+    }
+    .log-level.warn {
+      background: rgba(242, 185, 76, 0.2);
+      color: #a16207;
+    }
+    .log-level.info {
+      background: rgba(33, 168, 164, 0.15);
+      color: #0f766e;
+    }
+    .log-message {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .trend-card {
+      padding: 18px 20px 16px;
+    }
+    .trend-chart {
+      width: 100%;
+      height: 180px;
+      display: block;
+    }
+    .trend-axis {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+    .alert-list {
+      display: grid;
+      gap: 10px;
+    }
+    .alert-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: rgba(255, 122, 89, 0.08);
+      font-size: 13px;
+    }
+    .alert-meta {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .badge.ok {
+      background: rgba(33, 168, 164, 0.15);
+      color: #0f766e;
+    }
+    .badge.stale {
+      background: rgba(240, 95, 113, 0.15);
+      color: #b91c1c;
+    }
+    .health-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      min-width: 420px;
+    }
+    .health-wrap {
+      overflow-x: auto;
+    }
+    .health-table th {
+      text-align: left;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    }
+    .health-table td {
+      padding: 10px 0;
+      border-bottom: 1px dashed rgba(15, 23, 42, 0.08);
+    }
+    .health-table tr:last-child td {
+      border-bottom: none;
+    }
+    .table-card {
+      padding: 0;
+      overflow: hidden;
+    }
+    .table-card .card-head {
+      padding: 18px 20px 0;
+      margin-bottom: 10px;
+    }
+    .table-wrap {
+      padding: 0 20px 20px;
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      min-width: 520px;
+    }
+    thead th {
+      text-align: left;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    }
+    tbody td {
+      padding: 12px 0;
+      border-bottom: 1px dashed rgba(15, 23, 42, 0.08);
+    }
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+    td.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .empty {
+      display: none;
+      padding: 18px 0;
+      text-align: center;
+      color: var(--muted);
+    }
+    .fade-in {
+      animation: fadeUp 0.6s ease both;
+    }
+    @keyframes fadeUp {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    @media (max-width: 720px) {
+      .controls {
+        grid-template-columns: 1fr;
+      }
+      .hero-right {
+        width: 100%;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="backdrop">
+    <span class="orb orb-1"></span>
+    <span class="orb orb-2"></span>
+    <span class="orb orb-3"></span>
+  </div>
+  <main>
+    <header class="hero">
+      <div>
+        <div class="eyebrow">Traffic Overview</div>
+        <h1>Reality Traffic Monitor</h1>
+        <p class="sub" id="status">Ready.</p>
+      </div>
+      <div class="hero-right">
+        <div class="chip">Window <span id="window-label">24h</span></div>
+        <div class="chip">Records <span id="record-count">0</span></div>
+        <div class="chip">Updated <span id="last-refresh">--</span></div>
+      </div>
+    </header>
+
+    <section class="controls card">
+      <label>
+        Window (hours)
+        <select id="hours-select">
+          <option value="6">6</option>
+          <option value="12">12</option>
+          <option value="24">24</option>
+          <option value="48">48</option>
+          <option value="72">72</option>
+          <option value="168">168</option>
+        </select>
+      </label>
+      <label class="toggle">
+        <input id="detail-toggle" type="checkbox" />
+        <span>Detail by node</span>
+      </label>
+      <label>
+        Filter
+        <input id="search-input" type="search" placeholder="user or node" />
+      </label>
+      <label>
+        Alert (MB)
+        <input id="alert-input" type="number" min="0" value="1000" />
+      </label>
+      <button id="refresh-btn" type="button">Refresh</button>
+      <button id="export-btn" class="secondary" type="button">Export CSV</button>
+    </section>
+
+    <section class="metrics">
+      <div class="metric card fade-in">
+        <h3>Total Traffic</h3>
+        <div class="metric-value" id="total-traffic">0 MB</div>
+        <p class="metric-sub">Up <span id="total-up">0</span> MB · Down <span id="total-down">0</span> MB</p>
+      </div>
+      <div class="metric card fade-in">
+        <h3>Users</h3>
+        <div class="metric-value" id="user-count">0</div>
+        <p class="metric-sub">Distinct users in window</p>
+      </div>
+      <div class="metric card fade-in">
+        <h3>Nodes</h3>
+        <div class="metric-value" id="node-count">0</div>
+        <p class="metric-sub" id="node-sub">Active nodes in window</p>
+      </div>
+      <div class="metric card fade-in">
+        <h3>Top User</h3>
+        <div class="metric-value" id="top-user">--</div>
+        <p class="metric-sub" id="top-user-traffic">0 MB</p>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <div class="card-head">
+          <h3>Top Users</h3>
+          <span class="hint">By total traffic</span>
+        </div>
+        <div id="user-chart" class="bar-list"></div>
+      </div>
+      <div class="card" id="node-card">
+        <div class="card-head">
+          <h3>Top Nodes</h3>
+          <span class="hint">By total traffic</span>
+        </div>
+        <div id="node-chart" class="bar-list"></div>
+      </div>
+    </section>
+
+    <section class="card trend-card">
+      <div class="card-head">
+        <h3>Traffic Trend</h3>
+        <span class="hint">Total MB per interval</span>
+      </div>
+      <svg id="trend-chart" class="trend-chart" viewBox="0 0 800 180" preserveAspectRatio="none"></svg>
+      <div class="trend-axis">
+        <span id="trend-start">--</span>
+        <span id="trend-end">--</span>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <div class="card-head">
+          <h3>Alerts</h3>
+          <span class="hint" id="alert-hint">Over threshold</span>
+        </div>
+        <div id="alert-list" class="alert-list"></div>
+        <div id="alert-empty" class="chart-empty">No alerts.</div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Node Health</h3>
+          <span class="hint">Last report</span>
+        </div>
+        <div class="health-wrap">
+          <table class="health-table">
+            <thead>
+              <tr>
+                <th>Node</th>
+                <th>Last Seen</th>
+                <th>Age</th>
+                <th class="num">Window (MB)</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="health-body"></tbody>
+          </table>
+          <div id="health-empty" class="chart-empty">No node data.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card table-card">
+      <div class="card-head">
+        <h3>Traffic Detail</h3>
+        <span class="hint" id="table-hint">Sorted by total</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Node</th>
+              <th class="num">Upload (MB)</th>
+              <th class="num">Download (MB)</th>
+              <th class="num">Total (MB)</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+        <div id="empty-state" class="empty">No data for the selected window.</div>
+      </div>
+    </section>
+
+    <section class="card log-card">
+      <div class="card-head">
+        <h3>Client Logs</h3>
+        <div class="log-actions">
+          <button id="log-copy" class="secondary" type="button">Copy</button>
+          <button id="log-clear" type="button">Clear</button>
+        </div>
+      </div>
+      <div id="log-empty" class="chart-empty">No logs yet.</div>
+      <div id="log-list" class="log-list"></div>
+    </section>
+  </main>
+
+  <script data-cfasync="false">
+    window.__monitorEarlyErrors = [];
+    window.addEventListener("error", function (event) {
+      if (!window.__monitorEarlyErrors) return;
+      var location = event.filename ? event.filename + ":" + event.lineno + ":" + event.colno : "";
+      window.__monitorEarlyErrors.push({
+        level: "error",
+        message: event.message || "Script error",
+        detail: location
+      });
+    });
+    window.addEventListener("unhandledrejection", function (event) {
+      if (!window.__monitorEarlyErrors) return;
+      var reason = event.reason && event.reason.stack ? event.reason.stack : String(event.reason || "");
+      window.__monitorEarlyErrors.push({
+        level: "error",
+        message: "Unhandled promise rejection",
+        detail: reason
+      });
+    });
+  </script>
+  <script data-cfasync="false">
+    (() => {
+      const state = { hours: 24, detail: true, query: "" };
+      const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+      const fmtInt = new Intl.NumberFormat("en-US");
+      const palette = [
+        "linear-gradient(90deg, #ff7a59, #f2b94c)",
+        "linear-gradient(90deg, #21a8a4, #8bd9c2)",
+        "linear-gradient(90deg, #2aa0ff, #21d4fd)",
+        "linear-gradient(90deg, #f05f71, #f7a8b8)",
+        "linear-gradient(90deg, #f2b94c, #f7d774)",
+        "linear-gradient(90deg, #4cc38a, #9fe6a0)"
+      ];
+
+      const hoursSelect = document.getElementById("hours-select");
+      const detailToggle = document.getElementById("detail-toggle");
+      const searchInput = document.getElementById("search-input");
+      const refreshBtn = document.getElementById("refresh-btn");
+      const lastRefresh = document.getElementById("last-refresh");
+      const recordCount = document.getElementById("record-count");
+      const totalTraffic = document.getElementById("total-traffic");
+      const totalUp = document.getElementById("total-up");
+      const totalDown = document.getElementById("total-down");
+      const userCount = document.getElementById("user-count");
+      const nodeCount = document.getElementById("node-count");
+      const nodeSub = document.getElementById("node-sub");
+      const topUser = document.getElementById("top-user");
+      const topUserTraffic = document.getElementById("top-user-traffic");
+      const userChart = document.getElementById("user-chart");
+      const nodeChart = document.getElementById("node-chart");
+      const nodeCard = document.getElementById("node-card");
+      const tableBody = document.getElementById("table-body");
+      const emptyState = document.getElementById("empty-state");
+      const statusEl = document.getElementById("status");
+      const tableHint = document.getElementById("table-hint");
+      const windowLabel = document.getElementById("window-label");
+      const alertInput = document.getElementById("alert-input");
+      const exportBtn = document.getElementById("export-btn");
+      const alertList = document.getElementById("alert-list");
+      const alertEmpty = document.getElementById("alert-empty");
+      const alertHint = document.getElementById("alert-hint");
+      const trendChart = document.getElementById("trend-chart");
+      const trendStart = document.getElementById("trend-start");
+      const trendEnd = document.getElementById("trend-end");
+      const healthBody = document.getElementById("health-body");
+      const healthEmpty = document.getElementById("health-empty");
+      const logList = document.getElementById("log-list");
+      const logEmpty = document.getElementById("log-empty");
+      const logClear = document.getElementById("log-clear");
+      const logCopy = document.getElementById("log-copy");
+
+      let cachedRows = [];
+      let logs = [];
+      const LOG_KEY = "realityMonitorLogs";
+      const LOG_LIMIT = 200;
+
+      function readQuery() {
+        const params = new URLSearchParams(window.location.search);
+        const hoursParam = parseInt(params.get("hours"), 10);
+        if (!Number.isNaN(hoursParam)) {
+          state.hours = hoursParam;
+        }
+        const detailParam = params.get("detail");
+        if (detailParam !== null) {
+          state.detail = detailParam === "true";
+        }
+      }
+
+      function syncControls() {
+        hoursSelect.value = String(state.hours);
+        detailToggle.checked = state.detail;
+        windowLabel.textContent = state.hours + "h";
+      }
+
+      function updateQuery() {
+        const url = new URL(window.location.href);
+        url.searchParams.set("hours", String(state.hours));
+        url.searchParams.set("detail", state.detail ? "true" : "false");
+        window.history.replaceState(null, "", url);
+      }
+
+      function setStatus(message) {
+        statusEl.textContent = message;
+      }
+
+      function loadLogs() {
+        try {
+          const raw = localStorage.getItem(LOG_KEY);
+          const parsed = raw ? JSON.parse(raw) : [];
+          logs = Array.isArray(parsed) ? parsed : [];
+        } catch (error) {
+          logs = [];
+        }
+      }
+
+      function saveLogs() {
+        try {
+          localStorage.setItem(LOG_KEY, JSON.stringify(logs));
+        } catch (error) {
+          // ignore localStorage failures
+        }
+      }
+
+      function addLog(level, message, detail) {
+        const entry = {
+          ts: Date.now(),
+          level: level || "info",
+          message: String(message || ""),
+          detail: detail ? String(detail) : ""
+        };
+        logs.unshift(entry);
+        if (logs.length > LOG_LIMIT) {
+          logs = logs.slice(0, LOG_LIMIT);
+        }
+        saveLogs();
+        renderLogs();
+      }
+
+      function renderLogs() {
+        if (!logList || !logEmpty) return;
+        logList.innerHTML = "";
+        if (!logs.length) {
+          logEmpty.style.display = "block";
+          return;
+        }
+        logEmpty.style.display = "none";
+        const fragment = document.createDocumentFragment();
+        logs.forEach((entry) => {
+          const row = document.createElement("div");
+          row.className = "log-item";
+
+          const time = document.createElement("div");
+          time.className = "log-time";
+          time.textContent = new Date(entry.ts).toLocaleString();
+
+          const level = document.createElement("div");
+          level.className = "log-level " + entry.level;
+          level.textContent = entry.level;
+
+          const message = document.createElement("div");
+          message.className = "log-message";
+          message.textContent = entry.message + (entry.detail ? "\n" + entry.detail : "");
+
+          row.appendChild(time);
+          row.appendChild(level);
+          row.appendChild(message);
+          fragment.appendChild(row);
+        });
+        logList.appendChild(fragment);
+      }
+
+      function formatAge(seconds) {
+        if (!Number.isFinite(seconds) || seconds < 0) return "--";
+        if (seconds < 60) return Math.floor(seconds) + "s";
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return minutes + "m";
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return hours + "h";
+        const days = Math.floor(hours / 24);
+        return days + "d";
+      }
+
+      function pickInterval(hours) {
+        if (hours <= 24) return 3600;
+        if (hours <= 72) return 7200;
+        if (hours <= 168) return 21600;
+        return 86400;
+      }
+
+      function formatTick(ts) {
+        const date = new Date(ts * 1000);
+        if (state.hours > 36) {
+          return date.toLocaleDateString();
+        }
+        return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+
+      function aggregateBy(data, key) {
+        const map = new Map();
+        data.forEach((row) => {
+          const label = String(row[key] || "-");
+          const value = Number(row.total_mb || 0);
+          map.set(label, (map.get(label) || 0) + value);
+        });
+        return Array.from(map.entries()).map(([label, value]) => ({ label, value }));
+      }
+
+      function renderBars(container, items) {
+        container.innerHTML = "";
+        if (!items.length) {
+          const empty = document.createElement("div");
+          empty.className = "chart-empty";
+          empty.textContent = "No data";
+          container.appendChild(empty);
+          return;
+        }
+        const maxValue = Math.max(...items.map((item) => item.value), 1);
+        items.forEach((item, index) => {
+          const row = document.createElement("div");
+          row.className = "bar-row";
+          const label = document.createElement("div");
+          label.className = "bar-label";
+          const labelText = document.createElement("span");
+          labelText.textContent = item.label;
+          const valueText = document.createElement("span");
+          valueText.textContent = fmt.format(item.value) + " MB";
+          label.appendChild(labelText);
+          label.appendChild(valueText);
+          const track = document.createElement("div");
+          track.className = "bar-track";
+          const fill = document.createElement("div");
+          fill.className = "bar-fill";
+          const width = Math.max(6, (item.value / maxValue) * 100);
+          fill.style.width = width + "%";
+          fill.style.background = palette[index % palette.length];
+          track.appendChild(fill);
+          row.appendChild(label);
+          row.appendChild(track);
+          container.appendChild(row);
+        });
+      }
+
+      function renderTrend(payload) {
+        if (!trendChart) return;
+        const series = payload && Array.isArray(payload.series) ? payload.series : [];
+        const interval = payload && payload.interval ? payload.interval : 3600;
+        const start = payload && payload.start ? payload.start : null;
+        const end = payload && payload.end ? payload.end : null;
+        if (!series.length || !start || !end) {
+          trendChart.innerHTML = "<text x=\"16\" y=\"24\" fill=\"#5e6676\">No data</text>";
+          if (trendStart) trendStart.textContent = "--";
+          if (trendEnd) trendEnd.textContent = "--";
+          return;
+        }
+
+        const startBucket = Math.floor(start / interval) * interval;
+        const endBucket = Math.floor(end / interval) * interval;
+        const map = new Map(series.map((item) => [item.bucket, item]));
+        const filled = [];
+        for (let t = startBucket; t <= endBucket; t += interval) {
+          const item = map.get(t) || { bucket: t, total_mb: 0 };
+          filled.push(item);
+        }
+
+        const maxValue = Math.max(...filled.map((item) => Number(item.total_mb || 0)), 1);
+        const width = 800;
+        const height = 180;
+        const padding = 18;
+        const span = Math.max(filled.length - 1, 1);
+        const points = filled.map((item, index) => {
+          const x = padding + ((width - padding * 2) * index) / span;
+          const y =
+            height - padding - ((height - padding * 2) * Number(item.total_mb || 0)) / maxValue;
+          return { x, y };
+        });
+        const line = points
+          .map((point, index) => (index === 0 ? "M" : "L") + point.x + "," + point.y)
+          .join(" ");
+        const area =
+          line +
+          " L" +
+          (padding + (width - padding * 2)) +
+          "," +
+          (height - padding) +
+          " L" +
+          padding +
+          "," +
+          (height - padding) +
+          " Z";
+
+        trendChart.setAttribute("viewBox", "0 0 " + width + " " + height);
+        trendChart.innerHTML =
+          "<defs>" +
+          "<linearGradient id=\"trendFill\" x1=\"0\" x2=\"0\" y1=\"0\" y2=\"1\">" +
+          "<stop offset=\"0%\" stop-color=\"#ff7a59\" stop-opacity=\"0.35\" />" +
+          "<stop offset=\"100%\" stop-color=\"#ff7a59\" stop-opacity=\"0\" />" +
+          "</linearGradient>" +
+          "</defs>" +
+          "<path d=\"" +
+          area +
+          "\" fill=\"url(#trendFill)\" />" +
+          "<path d=\"" +
+          line +
+          "\" fill=\"none\" stroke=\"#ff7a59\" stroke-width=\"3\" stroke-linecap=\"round\" />" +
+          "<circle cx=\"" +
+          points[points.length - 1].x +
+          "\" cy=\"" +
+          points[points.length - 1].y +
+          "\" r=\"4\" fill=\"#ff7a59\" />";
+
+        if (trendStart) trendStart.textContent = formatTick(startBucket);
+        if (trendEnd) trendEnd.textContent = formatTick(endBucket);
+      }
+
+      function renderAlerts(rows) {
+        if (!alertList || !alertEmpty || !alertInput) return;
+        const threshold = parseFloat(alertInput.value);
+        const limit = 8;
+        const minValue = Number.isFinite(threshold) ? threshold : 0;
+        if (alertHint) alertHint.textContent = "Over " + fmt.format(minValue) + " MB";
+
+        const alerts = [];
+        const userAgg = aggregateBy(rows, "user");
+        userAgg.forEach((item) => {
+          if (item.value >= minValue) {
+            alerts.push({ type: "User", label: item.label, value: item.value });
+          }
+        });
+        if (state.detail) {
+          const nodeAgg = aggregateBy(
+            rows.filter((row) => row.node && row.node !== "ALL"),
+            "node"
+          );
+          nodeAgg.forEach((item) => {
+            if (item.value >= minValue) {
+              alerts.push({ type: "Node", label: item.label, value: item.value });
+            }
+          });
+        }
+        alerts.sort((a, b) => b.value - a.value);
+        alertList.innerHTML = "";
+        if (!alerts.length) {
+          alertEmpty.style.display = "block";
+          return;
+        }
+        alertEmpty.style.display = "none";
+        const fragment = document.createDocumentFragment();
+        alerts.slice(0, limit).forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "alert-item";
+          const label = document.createElement("div");
+          label.textContent = item.type + ": " + item.label;
+          const value = document.createElement("div");
+          value.className = "alert-meta";
+          value.textContent = fmt.format(item.value) + " MB";
+          row.appendChild(label);
+          row.appendChild(value);
+          fragment.appendChild(row);
+        });
+        alertList.appendChild(fragment);
+      }
+
+      function renderHealth(rows) {
+        if (!healthBody || !healthEmpty) return;
+        healthBody.innerHTML = "";
+        if (!rows.length) {
+          healthEmpty.style.display = "block";
+          return;
+        }
+        healthEmpty.style.display = "none";
+        const fragment = document.createDocumentFragment();
+        rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          const tdNode = document.createElement("td");
+          tdNode.textContent = row.node || "-";
+          const tdLast = document.createElement("td");
+          tdLast.textContent = row.last_seen ? new Date(row.last_seen * 1000).toLocaleString() : "--";
+          const tdAge = document.createElement("td");
+          tdAge.textContent = formatAge(row.last_seen_ago_sec);
+          const tdTotal = document.createElement("td");
+          tdTotal.className = "num";
+          tdTotal.textContent = fmt.format(row.total_mb || 0);
+          const tdStatus = document.createElement("td");
+          const badge = document.createElement("span");
+          badge.className = "badge " + (row.stale ? "stale" : "ok");
+          badge.textContent = row.stale ? "Stale" : "Ok";
+          tdStatus.appendChild(badge);
+          tr.appendChild(tdNode);
+          tr.appendChild(tdLast);
+          tr.appendChild(tdAge);
+          tr.appendChild(tdTotal);
+          tr.appendChild(tdStatus);
+          fragment.appendChild(tr);
+        });
+        healthBody.appendChild(fragment);
+      }
+
+      function renderTable(rows) {
+        tableBody.innerHTML = "";
+        const query = state.query.toLowerCase();
+        const filtered = rows.filter((row) => {
+          const user = String(row.user || "").toLowerCase();
+          const node = String(row.node || "").toLowerCase();
+          if (!query) return true;
+          return user.includes(query) || node.includes(query);
+        });
+        filtered.sort((a, b) => Number(b.total_mb || 0) - Number(a.total_mb || 0));
+        tableHint.textContent = "Showing " + filtered.length + " of " + rows.length;
+
+        if (!filtered.length) {
+          emptyState.style.display = "block";
+          return;
+        }
+        emptyState.style.display = "none";
+        const fragment = document.createDocumentFragment();
+        filtered.forEach((row) => {
+          const tr = document.createElement("tr");
+          const tdUser = document.createElement("td");
+          tdUser.textContent = row.user || "-";
+          const tdNode = document.createElement("td");
+          tdNode.textContent = row.node === "ALL" ? "All" : row.node || "-";
+          const tdUp = document.createElement("td");
+          tdUp.className = "num";
+          tdUp.textContent = fmt.format(row.upload_mb || 0);
+          const tdDown = document.createElement("td");
+          tdDown.className = "num";
+          tdDown.textContent = fmt.format(row.download_mb || 0);
+          const tdTotal = document.createElement("td");
+          tdTotal.className = "num";
+          tdTotal.textContent = fmt.format(row.total_mb || 0);
+          tr.appendChild(tdUser);
+          tr.appendChild(tdNode);
+          tr.appendChild(tdUp);
+          tr.appendChild(tdDown);
+          tr.appendChild(tdTotal);
+          fragment.appendChild(tr);
+        });
+        tableBody.appendChild(fragment);
+      }
+
+      function render(data) {
+        const totalUpValue = data.reduce((sum, row) => sum + Number(row.upload_mb || 0), 0);
+        const totalDownValue = data.reduce((sum, row) => sum + Number(row.download_mb || 0), 0);
+        const totalValue = data.reduce((sum, row) => sum + Number(row.total_mb || 0), 0);
+        const users = new Set(data.map((row) => row.user).filter(Boolean));
+        const nodes = new Set(
+          data.map((row) => row.node).filter((node) => node && node !== "ALL")
+        );
+
+        totalTraffic.textContent = fmt.format(totalValue) + " MB";
+        totalUp.textContent = fmt.format(totalUpValue);
+        totalDown.textContent = fmt.format(totalDownValue);
+        userCount.textContent = fmtInt.format(users.size);
+        if (state.detail) {
+          nodeCount.textContent = fmtInt.format(nodes.size);
+          nodeSub.textContent = "Active nodes in window";
+          nodeCard.style.display = "block";
+        } else {
+          nodeCount.textContent = "--";
+          nodeSub.textContent = "Detail mode off";
+          nodeCard.style.display = "none";
+        }
+
+        const userAgg = aggregateBy(data, "user").sort((a, b) => b.value - a.value);
+        const nodeAgg = state.detail
+          ? aggregateBy(data.filter((row) => row.node && row.node !== "ALL"), "node").sort((a, b) => b.value - a.value)
+          : [];
+
+        const topUserItem = userAgg[0];
+        topUser.textContent = topUserItem ? topUserItem.label : "--";
+        topUserTraffic.textContent = topUserItem ? fmt.format(topUserItem.value) + " MB" : "0 MB";
+
+        renderBars(userChart, userAgg.slice(0, 8));
+        if (state.detail) {
+          renderBars(nodeChart, nodeAgg.slice(0, 8));
+        }
+        renderTable(data);
+        renderAlerts(data);
+      }
+
+      async function loadTrend() {
+        const interval = pickInterval(state.hours);
+        try {
+          const response = await fetch(
+            `/stats/timeseries?hours=${state.hours}&interval=${interval}`,
+            { cache: "no-store" }
+          );
+          if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+          }
+          const payload = await response.json();
+          renderTrend(payload);
+        } catch (error) {
+          renderTrend(null);
+          addLog("error", "Failed to load /stats/timeseries", error.message || String(error));
+        }
+      }
+
+      async function loadHealth() {
+        try {
+          const response = await fetch(`/stats/health?hours=${state.hours}`, { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+          }
+          const data = await response.json();
+          renderHealth(Array.isArray(data) ? data : []);
+        } catch (error) {
+          renderHealth([]);
+          addLog("error", "Failed to load /stats/health", error.message || String(error));
+        }
+      }
+
+      async function loadData() {
+        setStatus("Fetching data...");
+        updateQuery();
+        syncControls();
+        try {
+          const response = await fetch(`/stats/daily?hours=${state.hours}&detail=${state.detail}`, { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+          }
+          const data = await response.json();
+          const rows = Array.isArray(data) ? data : [];
+          cachedRows = rows;
+          recordCount.textContent = fmtInt.format(rows.length);
+          lastRefresh.textContent = new Date().toLocaleTimeString();
+          setStatus("Live data for the last " + state.hours + " hours");
+          render(rows);
+        } catch (error) {
+          recordCount.textContent = "0";
+          setStatus("Failed to load data");
+          cachedRows = [];
+          render([]);
+          addLog("error", "Failed to load /stats/daily", error.message || String(error));
+        }
+        await Promise.all([loadTrend(), loadHealth()]);
+      }
+
+      hoursSelect.addEventListener("change", () => {
+        state.hours = parseInt(hoursSelect.value, 10);
+        loadData();
+      });
+      detailToggle.addEventListener("change", () => {
+        state.detail = detailToggle.checked;
+        loadData();
+      });
+      searchInput.addEventListener("input", () => {
+        state.query = searchInput.value.trim();
+        renderTable(cachedRows);
+      });
+      alertInput.addEventListener("input", () => {
+        renderAlerts(cachedRows);
+      });
+      refreshBtn.addEventListener("click", loadData);
+      exportBtn.addEventListener("click", () => {
+        const url = `/stats/export?hours=${state.hours}&detail=${state.detail}&format=csv`;
+        window.open(url, "_blank");
+      });
+      logClear.addEventListener("click", () => {
+        logs = [];
+        saveLogs();
+        renderLogs();
+      });
+      logCopy.addEventListener("click", () => {
+        const text = logs
+          .map((entry) => {
+            const time = new Date(entry.ts).toLocaleString();
+            const detail = entry.detail ? " | " + entry.detail.replace(/\n/g, " ") : "";
+            return "[" + time + "] " + entry.level.toUpperCase() + " " + entry.message + detail;
+          })
+          .join("\n");
+        const blob = new Blob([text || "No logs"], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "monitor_logs.txt";
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+
+      window.addEventListener("error", (event) => {
+        const location = event.filename ? event.filename + ":" + event.lineno + ":" + event.colno : "";
+        addLog("error", event.message || "Script error", location);
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        const reason = event.reason && event.reason.stack ? event.reason.stack : String(event.reason || "");
+        addLog("error", "Unhandled promise rejection", reason);
+      });
+
+      const earlyErrors = window.__monitorEarlyErrors || [];
+      if (Array.isArray(earlyErrors)) {
+        earlyErrors.forEach((entry) => {
+          addLog(entry.level || "error", entry.message || "Script error", entry.detail || "");
+        });
+        window.__monitorEarlyErrors = null;
+      }
+
+      loadLogs();
+      renderLogs();
+      readQuery();
+      syncControls();
+      loadData();
+    })();
+  </script>
+</body>
+</html>
+"""
+
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 def init_db():
@@ -17,6 +1265,9 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS records
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   node TEXT, user TEXT, up INTEGER, down INTEGER, timestamp INTEGER)''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_records_timestamp ON records (timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_records_user ON records (user)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_records_node ON records (node)")
     conn.commit()
     conn.close()
 
@@ -42,6 +1293,48 @@ async def receive_report(report: TrafficReport, token: str = Header(None)):
         conn.close()
     return {"status": "ok"}
 
+def fetch_daily_stats(hours: int, detail: bool):
+    hours = max(1, hours)
+    start_time = int(time.time()) - (hours * 3600)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    if detail:
+        c.execute('''SELECT user, node, SUM(up), SUM(down) FROM records WHERE timestamp > ?
+                     GROUP BY user, node ORDER BY user, SUM(down) DESC''', (start_time,))
+        rows = c.fetchall()
+        result = [
+            {
+                "user": r[0],
+                "node": r[1],
+                "upload_mb": round(r[2] / 1024 / 1024, 2),
+                "download_mb": round(r[3] / 1024 / 1024, 2),
+                "total_mb": round((r[2] + r[3]) / 1024 / 1024, 2)
+            }
+            for r in rows
+        ]
+    else:
+        c.execute('''SELECT user, SUM(up), SUM(down) FROM records WHERE timestamp > ?
+                     GROUP BY user ORDER BY SUM(down) DESC''', (start_time,))
+        rows = c.fetchall()
+        result = [
+            {
+                "user": r[0],
+                "node": "ALL",
+                "upload_mb": round(r[1] / 1024 / 1024, 2),
+                "download_mb": round(r[2] / 1024 / 1024, 2),
+                "total_mb": round((r[1] + r[2]) / 1024 / 1024, 2)
+            }
+            for r in rows
+        ]
+
+    conn.close()
+    return result
+
+@app.get("/stats/ui", response_class=HTMLResponse, include_in_schema=False)
+async def stats_ui():
+    return HTMLResponse(DASHBOARD_HTML)
+
 # --- 【核心修改】 ---
 @app.get("/stats/daily")
 async def get_daily_stats(hours: int = 24, detail: bool = True):
@@ -50,43 +1343,115 @@ async def get_daily_stats(hours: int = 24, detail: bool = True):
     - detail=True (默认): 按 [用户 + 节点] 分组，显示每个用户在每个节点的用量
     - detail=False: 仅按 [用户] 分组，显示总账
     """
-    start_time = int(time.time()) - (hours * 3600)
+    return fetch_daily_stats(hours, detail)
+
+@app.get("/stats/timeseries")
+async def get_timeseries(hours: int = 24, interval: int = 3600, user: str = None, node: str = None):
+    hours = max(1, hours)
+    interval = max(300, min(interval, 86400))
+    now = int(time.time())
+    start_time = now - (hours * 3600)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
-    if detail:
-        # 详细模式：同时按 user 和 node 分组
-        c.execute('''SELECT user, node, SUM(up), SUM(down) FROM records WHERE timestamp > ? 
-                     GROUP BY user, node ORDER BY user, SUM(down) DESC''', (start_time,))
-        rows = c.fetchall()
-        result = [
-            {
-                "user": r[0],
-                "node": r[1], # 多了节点字段
-                "upload_mb": round(r[2]/1024/1024, 2),
-                "download_mb": round(r[3]/1024/1024, 2),
-                "total_mb": round((r[2]+r[3])/1024/1024, 2)
-            } 
-            for r in rows
-        ]
-    else:
-        # 汇总模式：只按 user 分组 (算总账)
-        c.execute('''SELECT user, SUM(up), SUM(down) FROM records WHERE timestamp > ? 
-                     GROUP BY user ORDER BY SUM(down) DESC''', (start_time,))
-        rows = c.fetchall()
-        result = [
-            {
-                "user": r[0],
-                "node": "ALL", # 标记为所有节点
-                "upload_mb": round(r[1]/1024/1024, 2),
-                "download_mb": round(r[2]/1024/1024, 2),
-                "total_mb": round((r[1]+r[2])/1024/1024, 2)
-            } 
-            for r in rows
-        ]
-        
+
+    query = '''SELECT (timestamp - (timestamp % ?)) as bucket, SUM(up), SUM(down)
+               FROM records WHERE timestamp > ?'''
+    params = [interval, start_time]
+    if user:
+        query += " AND user = ?"
+        params.append(user)
+    if node:
+        query += " AND node = ?"
+        params.append(node)
+    query += " GROUP BY bucket ORDER BY bucket"
+
+    c.execute(query, params)
+    rows = c.fetchall()
     conn.close()
+
+    series = [
+        {
+            "bucket": r[0],
+            "upload_mb": round((r[1] or 0) / 1024 / 1024, 2),
+            "download_mb": round((r[2] or 0) / 1024 / 1024, 2),
+            "total_mb": round(((r[1] or 0) + (r[2] or 0)) / 1024 / 1024, 2)
+        }
+        for r in rows
+    ]
+    return {"start": start_time, "end": now, "interval": interval, "series": series}
+
+@app.get("/stats/health")
+async def get_health(hours: int = 24, stale_minutes: int = 10):
+    hours = max(1, hours)
+    now = int(time.time())
+    stale_seconds = max(60, stale_minutes * 60)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+
+    c.execute("SELECT node, MAX(timestamp) FROM records GROUP BY node")
+    last_seen_rows = c.fetchall()
+    last_seen = {r[0]: r[1] for r in last_seen_rows}
+
+    c.execute('''SELECT node, SUM(up), SUM(down), COUNT(*) FROM records WHERE timestamp > ?
+                 GROUP BY node''', (now - (hours * 3600),))
+    window_rows = c.fetchall()
+    window_map = {r[0]: {"up": r[1] or 0, "down": r[2] or 0, "count": r[3] or 0} for r in window_rows}
+    conn.close()
+
+    result = []
+    for node_name, seen_at in last_seen.items():
+        window = window_map.get(node_name, {"up": 0, "down": 0, "count": 0})
+        age = now - seen_at if seen_at else None
+        total_mb = round((window["up"] + window["down"]) / 1024 / 1024, 2)
+        result.append({
+            "node": node_name,
+            "last_seen": seen_at,
+            "last_seen_ago_sec": age,
+            "upload_mb": round(window["up"] / 1024 / 1024, 2),
+            "download_mb": round(window["down"] / 1024 / 1024, 2),
+            "total_mb": total_mb,
+            "report_count": window["count"],
+            "stale": age is None or age > stale_seconds
+        })
+
+    result.sort(key=lambda item: (item["stale"], item["last_seen"] or 0), reverse=True)
     return result
+
+@app.get("/stats/export")
+async def export_stats(hours: int = 24, detail: bool = True, format: str = "csv"):
+    data = fetch_daily_stats(hours, detail)
+    if format.lower() == "json":
+        return data
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["user", "node", "upload_mb", "download_mb", "total_mb"])
+    for row in data:
+        writer.writerow([
+            row.get("user", ""),
+            row.get("node", ""),
+            row.get("upload_mb", 0),
+            row.get("download_mb", 0),
+            row.get("total_mb", 0)
+        ])
+
+    filename = f"traffic_{hours}h_{'detail' if detail else 'summary'}.csv"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=buffer.getvalue(), media_type="text/csv", headers=headers)
+
+@app.post("/stats/cleanup")
+async def cleanup_stats(days: int = 90, token: str = Header(None)):
+    if token != API_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid Token")
+    days = max(1, days)
+    cutoff = int(time.time()) - (days * 86400)
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM records WHERE timestamp < ?", (cutoff,))
+    deleted = c.rowcount
+    conn.commit()
+    conn.close()
+    return {"deleted": deleted, "cutoff": cutoff}
 
 if __name__ == "__main__":
     import uvicorn
