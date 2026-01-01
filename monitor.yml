@@ -5,7 +5,7 @@
   tasks:
     - name: 创建监控目录
       file:
-        path: /opt/monitor
+        path: /opt/reality/monitor
         state: directory
         mode: '0755'
 
@@ -17,7 +17,7 @@
     - name: 部署服务端代码
       copy:
         src: monitor/server.py
-        dest: /opt/monitor/server.py
+        dest: /opt/reality/monitor/server.py
         mode: '0755'
       notify: 重启监控服务
 
@@ -46,18 +46,18 @@
 
     - name: 创建脚本目录
       file:
-        path: /opt/monitor
+        path: /opt/reality/monitor
         state: directory
         mode: '0755'
 
     - name: 部署上报 Agent
       template:
         src: monitor/agent.py.j2
-        dest: /opt/monitor/agent.py
+        dest: /opt/reality/monitor/agent.py
         mode: '0755'
 
     - name: 设置 Crontab (每分钟上报)
       cron:
         name: "Reality Traffic Report"
         minute: "*"
-        job: "/usr/bin/python3 /opt/monitor/agent.py > /dev/null 2>&1"
+        job: "/usr/bin/python3 /opt/reality/monitor/agent.py > /dev/null 2>&1"

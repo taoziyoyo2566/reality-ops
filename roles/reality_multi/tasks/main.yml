@@ -66,6 +66,19 @@
     name: "{{ xray_image }}"
     source: pull
 
+# 确保基础数据与日志目录存在
+- name: 创建数据根目录
+  file:
+    path: "{{ reality_data_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: 创建日志根目录
+  file:
+    path: "{{ reality_logs_dir }}"
+    state: directory
+    mode: '0755'
+
 # 核心循环：为每个实例准备环境
 - name: 为每个用户创建配置目录
   file:
@@ -87,7 +100,7 @@
 - name: 修正日志目录权限 (归属给 UID 10000)
   become: yes
   file:
-    path: "{{ reality_data_dir }}/{{ item.name }}/logs"
+    path: "{{ reality_logs_dir }}/{{ item.name }}"
     state: directory
     # 【确认】这步非常关键，配合 Dockerfile 的 USER 10000
     owner: "10000"
@@ -114,7 +127,7 @@
       net.ipv6.conf.all.disable_ipv6: "1"
     volumes:
       - "{{ reality_data_dir }}/{{ item.name }}/config.json:/config.json:ro"
-      - "{{ reality_data_dir }}/{{ item.name }}/logs:/var/log/xray"
+      - "{{ reality_logs_dir }}/{{ item.name }}:/var/log/xray"
     restart: "{{ item.name in config_changed.results | selectattr('changed') | map(attribute='item.name') | list }}"
   loop: "{{ reality_instances }}"
 

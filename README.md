@@ -1,6 +1,6 @@
 # Reality Ops
 
-通过 Ansible 部署 Reality (Xray) 与流量监控。数据路径已统一为 `/opt/data`，便于集中管理与备份。
+通过 Ansible 部署 Reality (Xray) 与流量监控。所有运行文件、数据与虚拟环境集中在 `/opt/reality`，便于统一管理与备份。
 
 ## 目录结构
 - `deploy.yml`: 主部署入口 (Reality 单实例 + 监控)
@@ -11,9 +11,11 @@
 - `roles/`: 角色定义
 
 ## 关键路径 (本地与远端统一)
-- 数据目录: `/opt/data`
-- 监控运行目录: `/opt/monitor`
-- 监控虚拟环境: `/opt/monitor/venv`
+- 项目根目录: `/opt/reality`
+- 数据目录: `/opt/reality/data`
+- 日志目录: `/opt/reality/logs`
+- 监控运行目录: `/opt/reality/monitor`
+- 监控虚拟环境: `/opt/reality/monitor/.venv`
 
 ## 前置条件
 - 控制机: 已安装 `ansible`，可 SSH 连接远端
@@ -45,26 +47,44 @@ kagoya ALL=(ALL) NOPASSWD: ALL
 
 ## 配置入口
 `group_vars/all.yml` 里常用变量:
-- `reality_data_dir`: `/opt/data`
-- `monitor_root_dir`: `/opt/monitor`
-- `monitor_venv_dir`: `/opt/monitor/venv`
+- `reality_root_dir`: `/opt/reality`
+- `reality_data_dir`: `/opt/reality/data`
+- `reality_logs_dir`: `/opt/reality/logs`
+- `monitor_root_dir`: `/opt/reality/monitor`
+- `monitor_venv_dir`: `/opt/reality/monitor/.venv`
 - `monitor.server_host`: 监控服务部署的节点名
+
+## 快速上手
+1) 安装集合: `ansible-galaxy collection install community.general community.docker`  
+2) 准备 SSH: `eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519`  
+3) 填写变量: 编辑 `group_vars/all/main.yml`；在 `group_vars/all/vault.yml` 写入随机 token 后加密。  
+4) 预演/实跑:  
+   ```bash
+   ansible -i inventory.ini deploy.yml --check --diff           # 预演；BBR 校验在 check 模式会自动跳过
+   ansible -i inventory.ini deploy.yml --ask-vault-pass         # 实跑；或用 --vault-password-file ~/.vault_pass.txt
+   ```  
+5) 验证: `sudo journalctl -u reality-monitor -f` 或访问 `https://monitor.taoziyoyo.com/stats/ui`。
 
 ## 部署
 ```bash
 ansible -i inventory.ini all -m ping
 ansible-playbook -i inventory.ini deploy.yml --check --diff
 ansible-playbook -i inventory.ini deploy.yml --limit premium
+# 若启用了 Vault（group_vars/all/vault.yml 已加密），在任何 playbook 命令后追加：
+#   --ask-vault-pass          # 交互输入密码
+#   或 --vault-password-file ~/.vault_pass.txt
+# 示例：
+# ansible-playbook -i inventory.ini deploy.yml --check --diff --ask-vault-pass
 ```
 
 > `deploy.yml` 默认使用 `roles/reality_single`。如需多实例，切换为 `roles/reality_multi`。
 
 ## 监控
 - 服务名: `reality-monitor`
-- 数据库: `/opt/data/traffic_monitor.db`
+- 数据库: `/opt/reality/data/traffic_monitor.db`
 - 手动上报:
 ```bash
-sudo /opt/monitor/venv/bin/python3 /usr/local/bin/traffic_agent.py
+sudo /opt/reality/monitor/.venv/bin/python3 /usr/local/bin/traffic_agent.py
 ```
 - 日志:
 ```bash
@@ -75,7 +95,7 @@ sudo journalctl -u reality-monitor -f
 ## 常用操作
 查看日志:
 ```bash
-tail -n 500 /opt/data/reality_core/logs/access.log
+tail -n 500 /opt/reality/logs/reality_core/access.log
 ```
 
 审计日志:
@@ -118,6 +138,12 @@ curl -X POST https://monitor.taoziyoyo.com/report \
   -d '{"node":"netcup","user":"reap","up_delta":1,"down_delta":1}'
 ```
 
+## API/上报速览
+- 上报接口: `POST /report`，Header `token: <report_token>`，JSON 体包含 `node`、`user`、`up_delta`、`down_delta`（字节数）。  
+- 手动测试: `sudo /opt/reality/monitor/.venv/bin/python3 /usr/local/bin/traffic_agent.py` 或使用上面的 curl 示例。  
+- 报表/仪表盘: `.../stats/ui`、`.../stats/daily`，需白名单或 Bearer。  
+- 订阅代理（可选）: 启用 `monitor.subs_proxy.enabled` 后，访问 `.../subs/<sub_id>?token=<subs_token>`。
+
 ## 防火墙放行端口
 ```bash
 grep -hEo '"?port"?: ?[0-9]+' users/*.yml users/*.json \
@@ -135,4 +161,4 @@ docker ps -a \
 
 ## 备注
 - `monitor.yml` 为旧版脚本 (依赖 `monitor/` 目录)，当前不作为主流程使用。
-- 监控虚拟环境缺失 pip 时，会自动重建 `/opt/monitor/venv` 以提高可靠性。
+- 监控虚拟环境缺失 pip 时，会自动重建 `/opt/reality/monitor/.venv` 以提高可靠性。

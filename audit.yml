@@ -5,8 +5,8 @@
   tasks:
     - name: 提取最近的访问日志 (User + IP)
       shell: |
-        # 统一使用 /opt/data 路径
-        LOG_FILE="{{ reality_data_dir }}/reality_core/logs/access.log"
+        # 统一使用 /opt/reality 路径
+        LOG_FILE="{{ reality_logs_dir }}/reality_core/access.log"
         
         # 如果找到了，提取 用户名 和 IP
         if [ -f "$LOG_FILE" ]; then
