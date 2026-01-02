@@ -249,6 +249,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       gap: 16px;
     }
+    .charts-grid {
+      grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
+    }
     .card-head {
       display: flex;
       align-items: baseline;
@@ -291,6 +294,33 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       border-radius: 999px;
       transition: width 0.6s ease;
     }
+    .stack-row {
+      display: grid;
+      gap: 8px;
+    }
+    .stack-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .stack-track {
+      display: flex;
+      gap: 0;
+      height: 14px;
+      background: rgba(15, 23, 42, 0.08);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .stack-segment {
+      height: 100%;
+      min-width: 6px;
+      transition: width 0.4s ease;
+    }
+    .stack-segment:hover {
+      filter: brightness(0.95);
+    }
     .chart-empty {
       font-size: 13px;
       color: var(--muted);
@@ -321,6 +351,19 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       grid-template-columns: 120px 60px 1fr;
       gap: 10px;
       align-items: start;
+    }
+    .stack-tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(15, 23, 42, 0.92);
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+      z-index: 9999;
+      display: none;
+      white-space: nowrap;
     }
     .log-time {
       color: var(--muted);
@@ -536,8 +579,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <span>Detail by node</span>
       </label>
       <label>
-        Filter
-        <input id="search-input" type="search" placeholder="user or node" />
+        Node
+        <select id="node-select">
+          <option value="all">All</option>
+        </select>
+      </label>
+      <label>
+        User
+        <select id="user-select">
+          <option value="all">All</option>
+        </select>
       </label>
       <label>
         Alert (MB)
@@ -570,7 +621,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       </div>
     </section>
 
-    <section class="grid">
+    <section class="grid charts-grid">
       <div class="card">
         <div class="card-head">
           <h3>Top Users</h3>
@@ -689,21 +740,24 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   </script>
   <script data-cfasync="false">
     (() => {
-      const state = { hours: 24, detail: true, query: "" };
+      const state = { hours: 24, detail: true, selectedNode: "all", selectedUser: "all" };
       const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
       const fmtInt = new Intl.NumberFormat("en-US");
       const palette = [
-        "linear-gradient(90deg, #ff7a59, #f2b94c)",
-        "linear-gradient(90deg, #21a8a4, #8bd9c2)",
-        "linear-gradient(90deg, #2aa0ff, #21d4fd)",
-        "linear-gradient(90deg, #f05f71, #f7a8b8)",
-        "linear-gradient(90deg, #f2b94c, #f7d774)",
-        "linear-gradient(90deg, #4cc38a, #9fe6a0)"
+        "linear-gradient(90deg, #ff7a59, #f5b461)",  // warm coral
+        "linear-gradient(90deg, #f2b94c, #f7d774)",  // amber
+        "linear-gradient(90deg, #4cc38a, #9fe6a0)",  // green
+        "linear-gradient(90deg, #2aa0ff, #5fd4ff)",  // blue
+        "linear-gradient(90deg, #f05f71, #f7a8b8)",  // rose
+        "linear-gradient(90deg, #a66df0, #c8a5ff)",  // purple
+        "linear-gradient(90deg, #ff9f7a, #ffd284)",  // peach
+        "linear-gradient(90deg, #3bb6a3, #7dded3)"   // teal
       ];
 
       const hoursSelect = document.getElementById("hours-select");
       const detailToggle = document.getElementById("detail-toggle");
-      const searchInput = document.getElementById("search-input");
+      const nodeSelect = document.getElementById("node-select");
+      const userSelect = document.getElementById("user-select");
       const refreshBtn = document.getElementById("refresh-btn");
       const lastRefresh = document.getElementById("last-refresh");
       const recordCount = document.getElementById("record-count");
@@ -758,6 +812,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       function syncControls() {
         hoursSelect.value = String(state.hours);
         detailToggle.checked = state.detail;
+        nodeSelect.value = state.selectedNode || "all";
+        userSelect.value = state.selectedUser || "all";
         windowLabel.textContent = state.hours + "h";
       }
 
@@ -874,6 +930,39 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         return Array.from(map.entries()).map(([label, value]) => ({ label, value }));
       }
 
+      function colorForLabel(label) {
+        let hash = 0;
+        for (let i = 0; i < label.length; i++) {
+          hash = (hash << 5) - hash + label.charCodeAt(i);
+          hash |= 0; // keep 32-bit
+        }
+        const idx = Math.abs(hash) % palette.length;
+        return palette[idx];
+      }
+
+      function buildStacked(rows) {
+        const nodeMap = new Map();
+        rows.forEach((row) => {
+          const node = row.node;
+          const user = row.user || "-";
+          const value = Number(row.total_mb || 0);
+          if (!node || node === "ALL" || value <= 0) return;
+          if (!nodeMap.has(node)) {
+            nodeMap.set(node, { label: node, total: 0, segments: new Map() });
+          }
+          const entry = nodeMap.get(node);
+          entry.total += value;
+          entry.segments.set(user, (entry.segments.get(user) || 0) + value);
+        });
+        const stacks = Array.from(nodeMap.values()).map((entry) => ({
+          label: entry.label,
+          total: entry.total,
+          segments: Array.from(entry.segments.entries()).map(([label, value]) => ({ label, value }))
+        }));
+        stacks.sort((a, b) => b.total - a.total);
+        return stacks;
+      }
+
       function renderBars(container, items) {
         container.innerHTML = "";
         if (!items.length) {
@@ -901,12 +990,94 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           fill.className = "bar-fill";
           const width = Math.max(6, (item.value / maxValue) * 100);
           fill.style.width = width + "%";
-          fill.style.background = palette[index % palette.length];
+          fill.style.background = colorForLabel(item.label);
           track.appendChild(fill);
           row.appendChild(label);
           row.appendChild(track);
           container.appendChild(row);
         });
+      }
+
+      const stackTooltip = document.createElement("div");
+      stackTooltip.className = "stack-tooltip";
+      document.body.appendChild(stackTooltip);
+
+      function showTooltip(text, event) {
+        stackTooltip.textContent = text;
+        stackTooltip.style.display = "block";
+        stackTooltip.style.left = event.pageX + 12 + "px";
+        stackTooltip.style.top = event.pageY + 12 + "px";
+      }
+      function hideTooltip() {
+        stackTooltip.style.display = "none";
+      }
+
+      function renderStackedBars(container, stacks) {
+        container.innerHTML = "";
+        if (!stacks.length) {
+          const empty = document.createElement("div");
+          empty.className = "chart-empty";
+          empty.textContent = "No data";
+          container.appendChild(empty);
+          return;
+        }
+        const maxTotal = Math.max(...stacks.map((item) => item.total), 1);
+        const fragment = document.createDocumentFragment();
+        stacks.forEach((stack) => {
+          const row = document.createElement("div");
+          row.className = "stack-row";
+          const label = document.createElement("div");
+          label.className = "stack-label";
+          const labelText = document.createElement("span");
+          labelText.textContent = stack.label;
+          const valueText = document.createElement("span");
+          valueText.textContent = fmt.format(stack.total) + " MB";
+          label.appendChild(labelText);
+          label.appendChild(valueText);
+
+          const track = document.createElement("div");
+          track.className = "stack-track";
+          const segs = stack.segments
+            .slice()
+            .sort((a, b) => b.value - a.value)
+            .slice(0, 12); // 防止过多分段
+          const remainder =
+            stack.segments.length > segs.length
+              ? stack.segments.slice(segs.length).reduce((sum, s) => sum + Number(s.value || 0), 0)
+              : 0;
+
+          segs.forEach((seg) => {
+            const part = document.createElement("div");
+            part.className = "stack-segment";
+            const width = Math.max(3, (seg.value / stack.total) * 100);
+            part.style.width = width + "%";
+            part.style.background = colorForLabel(seg.label);
+            part.addEventListener("mouseenter", (e) => {
+              showTooltip(`${stack.label} · ${seg.label}: ${fmt.format(seg.value)} MB`, e);
+            });
+            part.addEventListener("mousemove", (e) => showTooltip(`${stack.label} · ${seg.label}: ${fmt.format(seg.value)} MB`, e));
+            part.addEventListener("mouseleave", hideTooltip);
+            track.appendChild(part);
+          });
+
+          if (remainder > 0) {
+            const part = document.createElement("div");
+            part.className = "stack-segment";
+            part.style.width = Math.max(2, (remainder / stack.total) * 100) + "%";
+            part.style.background = "linear-gradient(90deg, #cbd5e1, #94a3b8)";
+            part.addEventListener("mouseenter", (e) => {
+              showTooltip(`${stack.label} · Other: ${fmt.format(remainder)} MB`, e);
+            });
+            part.addEventListener("mousemove", (e) => showTooltip(`${stack.label} · Other: ${fmt.format(remainder)} MB`, e));
+            part.addEventListener("mouseleave", hideTooltip);
+            track.appendChild(part);
+          }
+
+          row.appendChild(label);
+          row.appendChild(track);
+          fragment.appendChild(row);
+        });
+        container.appendChild(fragment);
       }
 
       function renderTrend(payload) {
@@ -1066,13 +1237,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
       function renderTable(rows) {
         tableBody.innerHTML = "";
-        const query = state.query.toLowerCase();
-        const filtered = rows.filter((row) => {
-          const user = String(row.user || "").toLowerCase();
-          const node = String(row.node || "").toLowerCase();
-          if (!query) return true;
-          return user.includes(query) || node.includes(query);
-        });
+        const filtered = rows;
         filtered.sort((a, b) => Number(b.total_mb || 0) - Number(a.total_mb || 0));
         tableHint.textContent = "Showing " + filtered.length + " of " + rows.length;
 
@@ -1108,12 +1273,53 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       }
 
       function render(data) {
-        const totalUpValue = data.reduce((sum, row) => sum + Number(row.upload_mb || 0), 0);
-        const totalDownValue = data.reduce((sum, row) => sum + Number(row.download_mb || 0), 0);
-        const totalValue = data.reduce((sum, row) => sum + Number(row.total_mb || 0), 0);
-        const users = new Set(data.map((row) => row.user).filter(Boolean));
+        // 基于全量数据填充下拉
+        const nodeOptions = ["all"].concat(
+          Array.from(new Set(cachedRows.map((row) => row.node).filter((n) => n && n !== "ALL"))).sort()
+        );
+        const userOptions = ["all"].concat(
+          Array.from(new Set(cachedRows.map((row) => row.user).filter(Boolean))).sort()
+        );
+        if (nodeSelect) {
+          const prev = nodeSelect.value;
+          nodeSelect.innerHTML = "";
+          nodeOptions.forEach((opt) => {
+            const option = document.createElement("option");
+            option.value = opt;
+            option.textContent = opt === "all" ? "All" : opt;
+            nodeSelect.appendChild(option);
+          });
+          nodeSelect.value = prev && nodeOptions.includes(prev) ? prev : "all";
+          state.selectedNode = nodeSelect.value;
+        }
+        if (userSelect) {
+          const prev = userSelect.value;
+          userSelect.innerHTML = "";
+          userOptions.forEach((opt) => {
+            const option = document.createElement("option");
+            option.value = opt;
+            option.textContent = opt === "all" ? "All" : opt;
+            userSelect.appendChild(option);
+          });
+          userSelect.value = prev && userOptions.includes(prev) ? prev : "all";
+          state.selectedUser = userSelect.value;
+        }
+
+        // 应用过滤
+        const filtered = data.filter((row) => {
+          const byNode =
+            state.selectedNode === "all" ||
+            (row.node && row.node !== "ALL" && row.node === state.selectedNode);
+          const byUser = state.selectedUser === "all" || row.user === state.selectedUser;
+          return byNode && byUser;
+        });
+
+        const totalUpValue = filtered.reduce((sum, row) => sum + Number(row.upload_mb || 0), 0);
+        const totalDownValue = filtered.reduce((sum, row) => sum + Number(row.download_mb || 0), 0);
+        const totalValue = filtered.reduce((sum, row) => sum + Number(row.total_mb || 0), 0);
+        const users = new Set(filtered.map((row) => row.user).filter(Boolean));
         const nodes = new Set(
-          data.map((row) => row.node).filter((node) => node && node !== "ALL")
+          filtered.map((row) => row.node).filter((node) => node && node !== "ALL")
         );
 
         totalTraffic.textContent = fmt.format(totalValue) + " MB";
@@ -1130,10 +1336,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           nodeCard.style.display = "none";
         }
 
-        const userAgg = aggregateBy(data, "user").sort((a, b) => b.value - a.value);
-        const nodeAgg = state.detail
-          ? aggregateBy(data.filter((row) => row.node && row.node !== "ALL"), "node").sort((a, b) => b.value - a.value)
-          : [];
+        const userAgg = aggregateBy(filtered, "user").sort((a, b) => b.value - a.value);
+        const nodeStacks = state.detail ? buildStacked(filtered) : [];
 
         const topUserItem = userAgg[0];
         topUser.textContent = topUserItem ? topUserItem.label : "--";
@@ -1141,7 +1345,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         renderBars(userChart, userAgg.slice(0, 8));
         if (state.detail) {
-          renderBars(nodeChart, nodeAgg.slice(0, 8));
+          renderStackedBars(nodeChart, nodeStacks.slice(0, 6));
         }
         renderTable(data);
         renderAlerts(data);
@@ -1184,7 +1388,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         updateQuery();
         syncControls();
         try {
-          const response = await fetch(`/stats/daily?hours=${state.hours}&detail=${state.detail}`, { cache: "no-store" });
+          const params = new URLSearchParams({
+            hours: state.hours,
+            detail: state.detail,
+          });
+          const response = await fetch(`/stats/daily?${params.toString()}`, { cache: "no-store" });
           if (!response.ok) {
             throw new Error("HTTP " + response.status);
           }
@@ -1213,9 +1421,13 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         state.detail = detailToggle.checked;
         loadData();
       });
-      searchInput.addEventListener("input", () => {
-        state.query = searchInput.value.trim();
-        renderTable(cachedRows);
+      nodeSelect.addEventListener("change", () => {
+        state.selectedNode = nodeSelect.value;
+        loadData();
+      });
+      userSelect.addEventListener("change", () => {
+        state.selectedUser = userSelect.value;
+        loadData();
       });
       alertInput.addEventListener("input", () => {
         renderAlerts(cachedRows);
@@ -1286,6 +1498,18 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_records_timestamp ON records (timestamp)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_records_user ON records (user)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_records_node ON records (node)")
+    c.execute('''CREATE TABLE IF NOT EXISTS user_ip_hits
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user TEXT,
+                  node TEXT,
+                  ip TEXT,
+                  first_seen INTEGER,
+                  last_seen INTEGER,
+                  hit_count INTEGER DEFAULT 1,
+                  UNIQUE(user, node, ip))''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_user_ip_hits_user ON user_ip_hits (user)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_user_ip_hits_node ON user_ip_hits (node)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_user_ip_hits_last_seen ON user_ip_hits (last_seen)")
     c.execute('''CREATE TABLE IF NOT EXISTS subscription_logs
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   sub_id TEXT,
@@ -1306,6 +1530,14 @@ class TrafficReport(BaseModel):
     user: str
     up_delta: int
     down_delta: int
+
+class IPReportEntry(BaseModel):
+    user: str
+    ips: list[str]
+
+class IPReport(BaseModel):
+    node: str
+    entries: list[IPReportEntry]
 
 def get_client_ip(request: Request) -> str:
     if TRUST_PROXY_HEADER:
@@ -1358,15 +1590,78 @@ async def receive_report(report: TrafficReport, token: str = Header(None)):
         conn.close()
     return {"status": "ok"}
 
-def fetch_daily_stats(hours: int, detail: bool):
+@app.post("/stats/ip_report", dependencies=[Depends(auth_guard)])
+async def receive_ip_report(payload: IPReport, token: str = Header(None)):
+    if token != REPORT_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid Token")
+    now = int(time.time())
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    for entry in payload.entries:
+        user = entry.user.strip()
+        for ip in entry.ips:
+            ip_val = ip.strip()
+            if not ip_val or not user:
+                continue
+            try:
+                c.execute(
+                    "INSERT INTO user_ip_hits (user, node, ip, first_seen, last_seen, hit_count) VALUES (?, ?, ?, ?, ?, 1) "
+                    "ON CONFLICT(user, node, ip) DO UPDATE SET last_seen = excluded.last_seen, hit_count = user_ip_hits.hit_count + 1",
+                    (user, payload.node, ip_val, now, now)
+                )
+            except Exception:
+                # 单条失败不影响其他
+                continue
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "count": len(payload.entries)}
+
+@app.get("/stats/ip_matrix", dependencies=[Depends(auth_guard)])
+async def get_ip_matrix(hours: int = 72, user: Optional[str] = None, node: Optional[str] = None):
+    hours = max(1, hours)
+    cutoff = int(time.time()) - hours * 3600
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    query = "SELECT user, node, ip, first_seen, last_seen, hit_count FROM user_ip_hits WHERE last_seen >= ?"
+    params = [cutoff]
+    if user:
+        query += " AND user = ?"
+        params.append(user)
+    if node:
+        query += " AND node = ?"
+        params.append(node)
+    c.execute(query, params)
+    rows = c.fetchall()
+    conn.close()
+    return [
+        {
+            "user": r[0],
+            "node": r[1],
+            "ip": r[2],
+            "first_seen": r[3],
+            "last_seen": r[4],
+            "hit_count": r[5],
+        }
+        for r in rows
+    ]
+
+def fetch_daily_stats(hours: int, detail: bool, user: Optional[str] = None, node: Optional[str] = None):
     hours = max(1, hours)
     start_time = int(time.time()) - (hours * 3600)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     if detail:
-        c.execute('''SELECT user, node, SUM(up), SUM(down) FROM records WHERE timestamp > ?
-                     GROUP BY user, node ORDER BY user, SUM(down) DESC''', (start_time,))
+        query = '''SELECT user, node, SUM(up), SUM(down) FROM records WHERE timestamp > ?'''
+        params = [start_time]
+        if user:
+            query += " AND user = ?"
+            params.append(user)
+        if node:
+            query += " AND node = ?"
+            params.append(node)
+        query += " GROUP BY user, node ORDER BY user, SUM(down) DESC"
+        c.execute(query, params)
         rows = c.fetchall()
         result = [
             {
@@ -1379,8 +1674,16 @@ def fetch_daily_stats(hours: int, detail: bool):
             for r in rows
         ]
     else:
-        c.execute('''SELECT user, SUM(up), SUM(down) FROM records WHERE timestamp > ?
-                     GROUP BY user ORDER BY SUM(down) DESC''', (start_time,))
+        query = '''SELECT user, SUM(up), SUM(down) FROM records WHERE timestamp > ?'''
+        params = [start_time]
+        if user:
+            query += " AND user = ?"
+            params.append(user)
+        if node:
+            query += " AND node = ?"
+            params.append(node)
+        query += " GROUP BY user ORDER BY SUM(down) DESC"
+        c.execute(query, params)
         rows = c.fetchall()
         result = [
             {
@@ -1430,13 +1733,13 @@ async def stats_ui():
 
 # --- 【核心修改】 ---
 @app.get("/stats/daily", dependencies=[Depends(auth_guard)])
-async def get_daily_stats(hours: int = 24, detail: bool = True):
+async def get_daily_stats(hours: int = 24, detail: bool = True, user: Optional[str] = None, node: Optional[str] = None):
     """
     获取流量报表
     - detail=True (默认): 按 [用户 + 节点] 分组，显示每个用户在每个节点的用量
     - detail=False: 仅按 [用户] 分组，显示总账
     """
-    return fetch_daily_stats(hours, detail)
+    return fetch_daily_stats(hours, detail, user=user, node=node)
 
 @app.get("/stats/timeseries", dependencies=[Depends(auth_guard)])
 async def get_timeseries(hours: int = 24, interval: int = 3600, user: str = None, node: str = None):

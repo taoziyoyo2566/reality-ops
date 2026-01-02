@@ -2,6 +2,8 @@ import subprocess
 import json
 import requests
 import os
+import re
+from collections import defaultdict
 
 NODE_NAME = "{{ inventory_hostname }}"
 # 【核心】此处引用 monitor.server_public_ip 和 monitor.port
@@ -9,6 +11,7 @@ SERVER_URL = "{{ monitor.server_url }}/report"
 # 【核心】此处引用 monitor.report_token (来自 vault)
 API_TOKEN = "{{ monitor.report_token }}"
 CACHE_FILE = "/tmp/reality_traffic_cache.json"
+LOG_FILE = "/opt/reality/logs/reality_core/access.log"  # 用于用户-IP 采集
 
 def get_core_stats():
     # 只查询 reality_core 容器
@@ -66,5 +69,51 @@ def main():
     with open(CACHE_FILE, 'w') as f:
         json.dump(current, f)
 
+def collect_user_ips():
+    """
+    简单解析 access.log，按用户提取唯一 IP 列表。
+    仅读取最近部分内容，避免日志过大；重复上报会在服务端去重。
+    """
+    if not os.path.isfile(LOG_FILE):
+        return {}
+    try:
+        ips = defaultdict(set)
+        # 只看最近几千行，避免读取超大文件
+        with open(LOG_FILE, 'r', encoding='utf-8', errors='ignore') as f:
+            lines = f.readlines()[-4000:]
+        for line in lines:
+            # 形如: ... from <ip>:port ... email: <user>
+            ip_match = re.search(r"from ([^\\s:]+)", line)
+            user_match = re.search(r"email:\\s*([^\\s]+)", line)
+            if not ip_match or not user_match:
+                continue
+            ip = ip_match.group(1).strip()
+            user = user_match.group(1).strip()
+            if ip and user:
+                ips[user].add(ip)
+        # 转换为普通 dict -> list
+        return {user: list(values) for user, values in ips.items()}
+    except Exception:
+        return {}
+
+def send_ip_report(user_ips):
+    if not user_ips:
+        return
+    try:
+        payload = {
+            "node": NODE_NAME,
+            "entries": [{"user": u, "ips": ips} for u, ips in user_ips.items()],
+        }
+        requests.post(
+            SERVER_URL.replace("/report", "/stats/ip_report"),
+            json=payload,
+            headers={"token": API_TOKEN},
+            timeout=5,
+        )
+    except Exception:
+        pass
+
 if __name__ == "__main__":
     main()
+    # 额外上报用户-IP 去重信息（用于共享判定）
+    send_ip_report(collect_user_ips())

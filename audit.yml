@@ -4,6 +4,7 @@
   gather_facts: yes
   tasks:
     - name: 提取最近的访问日志 (User + IP)
+      become: yes
       shell: |
         # 统一使用 /opt/reality 路径
         LOG_FILE="{{ reality_logs_dir }}/reality_core/access.log"
