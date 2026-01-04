@@ -108,6 +108,19 @@ ansible-playbook -i inventory.ini audit.yml
 ansible-playbook -i inventory.ini reset.yml --limit premium
 ```
 
+## 用户配置脚本 (generate_user.py)
+- 依赖: 需要 `cryptography`。可执行 `python3 -m ensurepip --default-pip && python3 -m pip install cryptography`，或用发行版包管理器安装 (`sudo apt install python3-cryptography`)。
+- 生成/覆盖: `python3 generate_user.py add <name>`（兼容旧用法 `python3 generate_user.py <name>`）；可用 `--port` 指定端口，`--min-port/--max-port` 控制自动分配范围，`--users-dir` 指定目录（不存在会自动创建）。
+- 删除: `python3 generate_user.py delete <name>` 删除对应的 yml/yaml/json。
+- 查看: `python3 generate_user.py list` 默认只显示 yml/yaml；如需包含 json 文件可加 `--include-json`（不展开数组）；如需展开 json 数组逐条查看，可加 `--details`（自动包含 json）。
+- 用户名只允许字母、数字、下划线、短横线，避免路径注入。
+- 无需在本机安装依赖时，可用 Docker:  
+  ```bash
+  python3 generate_user.py --docker add alice
+  python3 generate_user.py --docker list --users-dir /opt/reality/users
+  ```  
+  默认镜像 `python:3.11-slim`，可用 `--docker-image` 调整。
+
 ## 监控安全配置（IP 白名单 + Bearer + Vault）
 1) 生成随机 Token（示例命令）  
 ```bash
