@@ -743,16 +743,60 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const state = { hours: 24, detail: true, selectedNode: "all", selectedUser: "all" };
       const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
       const fmtInt = new Intl.NumberFormat("en-US");
-      const palette = [
-        "linear-gradient(90deg, #ff7a59, #f5b461)",  // warm coral
-        "linear-gradient(90deg, #f2b94c, #f7d774)",  // amber
-        "linear-gradient(90deg, #4cc38a, #9fe6a0)",  // green
-        "linear-gradient(90deg, #2aa0ff, #5fd4ff)",  // blue
-        "linear-gradient(90deg, #f05f71, #f7a8b8)",  // rose
-        "linear-gradient(90deg, #a66df0, #c8a5ff)",  // purple
-        "linear-gradient(90deg, #ff9f7a, #ffd284)",  // peach
-        "linear-gradient(90deg, #3bb6a3, #7dded3)"   // teal
+      const colorCache = new Map();
+      // 精选 16 组高区分度颜色（修正了重复色，最大化视觉差异）
+      // 暴力高对比配色：放弃美感，追求绝对的区分度
+      const basePalette = [
+        "#FF0000", // Red
+        "#0066FF", // Vivid Blue (避免与紫混淆)
+        "#00A651", // Green
+        "#FFC300", // Amber
+        "#9B59B6", // Purple (清晰紫)
+        "#FF7F0E", // Orange
+        "#00C0C7", // Cyan
+        "#E548AB", // Magenta (为需求截图中的 #E48BBB 提供清晰对位)
+        "#8B4513", // Brown
+        "#7FFF00", // Chartreuse
+        "#4B0082", // Indigo
+        "#008B8B", // Dark Cyan/Teal
+        "#D92027", // Crimson
+        "#A7A340", // Olive
+        "#3A6EA5", // Steel Blue
+        "#2F4F4F"  // Dark Slate Gray
       ];
+
+      function hexToRgb(hex) {
+        const v = hex.replace("#", "");
+        return {
+          r: parseInt(v.slice(0, 2), 16),
+          g: parseInt(v.slice(2, 4), 16),
+          b: parseInt(v.slice(4, 6), 16)
+        };
+      }
+
+      function rgbToHsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        let h, s, l = (max + min) / 2;
+        if (max === min) { h = s = 0; }
+        else {
+          const d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+          }
+          h /= 6;
+        }
+        return { h: h * 360, s: s * 100, l: l * 100 };
+      }
+
+      function pastelize(hex, sat = 68, light = 70) {
+        const { r, g, b } = hexToRgb(hex);
+        const { h } = rgbToHsl(r, g, b);
+        return `hsl(${h.toFixed(1)}, ${sat}%, ${light}%)`;
+      }
 
       const hoursSelect = document.getElementById("hours-select");
       const detailToggle = document.getElementById("detail-toggle");
@@ -931,13 +975,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       }
 
       function colorForLabel(label) {
+        if (colorCache.has(label)) return colorCache.get(label);
         let hash = 0;
         for (let i = 0; i < label.length; i++) {
           hash = (hash << 5) - hash + label.charCodeAt(i);
           hash |= 0; // keep 32-bit
         }
-        const idx = Math.abs(hash) % palette.length;
-        return palette[idx];
+        const base = basePalette[Math.abs(hash) % basePalette.length];
+        const flat = pastelize(base, 62, 72); // 柔和浅色，保持高区分度
+        colorCache.set(label, flat);
+        return flat;
       }
 
       function buildStacked(rows) {
