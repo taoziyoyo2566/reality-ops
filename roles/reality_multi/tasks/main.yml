@@ -48,7 +48,29 @@
           当前算法: {{ current_cc.stdout }} (预期: bbr)
           当前队列: {{ qdisc.stdout }} (预期: fq)
           请检查内核版本是否 >= 4.9，或是否存在云服务商限制。
+      when: not ansible_check_mode
   become: yes
+
+- name: 停止并删除单实例容器 reality_core（避免端口占用）
+  community.docker.docker_container:
+    name: reality_core
+    state: absent
+  become: yes
+
+- name: 获取当前监听端口
+  command: ss -ltnH
+  register: listen_ports
+  changed_when: false
+
+- name: 检查端口占用（多实例）
+  vars:
+    reality_ports: "{{ reality_instances | map(attribute='port') | map('string') | list }}"
+    used_ports: "{{ listen_ports.stdout_lines | map('regex_search','(\\d+)$') | select('string') | list }}"
+    conflict_ports: "{{ reality_ports | intersect(used_ports) }}"
+  assert:
+    that:
+      - conflict_ports | length == 0
+    fail_msg: "端口被占用: {{ conflict_ports | join(', ') }}"
 
 - name: 安装 软件包 环境
   block:
@@ -118,7 +140,10 @@
     restart_policy: always
     # 【新增】显式指定容器运行用户，双重保险 (配合 Dockerfile)
     user: "10000:10000"
-    memory: "300m" 
+    memory: "{{ reality_memory_limit | default('300m') }}"
+    memory_swap: "{{ reality_memory_swap | default('1g') }}"
+    memory_reservation: "{{ reality_memory_reservation | default('200m') }}"
+    memory_swappiness: "{{ reality_mem_swappiness | default(60) }}"
     cpus: "1"
     ports:
       # 【确认】非Root容器内部监听 8443，映射到宿主机的 item.port
@@ -128,6 +153,8 @@
     volumes:
       - "{{ reality_data_dir }}/{{ item.name }}/config.json:/config.json:ro"
       - "{{ reality_logs_dir }}/{{ item.name }}:/var/log/xray"
+    # 默认不强制重建，避免每次部署都重建所有容器；如需应用资源参数变更，可设置 reality_force_recreate=true
+    recreate: "{{ reality_force_recreate | default(false) }}"
     restart: "{{ item.name in config_changed.results | selectattr('changed') | map(attribute='item.name') | list }}"
   loop: "{{ reality_instances }}"
 
@@ -166,7 +193,7 @@
         {
           "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
           "id": "{{ item.uuid }}",
-          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv4"
+          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
         }
         {% if ansible_default_ipv6.address is defined %}
         ,{
@@ -185,6 +212,6 @@
     rule: allow
     port: "{{ item.port }}"
     proto: tcp
-  loop: "{{ reality_instances }}"
+  loop: []
   loop_control:
-    label: "Allow port {{ item.port }} for {{ item.name }}"
+    label: "skip"

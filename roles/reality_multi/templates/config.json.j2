@@ -18,7 +18,7 @@
         "uplinkOnly": 0,
         "downlinkOnly": 0,
         "bufferSize": 0,
-        "connLimit": 6
+        "connLimit": {{ reality_conn_limit_multi | default(6) }}
       }
     },
     "system": {

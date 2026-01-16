@@ -19,8 +19,16 @@
         label: "{{ item.path | basename }}"
 
   roles:
-    - reality_single
-    - monitor  # 【已包含监控角色】
+    # reality_mode: 单实例/多实例切换；默认 single
+    - role: reality_single
+      when: reality_mode | default('single') == 'single'
+
+    - role: reality_multi
+      when: reality_mode | default('single') == 'multi'
+
+    # 监控可通过 monitor_enabled 关闭（多实例时默认建议关闭）
+    - role: monitor
+      when: monitor_enabled | default(true)
 
   # =========================================================
   # 🟢 核心修改：使用 post_tasks 代替独立的 localhost play

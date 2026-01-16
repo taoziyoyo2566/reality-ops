@@ -15,6 +15,7 @@
 
     - name: 加载所有用户配置
       delegate_to: localhost
+      delegate_facts: true
       run_once: true
       set_fact:
         reality_instances: "{{ reality_instances | default([]) + [ lookup('file', item.path) | from_yaml ] }}"
@@ -24,9 +25,16 @@
 
     - name: 注入用户配置到远端主机
       set_fact:
-        reality_instances: "{{ hostvars['localhost'].reality_instances | default([]) }}"
+        reality_instances: "{{ hostvars['localhost'].reality_instances | default(hostvars[inventory_hostname].reality_instances | default([])) }}"
 
   tasks:
+    # 0. 如果切到多实例，先确保旧的单实例容器被清理
+    - name: 停止并删除单实例容器 reality_core（仅多实例节点）
+      community.docker.docker_container:
+        name: reality_core
+        state: absent
+      when: reality_mode | default('single') == 'multi'
+
     # 2. 删除容器
     - name: 停止并删除所有 Reality 容器
       community.docker.docker_container:

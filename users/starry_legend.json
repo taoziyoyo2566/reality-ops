@@ -4,4 +4,9 @@
     "id": "1ae9db34-6ecc-4e0a-91e2-28369e046508",
     "subscription": "vless://1ae9db34-6ecc-4e0a-91e2-28369e046508@legendo9drrm5l1d7uopaguucnxohzc3ul2yazxrldzpuoduu.taoziyoyo.com:30855?encryption=none&security=reality&type=tcp&sni=www.apple.com&fp=chrome&pbk=g5Ef6_nVezt1h5s_yKlI2tg-RK5G4osE-bQ7-5joSjQ&sid=e602ad057d921094&flow=xtls-rprx-vision#starry.legend@taoziyoyo.com"
   }
+    ,{
+    "user": "starry.legend@taoziyoyo.com",
+    "id": "1ae9db34-6ecc-4e0a-91e2-28369e046508",
+    "subscription": "vless://1ae9db34-6ecc-4e0a-91e2-28369e046508@legendo9drrm5l1d7uopaguucnxohzc3ul2yazxrldzpuoduu.taoziyoyo.com:30855?encryption=none&security=reality&type=tcp&sni=www.apple.com&fp=chrome&pbk=g5Ef6_nVezt1h5s_yKlI2tg-RK5G4osE-bQ7-5joSjQ&sid=e602ad057d921094&flow=xtls-rprx-vision#starry.legend@taoziyoyo.com_ipv6"
+  }
   ]

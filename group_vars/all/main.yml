@@ -10,6 +10,14 @@ reality_data_dir: "{{ reality_root_dir }}/data"
 reality_logs_dir: "{{ reality_root_dir }}/logs"
 monitor_root_dir: "{{ reality_root_dir }}/monitor"
 monitor_venv_dir: "{{ monitor_root_dir }}/.venv"
+# 容器资源参数（可按节点覆盖）
+reality_memory_limit: "300m"
+reality_memory_swap: "1g"
+reality_memory_reservation: "200m"
+reality_mem_swappiness: 60
+# 连接数限制（可按模式/节点覆盖）
+reality_conn_limit_single: 24
+reality_conn_limit_multi: 6
 
 # --- 监控系统配置 ---
 monitor:
