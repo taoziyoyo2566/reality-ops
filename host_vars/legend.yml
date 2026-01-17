@@ -1,3 +1,4 @@
 # 多实例部署（暂不启用监控）
 reality_mode: single
 monitor_enabled: false
+node_level: 1

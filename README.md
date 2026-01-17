@@ -172,6 +172,11 @@ docker ps -a \
   --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}'
 ```
 
+## Admin API（控制机）
+- FastAPI 管理接口 `admin_server.py`（供 n8n/Bot 调用），部署在宿主机。
+- 先执行 `./scripts/setup_admin_venv.sh` 创建虚拟环境，再按 `ADMIN_API.md` 配置 systemd（记得设置 `ADMIN_TOKEN` 和订阅域名）。
+- 详细说明与 systemd 模板见 `ADMIN_API.md` 与 `systemd/reality-admin.service`。
+
 ## 备注
 - `monitor.yml` 为旧版脚本 (依赖 `monitor/` 目录)，当前不作为主流程使用。
 - 监控虚拟环境缺失 pip 时，会自动重建 `/opt/reality/monitor/.venv` 以提高可靠性。

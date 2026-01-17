@@ -56,10 +56,10 @@
         "clients": [
           {
             "id": "{{ item.uuid }}",
-            "email": "{{ item.name }}.{{ inventory_hostname }}",
             "flow": "xtls-rprx-vision",
-            "level": 0,
-            "alterId": 0
+            "email": "{{ item.name }}.{{ inventory_hostname }}",
+            "level": {{ item.access_level | default(0) | int }},
+            "expire": "{{ item.expire_at | default('') }}"
           }
         ],
         "decryption": "none"

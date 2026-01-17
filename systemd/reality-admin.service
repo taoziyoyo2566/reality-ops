@@ -1,0 +1,18 @@
+[Unit]
+Description=Reality Admin API
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/reality-ops
+# 从 .env 文件加载机密信息
+EnvironmentFile=/opt/reality-ops/.env
+# 以下为可选配置，如果 .env 中已定义，则 .env 优先级更高
+Environment=ADMIN_WORKDIR=/opt/reality-ops
+Environment=ADMIN_VENV_BIN=/opt/reality-ops/.venv/bin
+ExecStart=/opt/reality-ops/.venv/bin/python3 -m uvicorn admin_server:app --host 127.0.0.1 --port 8000
+Restart=always
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

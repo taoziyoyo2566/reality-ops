@@ -4,5 +4,6 @@
   "port": 38470,
   "short_id": "7b72332bd289ee68",
   "private_key": "sJpl-DvZlsGR4aWahS7EW0POeN2zOqDdKg4CtGJa4GU",
-  "public_key": "75zoAXjqr4p6Yd_b9bHE1v-qqxPYgmFeQYbfC2-uuU0"
+  "public_key": "75zoAXjqr4p6Yd_b9bHE1v-qqxPYgmFeQYbfC2-uuU0",
+  "access_level": 6
 }

@@ -4,5 +4,6 @@
   "port": 41557,
   "short_id": "552b395f790fdc37",
   "private_key": "eA7ex9CZWt7tblgvqzfEaTZ55rg9_VCMgBh4SYyzyFA",
-  "public_key": "ItAOSODmf7jKdg95njUFbZckChFgLUHFv3yqBhhYZVY"
+  "public_key": "ItAOSODmf7jKdg95njUFbZckChFgLUHFv3yqBhhYZVY",
+  "access_level": 5
 }

@@ -18,13 +18,36 @@
       loop_control:
         label: "{{ item.path | basename }}"
 
+    - name: 初始化过滤后的实例列表
+      set_fact:
+        reality_instances_filtered: []
+
+    - name: 过滤过期或等级不足的用户
+      set_fact:
+        reality_instances_filtered: "{{ reality_instances_filtered + [item] }}"
+      loop: "{{ reality_instances | default([]) }}"
+      vars:
+        today: "{{ ansible_date_time.date | to_datetime('%Y-%m-%d') }}"
+        expiry: "{{ (item.expire_at | default('9999-12-31')) | to_datetime('%Y-%m-%d') }}"
+        node_level_effective: "{{ node_level | default(node_level_default | default(0)) | int }}"
+        user_level_effective: "{{ item.access_level | default(access_level_default | default(1)) | int }}"
+      when:
+        - user_level_effective >= node_level_effective
+        - expiry >= today
+
+    - name: 覆盖 reality_instances 为过滤后的列表
+      set_fact:
+        reality_instances: "{{ reality_instances_filtered | default([]) }}"
+
   roles:
     # reality_mode: 单实例/多实例切换；默认 single
     - role: reality_single
       when: reality_mode | default('single') == 'single'
+      tags: ['users', 'deploy']  # <--- 新增 Tag
 
     - role: reality_multi
       when: reality_mode | default('single') == 'multi'
+      tags: ['users', 'deploy']  # <--- 新增 Tag
 
     # 监控可通过 monitor_enabled 关闭（多实例时默认建议关闭）
     - role: monitor
@@ -35,6 +58,7 @@
   # =========================================================
   post_tasks:
     - name: 执行脚本更新 GitHub Gist
+      tags: ['users']
       command: python3 {{ playbook_dir }}/generate_subs_gist.py
       delegate_to: localhost  # 强制在本机执行
       run_once: true          # 无论同时部署几台 VPS，这个脚本只跑一次

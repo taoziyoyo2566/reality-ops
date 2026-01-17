@@ -1,0 +1,6 @@
+ansible
+cryptography
+fastapi
+pydantic
+uvicorn[standard]
+python-dotenv

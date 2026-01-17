@@ -46,11 +46,10 @@
         "clients": [
           {
             "id": "{{ item.uuid }}",
-            "email": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
             "flow": "xtls-rprx-vision",
-            "level": 0,
-            "alterId": 0,
-            "expire": "{{ item.expire | default('') }}"
+            "email": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
+            "level": {{ item.access_level | default(0) | int }},
+            "expire": "{{ item.expire_at | default('') }}"
           }
         ],
         "decryption": "none"

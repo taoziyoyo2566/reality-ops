@@ -1,0 +1,5 @@
+---
+- hosts: spt
+  become: yes
+  roles:
+    - role: admin

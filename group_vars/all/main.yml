@@ -10,6 +10,10 @@ reality_data_dir: "{{ reality_root_dir }}/data"
 reality_logs_dir: "{{ reality_root_dir }}/logs"
 monitor_root_dir: "{{ reality_root_dir }}/monitor"
 monitor_venv_dir: "{{ monitor_root_dir }}/.venv"
+# 默认节点等级（可在 host_vars/<host>.yml 覆盖 node_level）
+node_level_default: 0
+# 默认用户等级（可在用户文件 access_level 覆盖）
+access_level_default: 1
 # 容器资源参数（可按节点覆盖）
 reality_memory_limit: "300m"
 reality_memory_swap: "1g"

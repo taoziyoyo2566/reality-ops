@@ -1,0 +1,7 @@
+---
+- name: Restart admin service
+  systemd:
+    name: reality-admin
+    state: restarted
+    enabled: yes
+    daemon_reload: yes

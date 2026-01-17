@@ -158,6 +158,46 @@
     restart: "{{ item.name in config_changed.results | selectattr('changed') | map(attribute='item.name') | list }}"
   loop: "{{ reality_instances }}"
 
+# 清理被过滤掉的用户：移除多余容器与数据目录
+- name: 获取已存在的 reality_ 容器列表
+  community.docker.docker_container_info:
+    name: "reality_*"
+  register: existing_containers
+
+- name: 提取容器名称列表
+  set_fact:
+    existing_containers_list: "{{ existing_containers.containers | default([]) }}"
+
+- name: 计算期望用户和现有用户
+  set_fact:
+    desired_users: "{{ reality_instances | map(attribute='name') | list }}"
+    existing_users: "{{ existing_containers_list | default([]) | map(attribute='Name') | map('regex_replace','^/?reality_','') | list }}"
+
+- name: 计算需要移除的容器/目录
+  set_fact:
+    obsolete_users: "{{ existing_users | default([]) | difference(desired_users | default([])) }}"
+
+- name: 移除已过滤用户的容器
+  community.docker.docker_container:
+    name: "reality_{{ item }}"
+    state: absent
+  loop: "{{ obsolete_users | default([]) }}"
+  when: (obsolete_users | default([])) | length > 0
+
+- name: 移除已过滤用户的数据目录
+  file:
+    path: "{{ reality_data_dir }}/{{ item }}"
+    state: absent
+  loop: "{{ obsolete_users | default([]) }}"
+  when: (obsolete_users | default([])) | length > 0
+
+- name: 移除已过滤用户的日志目录
+  file:
+    path: "{{ reality_logs_dir }}/{{ item }}"
+    state: absent
+  loop: "{{ obsolete_users | default([]) }}"
+  when: (obsolete_users | default([])) | length > 0
+
 # --- 输出部分 ---
 
 # - name: 输出 IPv4 连接信息
