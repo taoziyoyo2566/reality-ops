@@ -12,6 +12,48 @@ SERVER_URL = "{{ monitor.server_url }}/report"
 API_TOKEN = "{{ monitor.report_token }}"
 CACHE_FILE = "/tmp/reality_traffic_cache.json"
 LOG_FILE = "/opt/reality/logs/reality_core/access.log"  # 用于用户-IP 采集
+REALITY_MODE = "{{ reality_mode | default('single') }}"
+
+
+def list_multi_containers():
+    """列出多实例容器（reality_<user>，排除 reality_core）。"""
+    cmd = "docker ps --format '{% raw %}{{.Names}}{% endraw %}'"
+    res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    if res.returncode != 0:
+        return []
+    names = [n.strip() for n in res.stdout.splitlines() if n.strip()]
+    return [n for n in names if n.startswith("reality_") and n != "reality_core"]
+
+
+def get_container_bytes(container):
+    """读取容器内 eth0 的累计收发字节数。"""
+    def read_stat(stat):
+        cmd = f"docker exec {container} cat /sys/class/net/eth0/statistics/{stat}_bytes"
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if res.returncode != 0:
+            return None
+        try:
+            return int(res.stdout.strip())
+        except Exception:
+            return None
+
+    rx = read_stat("rx")
+    tx = read_stat("tx")
+    if rx is None or tx is None:
+        return None
+    return {"down": rx, "up": tx}
+
+
+def get_multi_stats():
+    """多实例：按容器网络字节数统计每用户流量。"""
+    stats = {}
+    for name in list_multi_containers():
+        counters = get_container_bytes(name)
+        if not counters:
+            continue
+        user = name.replace("reality_", "", 1)
+        stats[user] = counters
+    return stats
 
 def get_core_stats():
     # 只查询 reality_core 容器
@@ -41,7 +83,16 @@ def get_core_stats():
         return {}
 
 def main():
-    current = get_core_stats()
+    if REALITY_MODE == "single":
+        current = get_core_stats()
+    else:
+        current = get_multi_stats()
+
+    # 兜底：single 模式未返回数据且存在多实例容器时，尝试多实例统计
+    if not current and REALITY_MODE == "single":
+        fallback = get_multi_stats()
+        if fallback:
+            current = fallback
     last = {}
     if os.path.exists(CACHE_FILE):
         try:

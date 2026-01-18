@@ -1,3 +1,3 @@
 # 切换 netcup 节点为多实例部署，并暂时关闭监控（监控依赖 reality_core）
-reality_mode: single
+reality_mode: multi
 monitor_enabled: true
