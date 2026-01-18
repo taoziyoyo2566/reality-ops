@@ -30,11 +30,17 @@
   },
   "stats": {},
   "routing": {
+    "domainStrategy": "IPIfNonMatch",
     "rules": [
       {
         "type": "field",
         "inboundTag": ["api"],
         "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "protocol": ["bittorrent"],
+        "outboundTag": "blocked"
       }
     ]
   },

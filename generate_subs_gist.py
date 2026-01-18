@@ -6,7 +6,8 @@ from collections import defaultdict
 import datetime
 
 # --- 配置常量 ---
-USERS_DIR = 'users'
+# 默认读取本机订阅缓存目录；可通过环境变量 USERS_DIR 覆盖
+USERS_DIR = os.environ.get('USERS_DIR', '/opt/reality/users')
 SAVE_FILE = 'SUBSCRIPTIONS.txt'  # 本地保存的文件名
 
 

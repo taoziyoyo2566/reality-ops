@@ -17,6 +17,13 @@
           net.ipv4.tcp_congestion_control = bbr
           net.ipv4.tcp_fastopen = 3
           net.ipv4.tcp_mtu_probing = 1
+          net.ipv4.tcp_syncookies = 1
+          net.ipv4.conf.all.rp_filter = 1
+          net.ipv4.conf.default.rp_filter = 1
+          net.ipv4.conf.all.accept_redirects = 0
+          net.ipv4.conf.default.accept_redirects = 0
+          net.ipv4.conf.all.send_redirects = 0
+          net.ipv4.conf.default.send_redirects = 0
         mode: '0644'
 
     # 3. 应用系统配置
@@ -56,7 +63,7 @@
         cache_valid_time: 3600
     - name: 安装 Docker 及依赖
       apt:
-        name: ["rsync", "curl", "wget", "tar"]
+        name: ["rsync", "curl"]
         state: present
 
 - name: 拉取 Xray Docker 镜像
@@ -109,16 +116,29 @@
     image: "{{ xray_image }}"
     state: started
     restart_policy: always
-    # 【必须】单实例管理多端口，必须用 Host 模式，否则端口映射写起来会非常麻烦
-    network_mode: host
+    network_mode: bridge
     
     # 显式指定用户
     user: "10000:10000"
+    ports: "{{ (reality_instances | map(attribute='port') | map('string') | map('regex_replace', '^(.*)$', '\\1:\\1') | list) + ['127.0.0.1:10085:10085'] }}"
     
     # 挂载
     volumes:
       - "{{ reality_data_dir }}/reality_core/config.json:/config.json:ro"
       - "{{ reality_logs_dir }}/reality_core:/var/log/xray"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+    cap_drop:
+      - ALL
+    security_opts:
+      - no-new-privileges:true
+    pids_limit: 256
+    memory: 512m
+    ulimits:
+      - "nofile:4096:8192"
+      - "nproc:512:1024"
 
     # 只有当配置文件变动时才重启
     restart: "{{ config_changed.changed }}"
@@ -129,30 +149,37 @@
 #   debug:
 #     msg: 
 #       - "用户: {{ item.name }}"
-#       - "VLESS(IPv4): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
+#       - "VLESS(IPv4): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=firefox&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
 #   loop: "{{ reality_instances }}"
 #   loop_control:
 #     label: "{{ item.name }}"
 
 # (可选) 输出 IPv6 信息，逻辑同上，略...
 
+- name: 创建本地订阅缓存目录
+  delegate_to: localhost
+  file:
+    path: "/opt/reality/users"
+    state: directory
+    mode: '0755'
+
 - name: 生成用户节点 JSON 文件
   delegate_to: localhost
   copy:
-    dest: "{{ playbook_dir }}/users/{{ item.name }}_{{ inventory_hostname }}.json"
+    dest: "/opt/reality/users/{{ item.name }}_{{ inventory_hostname }}.json"
     mode: '0644'
     content: |
       [
         {
           "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
           "id": "{{ item.uuid }}",
-          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
+          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=firefox&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
         }
         {% if ansible_default_ipv6.address is defined %}
         ,{
           "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
           "id": "{{ item.uuid }}",
-          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
+          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=firefox&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
         }
         {% endif %}
       ]
@@ -168,14 +195,3 @@
 #   loop: "{{ reality_instances }}"
 #   loop_control:
 #     label: "Allow port {{ item.port }} for {{ item.name }}"
-
-- name: UFW - 批量放行所有端口 (一次性执行)
-  shell: |
-    ufw allow OpenSSH
-    {% for item in reality_instances %}
-    ufw allow {{ item.port }}/tcp
-    {% endfor %}
-    ufw --force enable
-    ufw default deny incoming
-  register: ufw_result
-  changed_when: "'Rule added' in ufw_result.stdout"

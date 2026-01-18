@@ -16,3 +16,4 @@ monitor_venv/
 # Local binaries/cache
 __pycache__/
 .python-version
+users/*.json

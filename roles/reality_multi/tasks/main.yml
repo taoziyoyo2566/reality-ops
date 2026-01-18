@@ -1,15 +1,15 @@
 ---
+# ==============================================================================
+# 1. 基础系统优化与检查 (保留原逻辑)
+# ==============================================================================
 - name: 系统网络优化 (BBR + FastOpen + MTU Probing)
   block:
-    # 1. 尝试加载 tcp_bbr 模块
-    # 使用 failed_when: false 是为了兼容那些 BBR 已经编译进内核（非模块化）的系统
     - name: 确保 tcp_bbr 模块已加载
       community.general.modprobe:
         name: tcp_bbr
         state: present
       failed_when: false
 
-    # 2. 写入配置文件
     - name: 写入 BBR 及优化配置文件
       copy:
         dest: /etc/sysctl.d/99-reality-optimizations.conf
@@ -18,15 +18,19 @@
           net.ipv4.tcp_congestion_control = bbr
           net.ipv4.tcp_fastopen = 3
           net.ipv4.tcp_mtu_probing = 1
+          net.ipv4.tcp_syncookies = 1
+          net.ipv4.conf.all.rp_filter = 1
+          net.ipv4.conf.default.rp_filter = 1
+          net.ipv4.conf.all.accept_redirects = 0
+          net.ipv4.conf.default.accept_redirects = 0
+          net.ipv4.conf.all.send_redirects = 0
+          net.ipv4.conf.default.send_redirects = 0
         mode: '0644'
 
-    # 3. 应用系统配置 (使用 --system 确保加载所有配置，防止覆盖其他设置)
     - name: 应用 sysctl 配置
       command: sysctl --system
       changed_when: true
 
-    # --- 4. 验证环节 (关键步骤) ---
-    
     - name: 获取当前拥塞控制算法
       command: sysctl -n net.ipv4.tcp_congestion_control
       register: current_cc
@@ -37,156 +41,135 @@
       register: qdisc
       changed_when: false
 
-    # 5. 断言检查：如果内核没有真正开启 BBR，则任务失败
     - name: 验证 BBR 是否成功开启
       assert:
         that:
           - "'bbr' in current_cc.stdout"
           - "'fq' in qdisc.stdout"
-        fail_msg: |
-          BBR 开启失败！
-          当前算法: {{ current_cc.stdout }} (预期: bbr)
-          当前队列: {{ qdisc.stdout }} (预期: fq)
-          请检查内核版本是否 >= 4.9，或是否存在云服务商限制。
+        fail_msg: "BBR 开启失败！当前: {{ current_cc.stdout }} / {{ qdisc.stdout }}"
       when: not ansible_check_mode
   become: yes
 
-- name: 停止并删除单实例容器 reality_core（避免端口占用）
+- name: 停止并删除单实例容器 reality_core（避免冲突）
   community.docker.docker_container:
     name: reality_core
     state: absent
   become: yes
 
-- name: 获取当前监听端口
-  command: ss -ltnH
-  register: listen_ports
-  changed_when: false
+- name: 安装基础软件包 (含 rsync)
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+    name: ["rsync", "curl", "docker-compose-plugin"] # 精简为当前角色所需
+    state: present
 
-- name: 检查端口占用（多实例）
-  vars:
-    reality_ports: "{{ reality_instances | map(attribute='port') | map('string') | list }}"
-    used_ports: "{{ listen_ports.stdout_lines | map('regex_search','(\\d+)$') | select('string') | list }}"
-    conflict_ports: "{{ reality_ports | intersect(used_ports) }}"
-  assert:
-    that:
-      - conflict_ports | length == 0
-    fail_msg: "端口被占用: {{ conflict_ports | join(', ') }}"
-
-- name: 安装 软件包 环境
-  block:
-    - name: 更新 apt 缓存
-      apt:
-        update_cache: yes
-        cache_valid_time: 3600
-    - name: 安装 软件包 及依赖
-      apt:
-        name: ["rsync", "curl", "wget", "tar","jq"]
-        state: present
-
-- name: 拉取 Xray Docker 镜像
-  community.docker.docker_image:
-    name: "{{ xray_image }}"
-    source: pull
-
-# 确保基础数据与日志目录存在
-- name: 创建数据根目录
+# ==============================================================================
+# 2. [极致优化] 本地构建阶段 (Local Build)
+#    在控制端本机生成所有文件，不再去远程服务器循环
+# ==============================================================================
+- name: 准备本地构建目录
+  delegate_to: localhost
+  run_once: true # 只需要在本地执行一次清理
   file:
-    path: "{{ reality_data_dir }}"
+    path: "/tmp/reality_build"
+    state: absent
+
+- name: 创建本地构建目录结构
+  delegate_to: localhost
+  file:
+    path: "/tmp/reality_build/{{ inventory_hostname }}/data/{{ item.name }}"
     state: directory
     mode: '0755'
-
-- name: 创建日志根目录
-  file:
-    path: "{{ reality_logs_dir }}"
-    state: directory
-    mode: '0755'
-
-# 核心循环：为每个实例准备环境
-- name: 为每个用户创建配置目录
-  file:
-    path: "{{ reality_data_dir }}/{{ item.name }}"
-    state: directory
-    mode: '0755'
-    recurse: yes
   loop: "{{ reality_instances }}"
 
-- name: 生成每个用户的 config.json
+- name: 本地生成用户配置文件 (config.json)
+  delegate_to: localhost
   template:
     src: config.json.j2
-    dest: "{{ reality_data_dir }}/{{ item.name }}/config.json"
-    mode: '0644' # 【建议】配置文件的 owner 不需要改，0644 足够让容器里的用户读取
+    dest: "/tmp/reality_build/{{ inventory_hostname }}/data/{{ item.name }}/config.json"
+    mode: '0644'
   loop: "{{ reality_instances }}"
-  register: config_changed
 
-# 修正日志目录权限
-- name: 修正日志目录权限 (归属给 UID 10000)
-  become: yes
+- name: 本地生成 Docker Compose 文件
+  delegate_to: localhost
+  template:
+    src: docker-compose.yml.j2
+    dest: "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml"
+    mode: '0644'
+
+# ==============================================================================
+# 3. [极速同步] 批量部署 (Synchronize)
+#    一次性将所有配置推送到服务器
+# ==============================================================================
+- name: 确保远程基础目录存在
   file:
-    path: "{{ reality_logs_dir }}/{{ item.name }}"
+    path: "{{ item }}"
     state: directory
-    # 【确认】这步非常关键，配合 Dockerfile 的 USER 10000
+    mode: '0755'
+  loop:
+    - "{{ reality_data_dir }}"
+    - "{{ reality_logs_dir }}"
+
+- name: 同步配置数据到服务器 (Local -> Remote)
+  synchronize:
+    src: "/tmp/reality_build/{{ inventory_hostname }}/data/"
+    dest: "{{ reality_data_dir }}/"
+    archive: yes
+    delete: no # 保持增量更新，不误删
+    recursive: yes
+  # 注意：这步会把 data/user/config.json 推过去
+
+- name: 同步 Docker Compose 文件
+  copy: # 单个文件用 copy 也很快，或者用 synchronize 也可以
+    src: "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml"
+    dest: "{{ reality_data_dir }}/docker-compose.yml"
+    mode: '0644'
+
+- name: 修正数据目录权限 (确保 UID 10000 可读)
+  file:
+    path: "{{ reality_data_dir }}"
     owner: "10000"
     group: "10000"
-    mode: '0755'
     recurse: yes
+    mode: '0755'
+
+- name: 预创建日志目录并修正权限
+  shell: |
+    mkdir -p {{ reality_logs_dir }}/{{ item.name }}
+    chown -R 10000:10000 {{ reality_logs_dir }}/{{ item.name }}
   loop: "{{ reality_instances }}"
+  # 虽然这里用了 loop，但只是简单的 mkdir 命令，比 template 快得多。
+  # 也可以优化为本地生成空目录一起 sync 过去，但这步通常不耗时。
 
-# 核心循环：启动容器
-- name: 管理 Reality 多实例容器
-  community.docker.docker_container:
-    name: "reality_{{ item.name }}"
-    image: "{{ xray_image }}"
-    state: started
-    restart_policy: always
-    # 【新增】显式指定容器运行用户，双重保险 (配合 Dockerfile)
-    user: "10000:10000"
-    memory: "{{ reality_memory_limit | default('300m') }}"
-    memory_swap: "{{ reality_memory_swap | default('1g') }}"
-    memory_reservation: "{{ reality_memory_reservation | default('200m') }}"
-    memory_swappiness: "{{ reality_mem_swappiness | default(60) }}"
-    cpus: "1"
-    ports:
-      # 【确认】非Root容器内部监听 8443，映射到宿主机的 item.port
-      - "{{ item.port }}:8443"
-    sysctls:
-      net.ipv6.conf.all.disable_ipv6: "1"
-    volumes:
-      - "{{ reality_data_dir }}/{{ item.name }}/config.json:/config.json:ro"
-      - "{{ reality_logs_dir }}/{{ item.name }}:/var/log/xray"
-    # 默认不强制重建，避免每次部署都重建所有容器；如需应用资源参数变更，可设置 reality_force_recreate=true
-    recreate: "{{ reality_force_recreate | default(false) }}"
-    restart: "{{ item.name in config_changed.results | selectattr('changed') | map(attribute='item.name') | list }}"
-  loop: "{{ reality_instances }}"
+# ==============================================================================
+# 4. [容器编排] 统一启动 (Docker Compose)
+# ==============================================================================
+- name: 启动/更新所有 Reality 服务
+  community.docker.docker_compose_v2:
+    project_src: "{{ reality_data_dir }}"
+    state: present
+    pull: always
+    remove_orphans: true # 自动清理掉不再列表里的旧容器
+  register: compose_output
 
-# --- 输出部分 ---
+- name: 显示 Compose 运行结果
+  debug:
+    msg: "服务已更新，受影响的服务: {{ compose_output.actions | default([]) }}"
 
-# - name: 输出 IPv4 连接信息
-#   debug:
-#     msg: 
-#       - "用户: {{ item.name }}"
-#       - "VLESS(IPv4): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
-#   loop: "{{ reality_instances }}"
-#   loop_control:
-#     label: "{{ item.name }}"
-
-# - name: 输出 IPv6 连接信息 (如果存在)
-#   debug:
-#     msg: 
-#       - "用户: {{ item.name }}"
-#       - "VLESS(IPv6): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
-#   loop: "{{ reality_instances }}"
-#   loop_control:
-#     label: "{{ item.name }}"
-#   when: ansible_default_ipv6.address is defined
-
-# --- 本地 JSON 生成部分 ---
+# ==============================================================================
+# 5. 后续处理 (本地 JSON 生成)
+# ==============================================================================
+- name: 创建本地订阅缓存目录
+  delegate_to: localhost
+  file:
+    path: "/opt/reality/users"
+    state: directory
+    mode: '0755'
 
 - name: 生成用户节点 JSON 文件 (users/用户名_主机名.json)
   delegate_to: localhost
   copy:
-    # 【注意】我保留了 _{{ inventory_hostname }} 防止多服务器覆盖
-    # 如果你只有一台 VPS 或者确定要覆盖，可以改回 {{ item.name }}.json
-    dest: "{{ playbook_dir }}/users/{{ item.name }}_{{ inventory_hostname }}.json"
+    dest: "/opt/reality/users/{{ item.name }}_{{ inventory_hostname }}.json"
     mode: '0644'
     content: |
       [
@@ -195,23 +178,7 @@
           "id": "{{ item.uuid }}",
           "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
         }
-        {% if ansible_default_ipv6.address is defined %}
-        ,{
-          "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
-          "id": "{{ item.uuid }}",
-          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
-        }
-        {% endif %}
       ]
   loop: "{{ reality_instances }}"
   loop_control:
     label: "{{ item.name }}"
-
-- name: 配置 UFW 防火墙 (自动放行所有用户端口)
-  community.general.ufw:
-    rule: allow
-    port: "{{ item.port }}"
-    proto: tcp
-  loop: []
-  loop_control:
-    label: "skip"
