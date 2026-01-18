@@ -55,6 +55,28 @@
       when: not ansible_check_mode
   become: yes
 
+- name: 清理多实例残留（从 multi 切回 single 时）
+  block:
+    - name: 获取当前 reality_* 容器列表
+      command: docker ps -a --format '{% raw %}{{.Names}}{% endraw %}'
+      register: reality_containers
+      changed_when: false
+      failed_when: false
+
+    - name: 删除多实例容器 (保留 reality_core)
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: absent
+      loop: "{{ reality_containers.stdout_lines | select('match', '^reality_') | reject('equalto', 'reality_core') | list }}"
+      loop_control:
+        label: "{{ item }}"
+      when: reality_containers.stdout_lines | select('match', '^reality_') | reject('equalto', 'reality_core') | list | length > 0
+
+    - name: 删除多实例 docker-compose 文件
+      file:
+        path: "{{ reality_data_dir }}/docker-compose.yml"
+        state: absent
+
 - name: 安装 Docker 环境
   block:
     - name: 更新 apt 缓存

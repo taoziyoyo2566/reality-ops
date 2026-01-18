@@ -1,77 +1,111 @@
 ---
 # roles/monitor/tasks/main.yml
 
-- name: 确保系统安装了基础依赖
-  apt:
-    name: ["python3-pip", "python3-venv", "cron"]
-    state: present
-    update_cache: yes
-
-- name: 确保监控运行目录存在
-  file:
-    path: "{{ monitor_root_dir }}"
-    state: directory
-    mode: '0755'
-
-- name: 检查监控虚拟环境的 pip 是否可用
-  command: "{{ monitor_venv_dir }}/bin/python3 -m pip --version"
-  register: monitor_venv_pip
-  changed_when: false
-  failed_when: false
-
-- name: 重建监控虚拟环境 (pip 缺失时)
-  command: "/usr/bin/python3 -m venv --clear {{ monitor_venv_dir }}"
-  when: monitor_venv_pip.rc != 0
-
-- name: 在虚拟环境中安装 Python 依赖
-  pip:
-    name: ["requests", "fastapi", "uvicorn"]
-    virtualenv: "{{ monitor_venv_dir }}"
-    virtualenv_command: /usr/bin/python3 -m venv
-
-# --- 服务端部署 (spt) ---
-- name: "[Server] 部署监控服务端"
-  when: inventory_hostname == monitor.server_host
+- name: "[Install] 部署监控"
+  when: (monitor_enabled | default(true)) | bool
   block:
-    - name: 确保数据目录存在
+    - name: 确保系统安装了基础依赖
+      apt:
+        name: ["python3-pip", "python3-venv", "cron"]
+        state: present
+        update_cache: yes
+
+    - name: 确保监控运行目录存在
       file:
-        path: "{{ reality_data_dir }}"
+        path: "{{ monitor_root_dir }}"
         state: directory
         mode: '0755'
 
-    - name: 部署服务端脚本
+    - name: 检查监控虚拟环境的 pip 是否可用
+      command: "{{ monitor_venv_dir }}/bin/python3 -m pip --version"
+      register: monitor_venv_pip
+      changed_when: false
+      failed_when: false
+
+    - name: 重建监控虚拟环境 (pip 缺失时)
+      command: "/usr/bin/python3 -m venv --clear {{ monitor_venv_dir }}"
+      when: monitor_venv_pip.rc != 0
+
+    - name: 在虚拟环境中安装 Python 依赖
+      pip:
+        name: ["requests", "fastapi", "uvicorn"]
+        virtualenv: "{{ monitor_venv_dir }}"
+        virtualenv_command: /usr/bin/python3 -m venv
+
+    # --- 服务端部署 (spt) ---
+    - name: "[Server] 部署监控服务端"
+      when: inventory_hostname == monitor.server_host
+      block:
+        - name: 确保数据目录存在
+          file:
+            path: "{{ reality_data_dir }}"
+            state: directory
+            mode: '0755'
+
+        - name: 部署服务端脚本
+          template:
+            src: server.py.j2
+            dest: "{{ monitor_root_dir }}/server.py"
+            mode: '0755'
+        
+        - name: 配置 Systemd 服务
+          copy:
+            dest: /etc/systemd/system/reality-monitor.service
+            content: |
+              [Unit]
+              Description=Reality Traffic Monitor
+              After=network.target
+              [Service]
+              User=root
+              WorkingDirectory={{ monitor_root_dir }}
+              # 使用虚拟环境 Python 启动
+              ExecStart={{ monitor_venv_dir }}/bin/python3 {{ monitor_root_dir }}/server.py
+              Restart=always
+              [Install]
+              WantedBy=multi-user.target
+          notify: 重启监控服务
+
+
+    # --- 客户端部署 (所有节点) ---
+    - name: "[Agent] 部署上报脚本"
       template:
-        src: server.py.j2
-        dest: "{{ monitor_root_dir }}/server.py"
+        src: agent.py.j2
+        dest: "/usr/local/bin/traffic_agent.py"
         mode: '0755'
-    
-    - name: 配置 Systemd 服务
-      copy:
-        dest: /etc/systemd/system/reality-monitor.service
-        content: |
-          [Unit]
-          Description=Reality Traffic Monitor
-          After=network.target
-          [Service]
-          User=root
-          WorkingDirectory={{ monitor_root_dir }}
-          # 使用虚拟环境 Python 启动
-          ExecStart={{ monitor_venv_dir }}/bin/python3 {{ monitor_root_dir }}/server.py
-          Restart=always
-          [Install]
-          WantedBy=multi-user.target
-      notify: 重启监控服务
 
+    - name: "[Agent] 设置 Crontab"
+      cron:
+        name: "Reality Traffic Report"
+        minute: "*"
+        job: "{{ monitor_venv_dir }}/bin/python3 /usr/local/bin/traffic_agent.py > /dev/null 2>&1"
 
-# --- 客户端部署 (所有节点) ---
-- name: "[Agent] 部署上报脚本"
-  template:
-    src: agent.py.j2
-    dest: "/usr/local/bin/traffic_agent.py"
-    mode: '0755'
+- name: "[Cleanup] 停用监控"
+  when: not ((monitor_enabled | default(true)) | bool)
+  block:
+    - name: "[Cleanup] 停止并禁用监控服务 (server)"
+      systemd:
+        name: reality-monitor
+        state: stopped
+        enabled: false
+        daemon_reload: yes
+      when: inventory_hostname == (monitor.server_host | default(''))
 
-- name: "[Agent] 设置 Crontab"
-  cron:
-    name: "Reality Traffic Report"
-    minute: "*"
-    job: "{{ monitor_venv_dir }}/bin/python3 /usr/local/bin/traffic_agent.py > /dev/null 2>&1"
+    - name: "[Cleanup] 删除监控 Systemd 单元 (server)"
+      file:
+        path: /etc/systemd/system/reality-monitor.service
+        state: absent
+      when: inventory_hostname == (monitor.server_host | default(''))
+
+    - name: "[Cleanup] 删除上报脚本"
+      file:
+        path: "/usr/local/bin/traffic_agent.py"
+        state: absent
+
+    - name: "[Cleanup] 移除上报 Crontab"
+      cron:
+        name: "Reality Traffic Report"
+        state: absent
+
+    - name: "[Cleanup] 重新加载 systemd (已删除单元)"
+      command: systemctl daemon-reload
+      when: inventory_hostname == (monitor.server_host | default(''))

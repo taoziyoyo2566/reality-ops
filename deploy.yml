@@ -28,7 +28,6 @@
 
     # 监控可通过 monitor_enabled 关闭（多实例时默认建议关闭）
     - role: monitor
-      when: monitor_enabled | default(true)
 
   # =========================================================
   # 🟢 核心修改：使用 post_tasks 代替独立的 localhost play
