@@ -1,5 +1,6 @@
 ---
 - hosts: reality_nodes
+  gather_facts: true
   become: yes
   
   pre_tasks:
@@ -10,6 +11,7 @@
       register: user_config_files
       delegate_to: localhost
       run_once: true
+      tags: ['always']
 
     - name: 加载所有用户配置
       set_fact:
@@ -17,6 +19,7 @@
       loop: "{{ user_config_files.files }}"
       loop_control:
         label: "{{ item.path | basename }}"
+      tags: ['always']
 
   roles:
     # reality_mode: 单实例/多实例切换；默认 single
@@ -37,6 +40,7 @@
       command: python3 {{ playbook_dir }}/generate_subs_gist.py
       delegate_to: localhost  # 强制在本机执行
       run_once: true          # 无论同时部署几台 VPS，这个脚本只跑一次
+      tags: ['users', 'gist'] # <--- 加上 tag
       register: gist_result
       changed_when: "'Gist 更新成功' in gist_result.stdout"
       environment:

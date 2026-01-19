@@ -54,8 +54,10 @@
           请检查内核版本是否 >= 4.9，或是否存在云服务商限制。
       when: not ansible_check_mode
   become: yes
+  tags: ['system', 'bbr']
 
 - name: 清理多实例残留（从 multi 切回 single 时）
+  tags: ['system', 'cleanup']
   block:
     - name: 获取当前 reality_* 容器列表
       command: docker ps -a --format '{% raw %}{{.Names}}{% endraw %}'
@@ -87,11 +89,13 @@
       apt:
         name: ["rsync", "curl"]
         state: present
+  tags: ['system', 'docker']
 
 - name: 拉取 Xray Docker 镜像
   community.docker.docker_image:
     name: "{{ xray_image }}"
     source: pull
+  tags: ['system', 'docker', 'update_image']
 
 # 确保基础数据与日志目录存在
 - name: 创建数据根目录
@@ -99,12 +103,14 @@
     path: "{{ reality_data_dir }}"
     state: directory
     mode: '0755'
+  tags: ['users', 'system']
 
 - name: 创建日志根目录
   file:
     path: "{{ reality_logs_dir }}"
     state: directory
     mode: '0755'
+  tags: ['users', 'system']
 
 # --- 单实例核心配置开始 ---
 
@@ -114,6 +120,7 @@
     state: directory
     mode: '0755'
     recurse: yes
+  tags: ['users']
 
 - name: 生成聚合版 config.json
   template:
@@ -121,6 +128,7 @@
     dest: "{{ reality_data_dir }}/reality_core/config.json"
     mode: '0644'
   register: config_changed
+  tags: ['users', 'config']
 
 - name: 创建日志目录
   become: yes
@@ -131,6 +139,7 @@
     group: "10000"
     mode: '0755'
     recurse: yes
+  tags: ['users']
 
 - name: 启动 Reality 单实例容器 (管理所有用户)
   community.docker.docker_container:
@@ -164,6 +173,7 @@
 
     # 只有当配置文件变动时才重启
     restart: "{{ config_changed.changed }}"
+  tags: ['users', 'deploy']
 
 # --- 下面的任务依然需要 Loop，因为我们要输出每个用户的信息 ---
 
@@ -184,6 +194,7 @@
     path: "/opt/reality/users"
     state: directory
     mode: '0755'
+  tags: ['users', 'local_file']
 
 - name: 生成用户节点 JSON 文件
   delegate_to: localhost
@@ -208,12 +219,5 @@
   loop: "{{ reality_instances }}"
   loop_control:
     label: "{{ item.name }}"
-
-# - name: 配置 UFW 防火墙 (自动放行所有用户端口)
-#   community.general.ufw:
-#     rule: allow
-#     port: "{{ item.port }}"
-#     proto: tcp
-#   loop: "{{ reality_instances }}"
-#   loop_control:
-#     label: "Allow port {{ item.port }} for {{ item.name }}"
+  tags: ['users', 'local_file']
+# --- 单实例核心配置结束 ---

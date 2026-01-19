@@ -49,12 +49,14 @@
         fail_msg: "BBR 开启失败！当前: {{ current_cc.stdout }} / {{ qdisc.stdout }}"
       when: not ansible_check_mode
   become: yes
+  tags: ['system', 'bbr']
 
 - name: 停止并删除单实例容器 reality_core（避免冲突）
   community.docker.docker_container:
     name: reality_core
     state: absent
   become: yes
+  tags: ['users']
 
 - name: 安装基础软件包 (含 rsync)
   apt:
@@ -62,6 +64,14 @@
     cache_valid_time: 3600
     name: ["rsync", "curl", "docker-compose-plugin"] # 精简为当前角色所需
     state: present
+  tags: ['system', 'docker']
+
+- name: 拉取/更新 Xray 镜像（仅在显式请求时）
+  community.docker.docker_image:
+    name: "{{ xray_image }}"
+    source: pull
+  when: "'update_image' in ansible_run_tags"
+  tags: ['system', 'docker', 'update_image']
 
 # ==============================================================================
 # 2. [极致优化] 本地构建阶段 (Local Build)
@@ -73,6 +83,7 @@
   file:
     path: "/tmp/reality_build"
     state: absent
+  tags: ['users']
 
 - name: 创建本地构建目录结构
   delegate_to: localhost
@@ -81,6 +92,7 @@
     state: directory
     mode: '0755'
   loop: "{{ reality_instances }}"
+  tags: ['users']
 
 - name: 本地生成用户配置文件 (config.json)
   delegate_to: localhost
@@ -89,6 +101,7 @@
     dest: "/tmp/reality_build/{{ inventory_hostname }}/data/{{ item.name }}/config.json"
     mode: '0644'
   loop: "{{ reality_instances }}"
+  tags: ['users', 'config']
 
 - name: 本地生成 Docker Compose 文件
   delegate_to: localhost
@@ -96,6 +109,7 @@
     src: docker-compose.yml.j2
     dest: "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml"
     mode: '0644'
+  tags: ['users', 'config']
 
 # ==============================================================================
 # 3. [极速同步] 批量部署 (Synchronize)
@@ -109,6 +123,7 @@
   loop:
     - "{{ reality_data_dir }}"
     - "{{ reality_logs_dir }}"
+  tags: ['users']
 
 - name: 同步配置数据到服务器 (Local -> Remote)
   synchronize:
@@ -118,12 +133,14 @@
     delete: no # 保持增量更新，不误删
     recursive: yes
   # 注意：这步会把 data/user/config.json 推过去
+  tags: ['users']
 
 - name: 同步 Docker Compose 文件
   copy: # 单个文件用 copy 也很快，或者用 synchronize 也可以
     src: "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml"
     dest: "{{ reality_data_dir }}/docker-compose.yml"
     mode: '0644'
+  tags: ['users']
 
 - name: 修正数据目录权限 (确保 UID 10000 可读)
   file:
@@ -132,6 +149,7 @@
     group: "10000"
     recurse: yes
     mode: '0755'
+  tags: ['users']
 
 - name: 预创建日志目录并修正权限
   shell: |
@@ -140,6 +158,7 @@
   loop: "{{ reality_instances }}"
   # 虽然这里用了 loop，但只是简单的 mkdir 命令，比 template 快得多。
   # 也可以优化为本地生成空目录一起 sync 过去，但这步通常不耗时。
+  tags: ['users']
 
 # ==============================================================================
 # 4. [容器编排] 统一启动 (Docker Compose)
@@ -148,13 +167,15 @@
   community.docker.docker_compose_v2:
     project_src: "{{ reality_data_dir }}"
     state: present
-    pull: always
+    pull: never
     remove_orphans: true # 自动清理掉不再列表里的旧容器
   register: compose_output
+  tags: ['users', 'deploy']
 
 - name: 显示 Compose 运行结果
   debug:
     msg: "服务已更新，受影响的服务: {{ compose_output.actions | default([]) }}"
+  tags: ['users']
 
 # ==============================================================================
 # 5. 后续处理 (本地 JSON 生成)
@@ -165,6 +186,7 @@
     path: "/opt/reality/users"
     state: directory
     mode: '0755'
+  tags: ['users', 'local_file']
 
 - name: 生成用户节点 JSON 文件 (users/用户名_主机名.json)
   delegate_to: localhost
@@ -182,3 +204,4 @@
   loop: "{{ reality_instances }}"
   loop_control:
     label: "{{ item.name }}"
+  tags: ['users', 'local_file']

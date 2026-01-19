@@ -15,6 +15,32 @@ LOG_FILE = "/opt/reality/logs/reality_core/access.log"  # 用于用户-IP 采集
 REALITY_MODE = "{{ reality_mode | default('single') }}"
 
 
+def load_cache():
+    """向后兼容地读取缓存，返回 (users, container)。"""
+    try:
+        with open(CACHE_FILE, 'r') as f:
+            data = json.load(f)
+            if isinstance(data, dict) and "users" in data:
+                return data.get("users", {}), data.get("container")
+            if isinstance(data, dict):
+                # 旧格式：仅用户流量
+                return data, None
+    except Exception:
+        pass
+    return {}, None
+
+
+def save_cache(users, container=None):
+    payload = {"users": users}
+    if container:
+        payload["container"] = container
+    try:
+        with open(CACHE_FILE, 'w') as f:
+            json.dump(payload, f)
+    except Exception:
+        pass
+
+
 def list_multi_containers():
     """列出多实例容器（reality_<user>，排除 reality_core）。"""
     cmd = "docker ps --format '{% raw %}{{.Names}}{% endraw %}'"
@@ -85,20 +111,22 @@ def get_core_stats():
 def main():
     if REALITY_MODE == "single":
         current = get_core_stats()
+        container_now = get_container_bytes("reality_core")
     else:
         current = get_multi_stats()
+        container_now = None
 
     # 兜底：single 模式未返回数据且存在多实例容器时，尝试多实例统计
     if not current and REALITY_MODE == "single":
         fallback = get_multi_stats()
         if fallback:
             current = fallback
-    last = {}
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE, 'r') as f: last = json.load(f)
-        except: pass
-    
+            container_now = container_now or get_container_bytes("reality_core")
+
+    last, last_container = load_cache()
+
+    deltas = {}
+    total_up = total_down = 0
     for user, flow in current.items():
         last_flow = last.get(user, {'up': 0, 'down': 0})
         
@@ -108,17 +136,34 @@ def main():
         down_delta = flow['down'] - last_flow['down']
         if down_delta < 0: down_delta = flow['down']
         
-        if up_delta > 0 or down_delta > 0:
+        deltas[user] = {"up": up_delta, "down": down_delta}
+        total_up += up_delta
+        total_down += down_delta
+
+    # 若统计流量明显小于容器网络流量，则用容器流量放大对齐（single 模式）
+    up_factor = down_factor = 1.0
+    if REALITY_MODE == "single" and container_now and last_container:
+        container_up = max(0, container_now.get("up", 0) - last_container.get("up", 0))
+        container_down = max(0, container_now.get("down", 0) - last_container.get("down", 0))
+        if container_up > 0 and total_up > 0:
+            up_factor = max(1.0, container_up / total_up)
+        if container_down > 0 and total_down > 0:
+            down_factor = max(1.0, container_down / total_down)
+    
+    for user, delta in deltas.items():
+        adj_up = int(delta["up"] * up_factor)
+        adj_down = int(delta["down"] * down_factor)
+        
+        if adj_up > 0 or adj_down > 0:
             try:
                 # 【核心】Header 中携带 Token
                 requests.post(SERVER_URL, json={
                     "node": NODE_NAME, "user": user, 
-                    "up_delta": up_delta, "down_delta": down_delta
+                    "up_delta": adj_up, "down_delta": adj_down
                 }, headers={"token": API_TOKEN}, timeout=5)
             except: pass
 
-    with open(CACHE_FILE, 'w') as f:
-        json.dump(current, f)
+    save_cache(current, container_now)
 
 def collect_user_ips():
     """
