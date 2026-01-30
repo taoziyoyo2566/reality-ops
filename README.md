@@ -93,10 +93,10 @@
    - 删除：`python3 generate_user.py delete <name>`；查看：`python3 generate_user.py list`。  
 3) **连通性与预演**  
    - 连通测试：`ansible -i inventory.ini all -m ping`  
-   - 预演：`ansible -i inventory.ini deploy.yml --check --diff`（只看会改什么）。  
+  - 预演：`ansible-playbook -i inventory.ini deploy.yml --check --diff`（只看会改什么）。  
 4) **正式部署**  
-   - 全量：`ansible -i inventory.ini deploy.yml --ask-vault-pass`  
-   - 只改用户/实例：`ansible -i inventory.ini deploy.yml --tags users --ask-vault-pass`（最快）  
+  - 全量：`ansible-playbook -i inventory.ini deploy.yml --ask-vault-pass`  
+  - 只改用户/实例：`ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass`（最快）  
    - 指定范围：追加 `--limit <group|host>`。  
    - 切换模式：修改目标主机的 `reality_mode`，再跑同一命令；单/多实例会自动清理旧容器/compose。  
 5) **订阅/Gist（可选但常用）**  
@@ -116,20 +116,20 @@
    - 订阅 404/403：检查 `monitor.subs_proxy.enabled`、Gist 变量、`SUBS_TOKEN` 与访问 URL。  
 
 ## 常见场景操作
-- 新增用户并同步：`python3 generate_user.py add bob` → `ansible -i inventory.ini deploy.yml --tags users --ask-vault-pass`
+- 新增用户并同步：`python3 generate_user.py add bob` → `ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass`
 - 切到多实例：在目标 `host_vars/<host>.yml` 设 `reality_mode: multi` → 跑主部署；回切 single 同理。
 - 关闭监控（单台）：该主机 `monitor_enabled: false` → 部署；会停服务/删 agent/cron。
-- 只更新订阅/Gist：确保环境变量到位，`ansible -i inventory.ini deploy.yml --tags users --ask-vault-pass`（post_tasks 会自动跑 Gist）。
+- 只更新订阅/Gist：确保环境变量到位，`ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass`（post_tasks 会自动跑 Gist）。
 - 手动重启监控服务：`sudo systemctl restart reality-monitor`（spt 节点）；查看日志 `journalctl -u reality-monitor -f`。
 - 清理节点：`ansible-playbook -i inventory.ini reset.yml --limit <group|host>`
 - 审计用户-IP：`ansible-playbook -i inventory.ini audit.yml`
 
 ## 使用流程与常用命令
 - 连通性：`ansible -i inventory.ini all -m ping`
-- 预演（不改动）：`ansible -i inventory.ini deploy.yml --check --diff`
-- 部署：`ansible -i inventory.ini deploy.yml --ask-vault-pass`
-- 仅改用户/实例（最快）：`ansible -i inventory.ini deploy.yml --tags users --ask-vault-pass`
-- 用户变更并清理旧多实例：`ansible -i inventory.ini deploy.yml --tags users,cleanup --ask-vault-pass`
+- 预演（不改动）：`ansible-playbook -i inventory.ini deploy.yml --check --diff`
+- 部署：`ansible-playbook -i inventory.ini deploy.yml --ask-vault-pass`
+- 仅改用户/实例（最快）：`ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass`
+- 用户变更并清理旧多实例：`ansible-playbook -i inventory.ini deploy.yml --tags users,cleanup --ask-vault-pass`
 - 指定分组/主机：在以上命令加 `--limit <group|host>`，例如 `--limit premium`
 
 ## 模式与标签
