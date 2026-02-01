@@ -28,14 +28,13 @@
         reality_instances: "{{ hostvars['localhost'].reality_instances | default(hostvars[inventory_hostname].reality_instances | default([])) }}"
 
   tasks:
-    # 0. 如果切到多实例，先确保旧的单实例容器被清理
-    - name: 停止并删除单实例容器 reality_core（仅多实例节点）
+    # 0. 清理单实例容器（无论 single/multi，保证干净）
+    - name: 停止并删除单实例容器 reality_core
       community.docker.docker_container:
         name: reality_core
         state: absent
-      when: reality_mode | default('single') == 'multi'
 
-    # 2. 删除容器
+    # 1. 删除多实例容器（如果曾切换过 multi）
     - name: 停止并删除所有 Reality 容器
       community.docker.docker_container:
         name: "reality_{{ item.name }}"
@@ -44,8 +43,7 @@
       loop_control:
         label: "{{ item.name }}"
 
-    # 3. (可选) 清理数据目录
-    # 如果你想测试"从零生成配置文件"的逻辑，把下面这段解开注释
+    # 2. 清理配置/数据目录（包含单实例聚合配置）
     - name: 清理用户数据目录 (data/xxx)
       file:
         path: "{{ reality_data_dir }}/{{ item.name }}"
@@ -53,3 +51,66 @@
       loop: "{{ reality_instances }}"
       loop_control:
         label: "{{ item.name }}"
+
+    - name: 清理单实例配置目录 (data/reality_core)
+      file:
+        path: "{{ reality_data_dir }}/reality_core"
+        state: absent
+
+    - name: 清理单实例日志目录 (logs/reality_core)
+      file:
+        path: "{{ reality_logs_dir }}/reality_core"
+        state: absent
+
+    - name: 清理多实例 docker-compose 文件
+      file:
+        path: "{{ reality_data_dir }}/docker-compose.yml"
+        state: absent
+
+    # 4. 清理本地主机对应的订阅缓存文件（用于生成链接的 JSON）
+    - name: 查找当前主机的订阅缓存文件
+      delegate_to: localhost
+      find:
+        paths: "/opt/reality/users"
+        patterns: "*_{{ inventory_hostname }}.json"
+      register: local_sub_files
+      failed_when: false  # 目录不存在时也不报错
+      tags: ['cleanup', 'local_file']
+
+    - name: 删除当前主机的订阅缓存文件
+      delegate_to: localhost
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ local_sub_files.files | default([]) }}"
+      when: (local_sub_files.matched | default(0)) > 0
+      tags: ['cleanup', 'local_file']
+
+  post_tasks:
+    - name: 重置后更新 GitHub Gist 订阅文件
+      command: python3 {{ playbook_dir }}/generate_subs_gist.py
+      delegate_to: localhost
+      run_once: true
+      register: gist_result
+      changed_when: "'Gist 更新成功' in gist_result.stdout"
+      tags: ['cleanup', 'gist']
+      environment:
+        GITHUB_TOKEN: "{{ vault_github_token | default('') }}"
+        GIST_ID: "{{ vault_monitor_gist_id | default('0a7faae910b06151d643c7d5baa43818') }}"
+        GITHUB_USER: "{{ vault_monitor_gist_user | default('') }}"
+        SUBS_BASE_URL: "{{ monitor.subs_base_url | default(monitor.server_url) }}"
+        SUBS_TOKEN: "{{ vault_monitor_subs_token | default('') }}"
+        HOST_FILTERS: "{{ lookup('env', 'HOST_FILTERS') | default('') }}"
+      when: (vault_github_token | default('')) | length > 0
+
+    - name: 跳过 Gist 更新（未配置 GITHUB_TOKEN）
+      debug:
+        msg: "未设置 vault_github_token，已跳过 Gist 更新。"
+      run_once: true
+      when: (vault_github_token | default('')) | length == 0
+
+    - name: 显示订阅更新输出
+      debug:
+        var: gist_result.stdout_lines
+      run_once: true
+      when: gist_result is defined
