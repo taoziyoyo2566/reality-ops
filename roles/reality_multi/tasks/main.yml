@@ -168,7 +168,7 @@
     project_src: "{{ reality_data_dir }}"
     state: present
     pull: never
-    build: false  # 避免 compose 尝试 build，引发无服务可构建的警告
+    build: never  # 避免 compose 尝试 build，引发无服务可构建的警告
     remove_orphans: true # 自动清理掉不再列表里的旧容器
   register: compose_output
   tags: ['users', 'deploy']
