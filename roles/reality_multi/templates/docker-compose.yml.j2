@@ -7,7 +7,10 @@ services:
     user: "10000:10000"
     network_mode: "bridge"
     ports:
-      - "{{ item.port }}:8443"
+      - "0.0.0.0:{{ item.port }}:8443"
+{% if ansible_default_ipv6 is defined and ansible_default_ipv6.address is defined %}
+      - "[{{ ansible_default_ipv6.address }}]:{{ item.port }}:8443"
+{% endif %}
     environment:
       - TZ=Asia/Shanghai
     volumes:

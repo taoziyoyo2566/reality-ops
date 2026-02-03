@@ -1,5 +1,6 @@
 ---
 - hosts: reality_nodes
+  strategy: free
   gather_facts: true
   become: yes
   
@@ -10,7 +11,6 @@
         patterns: '*.yml,*.yaml'
       register: user_config_files
       delegate_to: localhost
-      run_once: true
       tags: ['always']
 
     - name: 加载所有用户配置
@@ -39,7 +39,6 @@
     - name: 执行脚本更新 GitHub Gist
       command: python3 {{ playbook_dir }}/generate_subs_gist.py
       delegate_to: localhost  # 强制在本机执行
-      run_once: true          # 无论同时部署几台 VPS，这个脚本只跑一次
       tags: ['users', 'gist'] # <--- 加上 tag
       register: gist_result
       changed_when: "'Gist 更新成功' in gist_result.stdout"
@@ -49,17 +48,22 @@
         GITHUB_USER: "{{ vault_monitor_gist_user | default('') }}"
         SUBS_BASE_URL: "{{ monitor.subs_base_url | default(monitor.server_url) }}"
         SUBS_TOKEN: "{{ vault_monitor_subs_token | default('') }}"
-      when: (vault_github_token | default('')) | length > 0
+      when:
+        - (vault_github_token | default('')) | length > 0
+        - inventory_hostname == (ansible_play_hosts_all | first)
 
     - name: 跳过 Gist 更新（未配置 GITHUB_TOKEN）
       debug:
         msg: "未设置 vault_github_token，已跳过 Gist 更新。"
-      run_once: true
-      when: (vault_github_token | default('')) | length == 0
+      when:
+        - (vault_github_token | default('')) | length == 0
+        - inventory_hostname == (ansible_play_hosts_all | first)
       
     - name: 显示订阅链接信息
       debug:
         var: gist_result.stdout_lines
-      run_once: true
+      when:
+        - gist_result is defined
+        - inventory_hostname == (ansible_play_hosts_all | first)
 
 # 🔴 注意：文件末尾不要再有 - hosts: localhost 的段落了

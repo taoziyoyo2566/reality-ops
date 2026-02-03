@@ -29,7 +29,14 @@
 
     - name: 应用 sysctl 配置
       command: sysctl --system
+      register: sysctl_apply
+      failed_when: false          # 某些内核缺少 nf_conntrack 等模块时返回非零，忽略
       changed_when: true
+
+    - name: 提示 sysctl 非致命警告
+      debug:
+        msg: "{{ sysctl_apply.stderr_lines | default([]) }}"
+      when: sysctl_apply.rc != 0
 
     - name: 获取当前拥塞控制算法
       command: sysctl -n net.ipv4.tcp_congestion_control
@@ -66,6 +73,21 @@
     state: present
   tags: ['system', 'docker']
 
+- name: 检查 Xray 镜像是否已存在
+  community.docker.docker_image_info:
+    name: "{{ xray_image }}"
+  register: xray_image_info
+  failed_when: false
+  changed_when: false
+  tags: ['system', 'docker']
+
+- name: 拉取 Xray 镜像（若本地不存在）
+  community.docker.docker_image:
+    name: "{{ xray_image }}"
+    source: pull
+  when: (xray_image_info.images | default([])) | length == 0
+  tags: ['system', 'docker']
+
 - name: 拉取/更新 Xray 镜像（仅在显式请求时）
   community.docker.docker_image:
     name: "{{ xray_image }}"
@@ -77,11 +99,19 @@
 # 2. [极致优化] 本地构建阶段 (Local Build)
 #    在控制端本机生成所有文件，不再去远程服务器循环
 # ==============================================================================
-- name: 准备本地构建目录
+- name: 确保本地构建根目录存在
   delegate_to: localhost
-  run_once: true # 只需要在本地执行一次清理
+  when: inventory_hostname == (ansible_play_hosts_all | first)
   file:
     path: "/tmp/reality_build"
+    state: directory
+    mode: '0755'
+  tags: ['users']
+
+- name: 清理当前主机的本地构建目录
+  delegate_to: localhost
+  file:
+    path: "/tmp/reality_build/{{ inventory_hostname }}"
     state: absent
   tags: ['users']
 
@@ -111,6 +141,12 @@
     mode: '0644'
   tags: ['users', 'config']
 
+- name: 校验 Docker Compose 文件语法 (本地)
+  delegate_to: localhost
+  command: docker compose -f "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml" config
+  changed_when: false
+  tags: ['users', 'config']
+
 # ==============================================================================
 # 3. [极速同步] 批量部署 (Synchronize)
 #    一次性将所有配置推送到服务器
@@ -123,6 +159,19 @@
   loop:
     - "{{ reality_data_dir }}"
     - "{{ reality_logs_dir }}"
+  tags: ['users']
+
+- name: 检查远端 rsync 是否已安装（users 快速路径）
+  command: which rsync
+  register: rsync_check
+  changed_when: false
+  failed_when: false
+  tags: ['users']
+
+- name: 提示安装 rsync 后再运行 --tags users
+  fail:
+    msg: "目标主机 {{ inventory_hostname }} 缺少 rsync。请先在该主机安装 rsync（如：sudo apt-get update && sudo apt-get install -y rsync），或先执行带 system/docker 标签的部署。"
+  when: rsync_check.rc != 0
   tags: ['users']
 
 - name: 同步配置数据到服务器 (Local -> Remote)
@@ -200,7 +249,14 @@
           "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
           "id": "{{ item.uuid }}",
           "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
+        }{% if ansible_default_ipv6 is defined and ansible_default_ipv6.address is defined %}
+        ,
+        {
+          "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
+          "id": "{{ item.uuid }}",
+          "subscription": "vless://{{ item.uuid }}@[{{ ansible_default_ipv6.address }}]:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
         }
+        {% endif %}
       ]
   loop: "{{ reality_instances }}"
   loop_control:

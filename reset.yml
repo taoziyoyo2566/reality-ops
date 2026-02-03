@@ -1,5 +1,6 @@
 ---
 - hosts: reality_nodes
+  strategy: free
   become: yes
   
   pre_tasks:
@@ -7,7 +8,7 @@
     # (只有加载了用户，才能知道要删哪些容器)
     - name: 扫描用户配置文件
       delegate_to: localhost
-      run_once: true
+      when: inventory_hostname == (ansible_play_hosts_all | first)
       find:
         paths: "{{ playbook_dir }}/users"
         patterns: '*.yml,*.yaml'
@@ -16,7 +17,7 @@
     - name: 加载所有用户配置
       delegate_to: localhost
       delegate_facts: true
-      run_once: true
+      when: inventory_hostname == (ansible_play_hosts_all | first)
       set_fact:
         reality_instances: "{{ reality_instances | default([]) + [ lookup('file', item.path) | from_yaml ] }}"
       loop: "{{ user_config_files.files }}"
@@ -34,28 +35,25 @@
         name: reality_core
         state: absent
 
-    # 1. 删除多实例容器（如果曾切换过 multi）
-    - name: 停止并删除所有 Reality 容器
-      community.docker.docker_container:
-        name: "reality_{{ item.name }}"
-        state: absent # 关键参数：不存在
-      loop: "{{ reality_instances }}"
-      loop_control:
-        label: "{{ item.name }}"
+    # 1. 删除多实例容器（如果曾切换过 multi）——一次性删除，避免循环卡顿
+    - name: 停止并删除所有 reality_* 容器
+      shell: |
+        docker ps -aq --filter "name=reality_" | xargs -r docker rm -f
+      register: rm_reality
+      changed_when: (rm_reality.stdout | default('')) | length > 0
+      failed_when: rm_reality.rc not in [0]
 
     # 2. 清理配置/数据目录（包含单实例聚合配置）
-    - name: 清理用户数据目录 (data/xxx)
-      file:
-        path: "{{ reality_data_dir }}/{{ item.name }}"
-        state: absent
-      loop: "{{ reality_instances }}"
-      loop_control:
-        label: "{{ item.name }}"
-
-    - name: 清理单实例配置目录 (data/reality_core)
-      file:
-        path: "{{ reality_data_dir }}/reality_core"
-        state: absent
+    - name: 批量清理用户数据目录与聚合目录
+      shell: |
+        xargs -r rm -rf <<'EOF'
+        {% for item in reality_instances %}{{ reality_data_dir }}/{{ item.name }}
+        {% endfor %}{{ reality_data_dir }}/reality_core
+        EOF
+      args:
+        executable: /bin/bash
+      changed_when: true
+      when: reality_instances | length > 0
 
     - name: 清理单实例日志目录 (logs/reality_core)
       file:
@@ -90,7 +88,6 @@
     - name: 重置后更新 GitHub Gist 订阅文件
       command: python3 {{ playbook_dir }}/generate_subs_gist.py
       delegate_to: localhost
-      run_once: true
       register: gist_result
       changed_when: "'Gist 更新成功' in gist_result.stdout"
       tags: ['cleanup', 'gist']
@@ -101,16 +98,20 @@
         SUBS_BASE_URL: "{{ monitor.subs_base_url | default(monitor.server_url) }}"
         SUBS_TOKEN: "{{ vault_monitor_subs_token | default('') }}"
         HOST_FILTERS: "{{ lookup('env', 'HOST_FILTERS') | default('') }}"
-      when: (vault_github_token | default('')) | length > 0
+      when:
+        - (vault_github_token | default('')) | length > 0
+        - inventory_hostname == (ansible_play_hosts_all | first)
 
     - name: 跳过 Gist 更新（未配置 GITHUB_TOKEN）
       debug:
         msg: "未设置 vault_github_token，已跳过 Gist 更新。"
-      run_once: true
-      when: (vault_github_token | default('')) | length == 0
-
+      when:
+        - (vault_github_token | default('')) | length == 0
+        - inventory_hostname == (ansible_play_hosts_all | first)
+      
     - name: 显示订阅更新输出
       debug:
         var: gist_result.stdout_lines
-      run_once: true
-      when: gist_result is defined
+      when:
+        - gist_result is defined
+        - inventory_hostname == (ansible_play_hosts_all | first)

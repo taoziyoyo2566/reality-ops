@@ -91,6 +91,21 @@
         state: present
   tags: ['system', 'docker']
 
+- name: 检查 Xray 镜像是否已存在
+  community.docker.docker_image_info:
+    name: "{{ xray_image }}"
+  register: xray_image_info
+  failed_when: false
+  changed_when: false
+  tags: ['system', 'docker']
+
+- name: 拉取 Xray 镜像（若本地不存在）
+  community.docker.docker_image:
+    name: "{{ xray_image }}"
+    source: pull
+  when: (xray_image_info.images | default([])) | length == 0
+  tags: ['system', 'docker']
+
 - name: 拉取 Xray Docker 镜像
   community.docker.docker_image:
     name: "{{ xray_image }}"
@@ -141,6 +156,21 @@
     recurse: yes
   tags: ['users']
 
+- name: 计算 Reality Core 端口绑定 (IPv4)
+  set_fact:
+    reality_core_ports_ipv4: "{{ reality_instances | map(attribute='port') | map('string') | map('regex_replace', '^(.*)$', '0.0.0.0:\\1:\\1') | list }}"
+  tags: ['users']
+
+- name: 计算 Reality Core 端口绑定 (IPv6，可选)
+  set_fact:
+    reality_core_ports_ipv6: "{{ (ansible_default_ipv6 is defined and ansible_default_ipv6.address is defined) | ternary(reality_instances | map(attribute='port') | map('string') | map('regex_replace', '^(.*)$', '[' ~ ansible_default_ipv6.address ~ ']:\\1:\\1') | list, []) }}"
+  tags: ['users']
+
+- name: 汇总 Reality Core 端口绑定
+  set_fact:
+    reality_core_ports: "{{ reality_core_ports_ipv4 + reality_core_ports_ipv6 + ['127.0.0.1:10085:10085'] }}"
+  tags: ['users']
+
 - name: 启动 Reality 单实例容器 (管理所有用户)
   community.docker.docker_container:
     name: "reality_core"
@@ -151,7 +181,7 @@
     
     # 显式指定用户
     user: "10000:10000"
-    ports: "{{ (reality_instances | map(attribute='port') | map('string') | map('regex_replace', '^(.*)$', '\\1:\\1') | list) + ['127.0.0.1:10085:10085'] }}"
+    ports: "{{ reality_core_ports }}"
     
     # 挂载
     volumes:
@@ -208,11 +238,12 @@
           "id": "{{ item.uuid }}",
           "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=firefox&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
         }
-        {% if ansible_default_ipv6.address is defined %}
-        ,{
+        {% if ansible_default_ipv6 is defined and ansible_default_ipv6.address is defined %}
+        ,
+        {
           "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
           "id": "{{ item.uuid }}",
-          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=firefox&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
+          "subscription": "vless://{{ item.uuid }}@[{{ ansible_default_ipv6.address }}]:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=firefox&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
         }
         {% endif %}
       ]
