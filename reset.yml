@@ -1,6 +1,5 @@
 ---
 - hosts: reality_nodes
-  strategy: free
   become: yes
   
   pre_tasks:
@@ -8,7 +7,7 @@
     # (只有加载了用户，才能知道要删哪些容器)
     - name: 扫描用户配置文件
       delegate_to: localhost
-      when: inventory_hostname == (ansible_play_hosts_all | first)
+      run_once: true
       find:
         paths: "{{ playbook_dir }}/users"
         patterns: '*.yml,*.yaml'
@@ -17,7 +16,7 @@
     - name: 加载所有用户配置
       delegate_to: localhost
       delegate_facts: true
-      when: inventory_hostname == (ansible_play_hosts_all | first)
+      run_once: true
       set_fact:
         reality_instances: "{{ reality_instances | default([]) + [ lookup('file', item.path) | from_yaml ] }}"
       loop: "{{ user_config_files.files }}"
@@ -88,6 +87,7 @@
     - name: 重置后更新 GitHub Gist 订阅文件
       command: python3 {{ playbook_dir }}/generate_subs_gist.py
       delegate_to: localhost
+      run_once: true
       register: gist_result
       changed_when: "'Gist 更新成功' in gist_result.stdout"
       tags: ['cleanup', 'gist']
@@ -100,18 +100,17 @@
         HOST_FILTERS: "{{ lookup('env', 'HOST_FILTERS') | default('') }}"
       when:
         - (vault_github_token | default('')) | length > 0
-        - inventory_hostname == (ansible_play_hosts_all | first)
 
     - name: 跳过 Gist 更新（未配置 GITHUB_TOKEN）
       debug:
         msg: "未设置 vault_github_token，已跳过 Gist 更新。"
+      run_once: true
       when:
         - (vault_github_token | default('')) | length == 0
-        - inventory_hostname == (ansible_play_hosts_all | first)
       
     - name: 显示订阅更新输出
       debug:
         var: gist_result.stdout_lines
+      run_once: true
       when:
         - gist_result is defined
-        - inventory_hostname == (ansible_play_hosts_all | first)

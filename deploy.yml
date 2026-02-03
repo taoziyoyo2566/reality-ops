@@ -1,6 +1,5 @@
 ---
 - hosts: reality_nodes
-  strategy: free
   gather_facts: true
   become: yes
   
