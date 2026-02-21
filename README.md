@@ -172,3 +172,9 @@
 ## 备注
 - `monitor.yml` 为旧版脚本，已弃用。
 - 监控虚拟环境缺 pip 时会自动重建 `/opt/reality/monitor/.venv`。
+
+
+ansible-playbook -i inventory.ini audit.yml --vault-password-file ~/.vault_pass
+
+ansible-playbook -i inventory.ini deploy.yml --tags users --vault-password-file ~/.vault_pass
+

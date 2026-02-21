@@ -163,7 +163,7 @@
 
 - name: 计算 Reality Core 端口绑定 (IPv6，可选)
   set_fact:
-    reality_core_ports_ipv6: "{{ (ansible_default_ipv6 is defined and ansible_default_ipv6.address is defined) | ternary(reality_instances | map(attribute='port') | map('string') | map('regex_replace', '^(.*)$', '[' ~ ansible_default_ipv6.address ~ ']:\\1:\\1') | list, []) }}"
+    reality_core_ports_ipv6: "{{ ((ansible_default_ipv6 | default({})).get('address', '') | length > 0) | ternary(reality_instances | map(attribute='port') | map('string') | map('regex_replace', '^(.*)$', '[' ~ (ansible_default_ipv6 | default({})).get('address', '') ~ ']:\\1:\\1') | list, []) }}"
   tags: ['users']
 
 - name: 汇总 Reality Core 端口绑定
