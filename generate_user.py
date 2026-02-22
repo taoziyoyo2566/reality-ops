@@ -8,7 +8,8 @@
   启用 pip；或使用发行版包管理器安装，例如 Debian/Ubuntu 下 `sudo apt install python3-cryptography`。
   也可以使用 pip: `python3 -m pip install cryptography`。
 - 添加/覆盖: `python3 generate_user.py add <name>`（兼容老用法 `python3 generate_user.py <name>`）
-  可选 `--port` 指定端口，`--groups/--hosts` 指定 ACL（逗号分隔，默认 all），`--min-port/--max-port` 控制端口池，`--users-dir` 指定输出目录。
+  可选 `--port` 指定端口，`--groups/--hosts` 指定 ACL（逗号分隔，默认 groups=free、hosts 为空），`--min-port/--max-port` 控制端口池，`--users-dir` 指定输出目录。
+- 更新 ACL: `python3 generate_user.py update <name> --groups basic --hosts ams,spt`，仅更新 groups/hosts，不改动密钥和端口。
 - 删除: `python3 generate_user.py delete <name>`，删除 users 目录下对应的 yml/yaml/json。
 - 查看: `python3 generate_user.py list`，默认只显示 yml/yaml，按文件汇总用户与端口；`--include-json` 会额外展示 json 文件（不展开数组）；`--details` 会展开 json 数组逐条显示并自动包含 json；目录不存在会自动创建。
 - 用户名仅允许字母、数字、下划线和短横线，避免路径注入。
@@ -49,6 +50,7 @@ USAGE_EXAMPLES = """示例:
   python3 generate_user.py add alice               # 创建 alice.yml，自动选端口
   python3 generate_user.py add bob --port 26000    # 指定端口
   python3 generate_user.py add carol --groups netflix --hosts ams,spt
+  python3 generate_user.py update carol --groups basic --hosts ams
   python3 generate_user.py delete bob              # 删除 bob.yml/.yaml/.json
   python3 generate_user.py list                    # 查看端口占用与文件路径
   python3 generate_user.py list --include-json     # 同时展示 json 文件（不展开数组）
@@ -63,6 +65,31 @@ def validate_name(name: str) -> str:
         sys.stderr.write("用户名仅支持字母、数字、下划线和短横线。\n")
         sys.exit(1)
     return name
+
+
+def parse_groups(raw: str, default: List[str]) -> List[str]:
+    """解析 groups 逗号分隔字符串，空值时返回默认组。"""
+    groups = [g.strip() for g in raw.split(",")] if raw is not None else []
+    groups = [g for g in groups if g]
+    return groups or list(default)
+
+
+def parse_hosts(raw: str) -> List[str]:
+    """解析 hosts 逗号分隔字符串，空值时返回空列表。"""
+    hosts = [h.strip() for h in raw.split(",")] if raw is not None else []
+    return [h for h in hosts if h]
+
+
+def resolve_user_file(users_dir: str, name: str) -> str:
+    """解析用户文件路径，按 yml/yaml/json 顺序查找。"""
+    candidates = [
+        os.path.join(users_dir, f"{name}{ext}") for ext in (".yml", ".yaml", ".json")
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    sys.stderr.write(f"未找到用户 {name} 对应的文件 (yml/yaml/json) 于 {users_dir}\n")
+    sys.exit(1)
 
 
 def iter_user_records(
@@ -187,7 +214,7 @@ def generate_keys() -> Dict[str, str]:
 def normalize_argv(raw_argv) -> list:
     """兼容旧用法: 若未指定 add/delete，则默认 add。"""
     argv = list(raw_argv)
-    commands = {"add", "delete", "list"}
+    commands = {"add", "update", "delete", "list"}
     i = 0
     while i < len(argv):
         token = argv[i]
@@ -309,8 +336,8 @@ def add_user(args) -> None:
         "short_id": secrets.token_hex(8),
         "private_key": keys["private_key"],
         "public_key": keys["public_key"],
-        "groups": [g.strip() for g in args.groups.split(",")] if args.groups else ["all"],
-        "hosts": [h.strip() for h in args.hosts.split(",")] if args.hosts else ["all"],
+        "groups": parse_groups(args.groups, default=["free"]),
+        "hosts": parse_hosts(args.hosts),
     }
 
     out_path = os.path.join(users_dir, f"{name}.yml")
@@ -331,19 +358,45 @@ def delete_user(args) -> None:
     """删除指定用户配置文件。"""
     name = validate_name(args.name)
     users_dir = ensure_users_dir(args.users_dir)
-    candidates = [
-        os.path.join(users_dir, f"{name}{ext}") for ext in (".yml", ".yaml", ".json")
-    ]
-    deleted = False
-    for path in candidates:
-        if os.path.exists(path):
-            os.remove(path)
-            print(f"🗑️ 已删除 {path}")
-            deleted = True
-    if deleted:
-        return
-    sys.stderr.write(f"未找到用户 {name} 对应的文件 (yml/yaml/json) 于 {users_dir}\n")
-    sys.exit(1)
+    path = resolve_user_file(users_dir, name)
+    os.remove(path)
+    print(f"🗑️ 已删除 {path}")
+
+
+def update_user(args) -> None:
+    """仅更新用户 ACL 字段 groups/hosts。"""
+    name = validate_name(args.name)
+    users_dir = ensure_users_dir(args.users_dir)
+
+    if args.groups is None and args.hosts is None:
+        sys.stderr.write("update 至少需要传一个参数：--groups 或 --hosts\n")
+        sys.exit(1)
+
+    path = resolve_user_file(users_dir, name)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as exc:
+        sys.stderr.write(f"无法解析用户文件 {path}: {exc}\n")
+        sys.exit(1)
+
+    if not isinstance(data, dict):
+        sys.stderr.write(f"用户文件格式错误（需为 JSON 对象）: {path}\n")
+        sys.exit(1)
+
+    updated_fields: List[str] = []
+    if args.groups is not None:
+        data["groups"] = parse_groups(args.groups, default=["free"])
+        updated_fields.append("groups")
+    if args.hosts is not None:
+        data["hosts"] = parse_hosts(args.hosts)
+        updated_fields.append("hosts")
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+
+    print(f"✅ 已更新 {path}: {', '.join(updated_fields)}")
 
 
 def list_users(args) -> None:
@@ -374,7 +427,7 @@ def list_users(args) -> None:
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
-        "--users-dir", default="users", help="用户配置目录，默认 users (适用于 add/delete/list)"
+        "--users-dir", default="users", help="用户配置目录，默认 users (适用于 add/update/delete/list)"
     )
     common.add_argument(
         "--docker", action="store_true", help="在 Docker 容器内执行脚本，避免本机安装依赖"
@@ -398,14 +451,14 @@ def build_parser() -> argparse.ArgumentParser:
     add_parser.add_argument(
         "--groups",
         type=str,
-        default="all",
-        help="允许访问的节点组，逗号分隔，例如 premium,netflix。默认为 all",
+        default="free",
+        help="允许访问的节点组，逗号分隔，例如 basic,netflix。默认为 free",
     )
     add_parser.add_argument(
         "--hosts",
         type=str,
-        default="all",
-        help="允许访问的具体节点，逗号分隔，例如 ams,dcc。默认为 all",
+        default="",
+        help="允许访问的具体节点，逗号分隔，例如 ams,dcc。默认为空（不指定具体主机）",
     )
     add_parser.add_argument(
         "--min-port", type=int, default=DEFAULT_MIN_PORT, help="自动分配端口下限，默认 20000"
@@ -414,6 +467,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-port", type=int, default=DEFAULT_MAX_PORT, help="自动分配端口上限，默认 60000"
     )
     add_parser.add_argument("--force", action="store_true", help="如文件已存在则覆盖")
+
+    update_parser = subparsers.add_parser("update", parents=[common], help="更新用户 ACL 标签")
+    update_parser.add_argument("name", help="用户名 (更新 name.yml/.yaml/.json)")
+    update_parser.add_argument(
+        "--groups",
+        type=str,
+        default=None,
+        help="覆盖用户 groups（逗号分隔）；传空字符串时重置为 free",
+    )
+    update_parser.add_argument(
+        "--hosts",
+        type=str,
+        default=None,
+        help="覆盖用户 hosts（逗号分隔）；传空字符串时清空 hosts",
+    )
 
     delete_parser = subparsers.add_parser("delete", parents=[common], help="删除用户配置文件")
     delete_parser.add_argument("name", help="用户名 (删除 name.yml/.yaml/.json)")
@@ -441,7 +509,7 @@ def main():
         parser.print_help()
         return
 
-    if args.command in ("add", "delete", "list") and os.environ.get(DOCKER_SENTINEL_ENV) != "1":
+    if args.command in ("add", "update", "delete", "list") and os.environ.get(DOCKER_SENTINEL_ENV) != "1":
         ensure_users_dir(args.users_dir)
 
     forwarded_argv = strip_docker_flags(argv)
@@ -449,7 +517,9 @@ def main():
     if args.docker and os.environ.get(DOCKER_SENTINEL_ENV) != "1":
         reexec_in_docker(args, forwarded_argv, need_crypto)
 
-    if args.command == "delete":
+    if args.command == "update":
+        update_user(args)
+    elif args.command == "delete":
         delete_user(args)
     elif args.command == "list":
         list_users(args)

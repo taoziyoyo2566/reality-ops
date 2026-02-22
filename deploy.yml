@@ -20,16 +20,27 @@
         label: "{{ item.path | basename }}"
       tags: ['always']
 
-    - name: "[核心路由] 节点本位认领：筛选匹配当前节点权限的用户"
+    - name: "[核心路由] 节点本位认领：基于 ACL 矩阵的精准过滤"
       set_fact:
         reality_instances: >-
           {%- set valid_users = [] -%}
+
+          {# 1) 合并当前节点所属组在 ACL 矩阵中的放行标签 #}
+          {%- set node_allowed_groups = [] -%}
+          {%- for g in group_names -%}
+            {%- if g in (acl_matrix | default({})) -%}
+              {%- set _ = node_allowed_groups.extend(acl_matrix[g]) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {%- set node_allowed_groups = node_allowed_groups | unique -%}
+
+          {# 2) 遍历用户，按组交集或主机直连匹配 #}
           {%- for u in all_raw_users | default([]) -%}
             {%- set u_groups = u.get('groups', ['all']) -%}
-            {%- set u_hosts = u.get('hosts', ['all']) -%}
+            {%- set u_hosts = u.get('hosts', []) -%}
 
-            {%- set match_group = ('all' in u_groups) or (u_groups | intersect(group_names) | length > 0) -%}
-            {%- set match_host = ('all' in u_hosts) or (inventory_hostname in u_hosts) -%}
+            {%- set match_group = ('all' in u_groups) or (u_groups | intersect(node_allowed_groups) | length > 0) -%}
+            {%- set match_host = (inventory_hostname in u_hosts) -%}
 
             {%- if match_group or match_host -%}
               {%- set _ = valid_users.append(u) -%}

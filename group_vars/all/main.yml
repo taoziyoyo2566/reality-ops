@@ -40,3 +40,17 @@ monitor:
     gist_id: "{{ vault_monitor_gist_id | default('0a7faae910b06151d643c7d5baa43818') }}"
     require_token: true          # 访问订阅代理时是否需要 token
     token: "{{ vault_monitor_subs_token | default('CHANGEME-subs-token') }}"
+
+# 全局节点访问控制矩阵 (ACL Matrix)
+acl_matrix:
+  # --- 层级规则 ---
+  free: ['free', 'cm', 'basic', 'normal', 'premium']
+  cm: ['cm', 'basic', 'normal', 'premium']
+  basic: ['basic', 'normal', 'premium']
+  normal: ['normal', 'premium']
+  premium: ['premium']
+
+  # --- 特性规则 ---
+  cmi: ['cmi']
+  netflix: ['netflix']
+  special: ['special']
