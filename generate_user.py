@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 生成/删除/查看单个用户的配置文件 (users/<name>.yml)。
-字段包含：name、uuid、port、short_id、private_key、public_key。
+字段包含：name、uuid、port、short_id、private_key、public_key、groups、hosts。
 
 使用说明:
 - 依赖: 需要安装 cryptography。若系统无 pip，可用 `python3 -m ensurepip --default-pip`
   启用 pip；或使用发行版包管理器安装，例如 Debian/Ubuntu 下 `sudo apt install python3-cryptography`。
   也可以使用 pip: `python3 -m pip install cryptography`。
 - 添加/覆盖: `python3 generate_user.py add <name>`（兼容老用法 `python3 generate_user.py <name>`）
-  可选 `--port` 指定端口，`--min-port/--max-port` 控制端口池，`--users-dir` 指定输出目录。
+  可选 `--port` 指定端口，`--groups/--hosts` 指定 ACL（逗号分隔，默认 all），`--min-port/--max-port` 控制端口池，`--users-dir` 指定输出目录。
 - 删除: `python3 generate_user.py delete <name>`，删除 users 目录下对应的 yml/yaml/json。
 - 查看: `python3 generate_user.py list`，默认只显示 yml/yaml，按文件汇总用户与端口；`--include-json` 会额外展示 json 文件（不展开数组）；`--details` 会展开 json 数组逐条显示并自动包含 json；目录不存在会自动创建。
 - 用户名仅允许字母、数字、下划线和短横线，避免路径注入。
@@ -41,16 +41,19 @@ OPTIONS_WITH_VALUE = (
     "--min-port",
     "--max-port",
     "--port",
+    "--groups",
+    "--hosts",
     "--docker-image",
 )
 USAGE_EXAMPLES = """示例:
   python3 generate_user.py add alice               # 创建 alice.yml，自动选端口
   python3 generate_user.py add bob --port 26000    # 指定端口
+  python3 generate_user.py add carol --groups netflix --hosts ams,spt
   python3 generate_user.py delete bob              # 删除 bob.yml/.yaml/.json
   python3 generate_user.py list                    # 查看端口占用与文件路径
   python3 generate_user.py list --include-json     # 同时展示 json 文件（不展开数组）
   python3 generate_user.py list --details          # 展开 json 数组逐条显示，并自动包含 json
-  python3 generate_user.py --docker add carol      # 在容器里执行，免安装 cryptography
+  python3 generate_user.py --docker add dave       # 在容器里执行，免安装 cryptography
 """
 
 
@@ -306,6 +309,8 @@ def add_user(args) -> None:
         "short_id": secrets.token_hex(8),
         "private_key": keys["private_key"],
         "public_key": keys["public_key"],
+        "groups": [g.strip() for g in args.groups.split(",")] if args.groups else ["all"],
+        "hosts": [h.strip() for h in args.hosts.split(",")] if args.hosts else ["all"],
     }
 
     out_path = os.path.join(users_dir, f"{name}.yml")
@@ -390,6 +395,18 @@ def build_parser() -> argparse.ArgumentParser:
     add_parser = subparsers.add_parser("add", parents=[common], help="添加或覆盖用户配置")
     add_parser.add_argument("name", help="用户名 (文件名将为 name.yml)")
     add_parser.add_argument("--port", type=int, help="可选：指定端口；默认自动选择未占用的")
+    add_parser.add_argument(
+        "--groups",
+        type=str,
+        default="all",
+        help="允许访问的节点组，逗号分隔，例如 premium,netflix。默认为 all",
+    )
+    add_parser.add_argument(
+        "--hosts",
+        type=str,
+        default="all",
+        help="允许访问的具体节点，逗号分隔，例如 ams,dcc。默认为 all",
+    )
     add_parser.add_argument(
         "--min-port", type=int, default=DEFAULT_MIN_PORT, help="自动分配端口下限，默认 20000"
     )

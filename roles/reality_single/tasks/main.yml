@@ -226,6 +226,14 @@
     mode: '0755'
   tags: ['users', 'local_file']
 
+- name: 清理当前主机的旧订阅缓存文件 (防止权限回收后残留)
+  delegate_to: localhost
+  shell: "rm -f /opt/reality/users/*_{{ inventory_hostname }}.json"
+  args:
+    warn: false
+  failed_when: false
+  tags: ['users', 'local_file']
+
 - name: 生成用户节点 JSON 文件
   delegate_to: localhost
   copy:

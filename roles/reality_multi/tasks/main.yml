@@ -115,6 +115,14 @@
     state: absent
   tags: ['users']
 
+- name: 确保当前主机本地构建目录存在
+  delegate_to: localhost
+  file:
+    path: "/tmp/reality_build/{{ inventory_hostname }}/data"
+    state: directory
+    mode: '0755'
+  tags: ['users']
+
 - name: 创建本地构建目录结构
   delegate_to: localhost
   file:
@@ -220,11 +228,32 @@
     build: never  # 避免 compose 尝试 build，引发无服务可构建的警告
     remove_orphans: true # 自动清理掉不再列表里的旧容器
   register: compose_output
+  when: (reality_instances | length) > 0
+  tags: ['users', 'deploy']
+
+- name: 当前节点无授权用户时清理多实例容器
+  block:
+    - name: 获取当前 reality_* 容器列表
+      command: docker ps -a --format '{% raw %}{{.Names}}{% endraw %}'
+      register: reality_containers
+      changed_when: false
+      failed_when: false
+
+    - name: 删除多实例容器 (无授权用户)
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: absent
+      loop: "{{ reality_containers.stdout_lines | select('match', '^reality_') | list }}"
+      loop_control:
+        label: "{{ item }}"
+      when: reality_containers.stdout_lines | select('match', '^reality_') | list | length > 0
+  when: (reality_instances | length) == 0
   tags: ['users', 'deploy']
 
 - name: 显示 Compose 运行结果
   debug:
     msg: "服务已更新，受影响的服务: {{ compose_output.actions | default([]) }}"
+  when: compose_output is defined
   tags: ['users']
 
 # ==============================================================================
@@ -236,6 +265,14 @@
     path: "/opt/reality/users"
     state: directory
     mode: '0755'
+  tags: ['users', 'local_file']
+
+- name: 清理当前主机的旧订阅缓存文件 (防止权限回收后残留)
+  delegate_to: localhost
+  shell: "rm -f /opt/reality/users/*_{{ inventory_hostname }}.json"
+  args:
+    warn: false
+  failed_when: false
   tags: ['users', 'local_file']
 
 - name: 生成用户节点 JSON 文件 (users/用户名_主机名.json)

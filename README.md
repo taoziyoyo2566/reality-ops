@@ -13,7 +13,7 @@
 - Playbook：`deploy.yml`（主部署）、`reset.yml`（重置）、`audit.yml`（审计）。
 - Roles：`reality_single`（单实例）、`reality_multi`（多实例 compose）、`monitor`（监控服务端/agent）。
 - 变量：`group_vars/all/main.yml`（公共配置）、`group_vars/all/vault.yml`（token/密钥，需 `ansible-vault` 加密），可用 `host_vars/<host>.yml` 覆盖。
-- 用户配置：`users/*.yml`（JSON 结构），每个用户包含 `name/uuid/port/short_id/private_key/public_key`。
+- 用户配置：`users/*.yml`（JSON 结构），每个用户包含 `name/uuid/port/short_id/private_key/public_key`，可选 ACL 字段 `groups/hosts`（默认 `["all"]`）。
 - 运行目录：`/opt/reality`；数据 `/opt/reality/data`；日志 `/opt/reality/logs`；监控 `/opt/reality/monitor` 与虚拟环境 `/opt/reality/monitor/.venv`。
 
 ## 前置准备
@@ -29,7 +29,7 @@
    - `inventory.ini` 中 `reality_nodes` 是部署目标；可用 `free/normal/premium/spt` 分组并通过 `--limit` 选择。  
    - 每台主机可在 `host_vars/<host>.yml` 设置 `reality_mode`（single/multi）与 `monitor_enabled`。
 5) 准备用户  
-   - 推荐用脚本：`python3 generate_user.py add <name> [--port ...]`；删除：`python3 generate_user.py delete <name>`；查看：`python3 generate_user.py list`。  
+   - 推荐用脚本：`python3 generate_user.py add <name> [--port ...] [--groups ...] [--hosts ...]`；删除：`python3 generate_user.py delete <name>`；查看：`python3 generate_user.py list`。  
    - 文件会写到 `users/`，格式示例：  
      ```json
      {
@@ -38,7 +38,9 @@
        "port": 23456,
        "short_id": "abcd1234efgh5678",
        "private_key": "...",
-       "public_key": "..."
+       "public_key": "...",
+       "groups": ["all"],
+       "hosts": ["all"]
      }
      ```
 
@@ -89,7 +91,7 @@
    - `group_vars/all/vault.yml`：随机生成 `monitor.report_token/admin_bearer_token/stats_bearer_token/subs_token`，再 `ansible-vault encrypt group_vars/all/vault.yml`。  
    - 每台主机在 `host_vars/<host>.yml` 设定 `reality_mode`（single/multi）、`monitor_enabled`。  
 2) **准备用户**  
-   - `python3 generate_user.py add <name> [--port ...]` 生成到 `users/`；已有文件用 `--force` 覆盖。  
+   - `python3 generate_user.py add <name> [--port ...] [--groups ...] [--hosts ...]` 生成到 `users/`；已有文件用 `--force` 覆盖。  
    - 删除：`python3 generate_user.py delete <name>`；查看：`python3 generate_user.py list`。  
 3) **连通性与预演**  
    - 连通测试：`ansible -i inventory.ini all -m ping`  
@@ -117,6 +119,8 @@
 
 ## 常见场景操作
 - 新增用户并同步：`python3 generate_user.py add bob` → `ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass`
+- 新增受限用户（仅某组可用）：`python3 generate_user.py add bob --groups netflix` → `ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass`
+- 回收某节点权限：编辑 `users/<name>.yml` 的 `groups/hosts` 后，执行 `ansible-playbook -i inventory.ini deploy.yml --limit <host> --tags users --ask-vault-pass`
 - 切到多实例：在目标 `host_vars/<host>.yml` 设 `reality_mode: multi` → 跑主部署；回切 single 同理。
 - 关闭监控（单台）：该主机 `monitor_enabled: false` → 部署；会停服务/删 agent/cron。
 - 只更新订阅/Gist：确保环境变量到位，`ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass`（post_tasks 会自动跑 Gist）。
@@ -146,6 +150,12 @@
   - `cleanup`（多实例残留清理，不在 `users` 中，需显式添加）  
   - `monitor`（监控角色）  
   - `always`（预加载用户配置，保持幂等）
+
+## 节点 ACL（Tag-based）
+- 用户可通过 `groups`（节点组）和 `hosts`（节点名）控制可下发范围；二者任一命中即授权。
+- 默认值都是 `["all"]`，保持旧配置向下兼容（等价全量下发）。
+- 典型创建命令：`python3 generate_user.py add bob --groups netflix`。
+- 回收权限后，建议按目标节点灰度执行：`ansible-playbook -i inventory.ini deploy.yml --limit <host> --tags users --ask-vault-pass`，会同时清理该主机本地旧订阅缓存，避免幽灵订阅。
 
 ## 监控与报表
 - 服务：Systemd 单元 `reality-monitor`，数据库 `/opt/reality/data/traffic_monitor.db`。
@@ -177,4 +187,3 @@
 ansible-playbook -i inventory.ini audit.yml --vault-password-file ~/.vault_pass
 
 ansible-playbook -i inventory.ini deploy.yml --tags users --vault-password-file ~/.vault_pass
-

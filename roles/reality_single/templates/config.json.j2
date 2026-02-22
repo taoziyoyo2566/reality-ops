@@ -49,8 +49,19 @@
     ]
   },
   "inbounds": [
-    {# 1. 业务端口：循环生成每个用户的 Reality 节点 #}
+    {# 1. 管理端口：API 服务（始终保留，避免无用户时配置无效） #}
+    {
+      "port": 10085,
+      "listen": "127.0.0.1",
+      "protocol": "dokodemo-door",
+      "settings": {
+        "address": "127.0.0.1"
+      },
+      "tag": "api"
+    }
+    {# 2. 业务端口：按授权用户追加 #}
     {% for item in reality_instances %}
+    ,
     {
       "port": {{ item.port }},
       "protocol": "vless",
@@ -78,19 +89,8 @@
           "shortIds": ["{{ item.short_id }}"]
         }
       }
-    }{% if not loop.last %},{% endif %}
-    {% endfor %}
-    ,
-    {# 2. 管理端口：API 服务 #}
-    {
-      "port": 10085,
-      "listen": "127.0.0.1",
-      "protocol": "dokodemo-door",
-      "settings": {
-        "address": "127.0.0.1"
-      },
-      "tag": "api"
     }
+    {% endfor %}
   ],
   "outbounds": [
     {

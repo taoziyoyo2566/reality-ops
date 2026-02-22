@@ -12,12 +12,30 @@
       delegate_to: localhost
       tags: ['always']
 
-    - name: 加载所有用户配置
+    - name: 加载所有用户原始配置
       set_fact:
-        reality_instances: "{{ reality_instances | default([]) + [ lookup('file', item.path) | from_yaml ] }}"
+        all_raw_users: "{{ all_raw_users | default([]) + [ lookup('file', item.path) | from_yaml ] }}"
       loop: "{{ user_config_files.files }}"
       loop_control:
         label: "{{ item.path | basename }}"
+      tags: ['always']
+
+    - name: "[核心路由] 节点本位认领：筛选匹配当前节点权限的用户"
+      set_fact:
+        reality_instances: >-
+          {%- set valid_users = [] -%}
+          {%- for u in all_raw_users | default([]) -%}
+            {%- set u_groups = u.get('groups', ['all']) -%}
+            {%- set u_hosts = u.get('hosts', ['all']) -%}
+
+            {%- set match_group = ('all' in u_groups) or (u_groups | intersect(group_names) | length > 0) -%}
+            {%- set match_host = ('all' in u_hosts) or (inventory_hostname in u_hosts) -%}
+
+            {%- if match_group or match_host -%}
+              {%- set _ = valid_users.append(u) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ valid_users }}
       tags: ['always']
 
   roles:

@@ -1,3 +1,6 @@
+{% if reality_instances | length == 0 %}
+services: {}
+{% else %}
 services:
 {% for item in reality_instances %}
   reality_{{ item.name }}:
@@ -32,3 +35,4 @@ services:
         hard: 8192
       nproc: 512
 {% endfor %}
+{% endif %}
