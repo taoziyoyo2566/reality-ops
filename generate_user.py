@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """
-生成/删除/查看单个用户的配置文件 (users/<name>.yml)。
-字段包含：name、uuid、port、short_id、private_key、public_key、groups、hosts。
+Reality 用户配置管理工具。
 
-使用说明:
-- 依赖: 需要安装 cryptography。若系统无 pip，可用 `python3 -m ensurepip --default-pip`
-  启用 pip；或使用发行版包管理器安装，例如 Debian/Ubuntu 下 `sudo apt install python3-cryptography`。
-  也可以使用 pip: `python3 -m pip install cryptography`。
-- 添加/覆盖: `python3 generate_user.py add <name>`（兼容老用法 `python3 generate_user.py <name>`）
-  可选 `--port` 指定端口，`--groups/--hosts` 指定 ACL（逗号分隔，默认 groups=free、hosts 为空），`--min-port/--max-port` 控制端口池，`--users-dir` 指定输出目录。
-- 更新 ACL: `python3 generate_user.py update <name> --groups basic --hosts ams,spt`，仅更新 groups/hosts，不改动密钥和端口。
-- 删除: `python3 generate_user.py delete <name>`，删除 users 目录下对应的 yml/yaml/json。
-- 查看: `python3 generate_user.py list`，默认只显示 yml/yaml，按文件汇总用户与端口；`--include-json` 会额外展示 json 文件（不展开数组）；`--details` 会展开 json 数组逐条显示并自动包含 json；目录不存在会自动创建。
-- 用户名仅允许字母、数字、下划线和短横线，避免路径注入。
-- 使用 Docker（无需本机安装依赖）: `python3 generate_user.py --docker add <name>`，
-  默认镜像 python:3.11-slim，可用 `--docker-image` 指定。
-- 查看帮助/示例: `python3 generate_user.py -h`
+核心职责:
+- 生成用户文件（uuid/端口/short_id/x25519 密钥）。
+- 更新 ACL（groups/hosts）。
+- 删除用户文件。
+- 列出当前用户与端口占用。
+
+文件格式:
+- 默认写入 `users/<name>.yml`，文件内容为 JSON（兼容 Ansible `from_yaml` 读取）。
+- 推荐字段: `name/uuid/port/short_id/private_key/public_key/groups/hosts`。
+- 历史文件可缺失 `groups`，部署时会按 legacy 逻辑回退为 `['all']`。
+
+依赖说明:
+- `add` 命令需要 `cryptography`（用于生成 X25519）。
+- `update/delete/list` 不依赖 `cryptography`。
+- 可用 `--docker` 在容器内运行，避免本机安装依赖。
 """
 
 import argparse
@@ -28,7 +29,7 @@ import subprocess
 import sys
 import uuid
 import re
-from typing import Dict, Iterable, List, Set
+from typing import Dict, Iterable, List, Optional, Set
 
 DEFAULT_MIN_PORT = 20000
 DEFAULT_MAX_PORT = 60000
@@ -36,6 +37,8 @@ DEFAULT_DOCKER_IMAGE = "python:3.11-slim"
 DOCKER_SENTINEL_ENV = "GENERATE_USER_IN_DOCKER"
 YAML_SUFFIXES = (".yml", ".yaml")
 USER_FILE_SUFFIXES = YAML_SUFFIXES + (".json",)
+VALID_PORT_MIN = 1
+VALID_PORT_MAX = 65535
 VALID_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 OPTIONS_WITH_VALUE = (
     "--users-dir",
@@ -50,9 +53,11 @@ USAGE_EXAMPLES = """示例:
   python3 generate_user.py add alice               # 创建 alice.yml，自动选端口
   python3 generate_user.py add bob --port 26000    # 指定端口
   python3 generate_user.py add carol --groups netflix --hosts ams,spt
+  python3 generate_user.py add carol --force       # 覆盖同名文件（会重建 uuid/密钥）
   python3 generate_user.py update carol --groups basic --hosts ams
   python3 generate_user.py delete bob              # 删除 bob.yml/.yaml/.json
   python3 generate_user.py list                    # 查看端口占用与文件路径
+  python3 generate_user.py list --wide             # 额外展示 ACL(groups/hosts)
   python3 generate_user.py list --include-json     # 同时展示 json 文件（不展开数组）
   python3 generate_user.py list --details          # 展开 json 数组逐条显示，并自动包含 json
   python3 generate_user.py --docker add dave       # 在容器里执行，免安装 cryptography
@@ -67,28 +72,56 @@ def validate_name(name: str) -> str:
     return name
 
 
+def unique_items(items: Iterable[str]) -> List[str]:
+    """按出现顺序去重。"""
+    seen = set()
+    out: List[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
 def parse_groups(raw: str, default: List[str]) -> List[str]:
     """解析 groups 逗号分隔字符串，空值时返回默认组。"""
     groups = [g.strip() for g in raw.split(",")] if raw is not None else []
     groups = [g for g in groups if g]
-    return groups or list(default)
+    return unique_items(groups) or list(default)
 
 
 def parse_hosts(raw: str) -> List[str]:
     """解析 hosts 逗号分隔字符串，空值时返回空列表。"""
     hosts = [h.strip() for h in raw.split(",")] if raw is not None else []
-    return [h for h in hosts if h]
+    return unique_items([h for h in hosts if h])
+
+
+def normalize_acl_list(value: object) -> List[str]:
+    """把对象字段规范为字符串列表。"""
+    if not isinstance(value, list):
+        return []
+    return unique_items(
+        [item.strip() for item in value if isinstance(item, str) and item.strip()]
+    )
+
+
+def find_existing_user_file(users_dir: str, name: str) -> Optional[str]:
+    """查找用户已有文件路径，按 yml/yaml/json 顺序。"""
+    for ext in (".yml", ".yaml", ".json"):
+        path = os.path.join(users_dir, f"{name}{ext}")
+        if os.path.exists(path):
+            return path
+    return None
 
 
 def resolve_user_file(users_dir: str, name: str) -> str:
     """解析用户文件路径，按 yml/yaml/json 顺序查找。"""
-    candidates = [
-        os.path.join(users_dir, f"{name}{ext}") for ext in (".yml", ".yaml", ".json")
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            return path
+    existing = find_existing_user_file(users_dir, name)
+    if existing:
+        return existing
+    candidates = ", ".join(f"{name}{ext}" for ext in (".yml", ".yaml", ".json"))
     sys.stderr.write(f"未找到用户 {name} 对应的文件 (yml/yaml/json) 于 {users_dir}\n")
+    sys.stderr.write(f"已尝试: {candidates}\n")
     sys.exit(1)
 
 
@@ -124,7 +157,18 @@ def iter_user_records(
             display_name = name_val or os.path.splitext(fname)[0]
             if idx is not None:
                 display_name = f"{display_name}[{idx}]"
-            return {"name": name_val or display_name, "port": port_val, "path": path, "display_name": display_name}
+            groups = normalize_acl_list(obj.get("groups"))
+            hosts = normalize_acl_list(obj.get("hosts"))
+            acl_mode = "legacy_all" if "groups" not in obj else "explicit"
+            return {
+                "name": name_val or display_name,
+                "port": port_val,
+                "path": path,
+                "display_name": display_name,
+                "groups": groups,
+                "hosts": hosts,
+                "acl_mode": acl_mode,
+            }
 
         if isinstance(data, dict):
             record = build_record(data)
@@ -150,11 +194,39 @@ def iter_user_records(
                     display_name = unique_names[0] if len(unique_names) == 1 else f"{base_name} ({len(records)})"
                 ports = {r.get("port") for r in records if isinstance(r.get("port"), int)}
                 port_val = ports.pop() if len(ports) == 1 else None
+                groups = unique_items(
+                    [
+                        g
+                        for r in records
+                        for g in (r.get("groups") if isinstance(r.get("groups"), list) else [])
+                    ]
+                )
+                hosts = unique_items(
+                    [
+                        h
+                        for r in records
+                        for h in (r.get("hosts") if isinstance(r.get("hosts"), list) else [])
+                    ]
+                )
+                acl_modes = {
+                    r.get("acl_mode")
+                    for r in records
+                    if isinstance(r.get("acl_mode"), str)
+                }
+                if acl_modes == {"legacy_all"}:
+                    acl_mode = "legacy_all"
+                elif len(acl_modes) > 1:
+                    acl_mode = "mixed"
+                else:
+                    acl_mode = "explicit"
                 yield {
                     "name": display_name,
                     "port": port_val,
                     "path": path,
                     "display_name": display_name,
+                    "groups": groups,
+                    "hosts": hosts,
+                    "acl_mode": acl_mode,
                 }
         else:
             if verbose:
@@ -177,6 +249,36 @@ def pick_port(existing_ports: Set[int], min_port: int, max_port: int) -> int:
     if not candidates:
         raise RuntimeError("端口池耗尽，换个范围或清理占用端口。")
     return secrets.choice(candidates)
+
+
+def validate_port_value(port: int, field_name: str) -> None:
+    if port < VALID_PORT_MIN or port > VALID_PORT_MAX:
+        sys.stderr.write(f"{field_name} 必须在 {VALID_PORT_MIN}~{VALID_PORT_MAX} 之间\n")
+        sys.exit(1)
+
+
+def format_acl_groups(groups: object, acl_mode: object) -> str:
+    if isinstance(groups, list) and groups:
+        return ",".join(str(g) for g in groups)
+    if acl_mode == "legacy_all":
+        return "all(legacy)"
+    if acl_mode == "mixed":
+        return "mixed"
+    return "-"
+
+
+def format_acl_hosts(hosts: object) -> str:
+    if isinstance(hosts, list) and hosts:
+        return ",".join(str(h) for h in hosts)
+    return "-"
+
+
+def fit_text(text: str, width: int) -> str:
+    if len(text) <= width:
+        return text
+    if width <= 3:
+        return text[:width]
+    return text[: width - 3] + "..."
 
 
 def generate_keys() -> Dict[str, str]:
@@ -254,6 +356,45 @@ def strip_docker_flags(argv) -> list:
     return cleaned
 
 
+def apply_common_cli_overrides(args, argv: List[str]) -> None:
+    """修正父/子 parser 重复参数时的覆盖冲突。"""
+    users_dir_override = None
+    docker_image_override = None
+    docker_override = False
+
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token == "--users-dir" and i + 1 < len(argv):
+            users_dir_override = argv[i + 1]
+            i += 2
+            continue
+        if token.startswith("--users-dir="):
+            users_dir_override = token.split("=", 1)[1]
+            i += 1
+            continue
+        if token == "--docker":
+            docker_override = True
+            i += 1
+            continue
+        if token == "--docker-image" and i + 1 < len(argv):
+            docker_image_override = argv[i + 1]
+            i += 2
+            continue
+        if token.startswith("--docker-image="):
+            docker_image_override = token.split("=", 1)[1]
+            i += 1
+            continue
+        i += 1
+
+    if users_dir_override is not None:
+        args.users_dir = users_dir_override
+    if docker_override:
+        args.docker = True
+    if docker_image_override is not None:
+        args.docker_image = docker_image_override
+
+
 def reexec_in_docker(args, forwarded_argv, need_crypto: bool) -> None:
     """在 Docker 容器内重新执行当前脚本。"""
     script_dir = os.path.abspath(os.path.dirname(__file__))
@@ -316,16 +457,34 @@ def add_user(args) -> None:
     name = validate_name(args.name)
     users_dir = ensure_users_dir(args.users_dir)
 
+    if args.min_port > args.max_port:
+        sys.stderr.write("min_port 不能大于 max_port\n")
+        sys.exit(1)
+    validate_port_value(args.min_port, "min_port")
+    validate_port_value(args.max_port, "max_port")
+
+    existing_path = find_existing_user_file(users_dir, name)
+    existing_user_port = None
+    if existing_path:
+        try:
+            with open(existing_path, "r", encoding="utf-8") as f:
+                existing_data = json.load(f)
+                if isinstance(existing_data, dict) and isinstance(existing_data.get("port"), int):
+                    existing_user_port = existing_data.get("port")
+        except Exception:
+            existing_user_port = None
+
     existing_ports = load_ports(users_dir)
-    if args.port:
+    if isinstance(existing_user_port, int):
+        existing_ports.discard(existing_user_port)
+
+    if args.port is not None:
+        validate_port_value(args.port, "port")
         if args.port in existing_ports:
             sys.stderr.write(f"端口 {args.port} 已被占用，换一个或调整范围。\n")
             sys.exit(1)
         port = args.port
     else:
-        if args.min_port > args.max_port:
-            sys.stderr.write("min_port 不能大于 max_port\n")
-            sys.exit(1)
         port = pick_port(existing_ports, args.min_port, args.max_port)
 
     keys = generate_keys()
@@ -340,9 +499,9 @@ def add_user(args) -> None:
         "hosts": parse_hosts(args.hosts),
     }
 
-    out_path = os.path.join(users_dir, f"{name}.yml")
-    if os.path.exists(out_path) and not args.force:
-        sys.stderr.write(f"文件已存在: {out_path}，使用 --force 覆盖\n")
+    out_path = existing_path or os.path.join(users_dir, f"{name}.yml")
+    if existing_path and not args.force:
+        sys.stderr.write(f"文件已存在: {existing_path}，使用 --force 覆盖\n")
         sys.exit(1)
 
     with open(out_path, "w", encoding="utf-8") as f:
@@ -417,11 +576,24 @@ def list_users(args) -> None:
         return
 
     records.sort(key=lambda r: (str(r.get("name")), str(r.get("path"))))
+    if args.wide:
+        header = f"{'name':<20} {'port':<8} {'groups':<28} {'hosts':<24} path"
+        print(header)
+        print("-" * len(header))
     for record in records:
         port = record.get("port")
         port_display = str(port) if isinstance(port, int) else "-"
         rel_path = os.path.relpath(record.get("path"))
-        print(f"{str(record.get('display_name')):<20} {port_display:<10} {rel_path}")
+        if args.wide:
+            groups_display = fit_text(
+                format_acl_groups(record.get("groups"), record.get("acl_mode")), 28
+            )
+            hosts_display = fit_text(format_acl_hosts(record.get("hosts")), 24)
+            print(
+                f"{str(record.get('display_name')):<20} {port_display:<8} {groups_display:<28} {hosts_display:<24} {rel_path}"
+            )
+        else:
+            print(f"{str(record.get('display_name')):<20} {port_display:<10} {rel_path}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -495,6 +667,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="默认只显示 yml/yaml；使用该选项显示 json（不展开数组）",
     )
+    list_parser.add_argument(
+        "--wide",
+        action="store_true",
+        help="额外显示 groups/hosts（可识别 legacy_all 回退）",
+    )
 
     return parser
 
@@ -504,6 +681,7 @@ def main():
     argv = normalize_argv(raw_argv)
     parser = build_parser()
     args = parser.parse_args(argv)
+    apply_common_cli_overrides(args, argv)
 
     if args.command is None:
         parser.print_help()

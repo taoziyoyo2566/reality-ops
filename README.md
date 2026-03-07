@@ -1,190 +1,236 @@
 # Reality Ops
 
-通过 Ansible 部署 Reality (Xray) 节点、流量监控与订阅分发，所有运行数据集中在 `/opt/reality`，便于统一管理、备份和切换单/多实例。
+Reality Ops 是一套基于 Ansible 的 Reality (Xray) 节点编排项目，包含三条主线：
+- 节点部署：单实例/多实例两种模式自动编排。
+- 流量监控：FastAPI + SQLite 服务端 + 节点 Agent 每分钟上报。
+- 订阅分发：汇总每个用户的节点订阅并推送到 GitHub Gist。
 
-## 核心功能
-- 一键部署 Reality：支持单实例与多实例两种模式，自动完成 BBR/FastOpen 优化、镜像拉取、容器/compose 启停。
-- 流量监控内置：FastAPI + SQLite 服务端（`reality-monitor`）+ 每分钟上报的 agent，提供 UI、报表、健康检查和订阅访问日志。
-- 订阅分发：自动生成节点订阅文件并更新到 GitHub Gist，可选经监控域名代理并记录访问日志。
-- 用户管理脚本：`generate_user.py` 生成/删除/查看用户文件，避免手写端口和密钥。
-- 运维工具：`audit.yml` 全网 IP 审计，`reset.yml` 清理节点，`speedlimit.sh` 等辅助脚本。
+## 项目梳理（执行链路）
+1. 控制端读取 `users/*.yml`，根据 `groups/hosts` + `acl_matrix` 在每台节点计算授权用户集合（`reality_instances`）。
+2. 根据节点 `reality_mode` 进入 `reality_single` 或 `reality_multi` 角色部署 Xray。
+3. 在控制端生成 `/opt/reality/users/*_<host>.json` 节点订阅缓存文件。
+4. 首台执行主机在 `post_tasks` 调用 `generate_subs_gist.py`，把订阅聚合后更新 Gist。
+5. 监控角色按 `monitor_enabled` 统一部署：
+- `monitor.server_host` 节点部署 FastAPI 服务（`reality-monitor` systemd）。
+- 全部节点部署 `traffic_agent.py` + cron 每分钟上报流量与用户 IP。
 
-## 主要组成
-- Playbook：`deploy.yml`（主部署）、`reset.yml`（重置）、`audit.yml`（审计）。
-- Roles：`reality_single`（单实例）、`reality_multi`（多实例 compose）、`monitor`（监控服务端/agent）。
-- 变量：`group_vars/all/main.yml`（公共配置）、`group_vars/all/vault.yml`（token/密钥，需 `ansible-vault` 加密），可用 `host_vars/<host>.yml` 覆盖。
-- 用户配置：`users/*.yml`（JSON 结构），每个用户包含 `name/uuid/port/short_id/private_key/public_key`，可选 ACL 字段 `groups/hosts`（默认 `groups=["free"]`、`hosts=[]`）。
-- 运行目录：`/opt/reality`；数据 `/opt/reality/data`；日志 `/opt/reality/logs`；监控 `/opt/reality/monitor` 与虚拟环境 `/opt/reality/monitor/.venv`。
+## 目录结构
+- `deploy.yml`：主部署入口（含 ACL 过滤 + role 调度 + Gist 更新）。
+- `reset.yml`：清理容器/数据/本地订阅缓存并可选回写 Gist。
+- `audit.yml`：聚合 `access.log` 做用户-IP 去重审计。
+- `roles/reality_single/`：单实例 `reality_core` 容器模式。
+- `roles/reality_multi/`：多实例 `reality_<user>` + compose 模式。
+- `roles/monitor/`：监控服务端与 agent。
+- `group_vars/all/main.yml`：全局非密钥配置。
+- `group_vars/all/vault.yml`：密钥（建议全文件 ansible-vault 加密）。
+- `host_vars/*.yml`：主机级覆盖（如 `reality_mode`、`monitor_enabled`）。
+- `users/*.yml`：用户配置（JSON 结构写入 `.yml` 文件）。
+- `generate_user.py`：用户文件生成/更新/删除/列举工具。
+- `generate_subs_gist.py`：订阅聚合与 Gist 推送脚本。
 
-## 前置准备
-1) 安装依赖  
-   `ansible-galaxy collection install community.general community.docker`
-2) SSH 准备  
-   `eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519`
-3) 配置变量  
-   - 编辑 `group_vars/all/main.yml`：域名、镜像、监控开关/端口、订阅代理等。  
-   - 在 `group_vars/all/vault.yml` 写入随机 `monitor.report_token/admin_bearer_token/stats_bearer_token/subs_token` 等后加密：  
-     `ansible-vault encrypt group_vars/all/vault.yml`
-4) 定义节点  
-   - `inventory.ini` 中 `reality_nodes` 是部署目标；可用 `free/basic/normal/premium`（及 `special/cmi/netflix` 等特性组）配合 `--limit` 选择。  
-   - 每台主机可在 `host_vars/<host>.yml` 设置 `reality_mode`（single/multi）与 `monitor_enabled`。
-5) 准备用户  
-   - 推荐用脚本：`python3 generate_user.py add <name> [--port ...] [--groups ...] [--hosts ...]`；删除：`python3 generate_user.py delete <name>`；查看：`python3 generate_user.py list`。  
-   - 文件会写到 `users/`，格式示例：  
-     ```json
-     {
-       "name": "alice",
-       "uuid": "xxxx",
-       "port": 23456,
-       "short_id": "abcd1234efgh5678",
-       "private_key": "...",
-       "public_key": "...",
-       "groups": ["free"],
-       "hosts": []
-     }
-     ```
+## 运行依赖
+- 控制端：`ansible`、`python3`。
+- Ansible collections：
+```bash
+ansible-galaxy collection install community.general community.docker
+```
+- 目标机：Debian/Ubuntu、Docker Engine 可用、支持 sudo/become。
+- 可选：`ansible-vault`（推荐，保护 token）。
 
-## 配置示例（复制后改值即可）
-- `group_vars/all/main.yml` 核心字段示例：  
-  ```yaml
-  xray_image: "taoziyoyo2566/xray_docker:latest"
-  domain_suffix: "example.com"
-  reality_server_names: ["www.apple.com", "images.apple.com"]
-  reality_dest: "www.apple.com:443"
-  reality_root_dir: "/opt/reality"
-  monitor:
-    server_host: "spt"
-    server_url: "https://monitor.example.com"
-    subs_base_url: "https://subs.example.com"
-    port: 8000
-    ip_allowlist: ["127.0.0.1"]
-    subs_proxy:
-      enabled: true
-      require_token: true
-  ```
-- `group_vars/all/vault.yml` 机密示例（填随机值后加密）：  
-  ```yaml
-  vault_monitor_report_token: "report-token"
-  vault_monitor_admin_bearer_token: "admin-bearer"
-  vault_monitor_stats_bearer_token: "stats-bearer"
-  vault_monitor_subs_token: "subs-token"
-  vault_monitor_gist_user: "your-gh-user"
-  vault_monitor_gist_id: "gist-id"
-  vault_github_token: "ghp_xxx"  # 用于推 Gist
-  ```
-  `ansible-vault encrypt group_vars/all/vault.yml`
-- `host_vars/<host>.yml` 示例：  
-  ```yaml
-  # 单实例开启监控
-  reality_mode: single
-  monitor_enabled: true
-  ```
-  ```yaml
-  # 多实例且关闭监控
-  reality_mode: multi
-  monitor_enabled: false
-  ```
+## 配置入口
+### 1) 全局配置 `group_vars/all/main.yml`
+关键字段：
+- `xray_image`：节点镜像。
+- `domain_suffix` + `server_hash_suffix`：订阅域名拼接。
+- `reality_server_names`、`reality_dest`：Reality 握手参数。
+- `reality_root_dir` / `reality_data_dir` / `reality_logs_dir`：运行目录。
+- `monitor.*`：监控地址、鉴权 token、订阅代理配置。
+- `acl_matrix`：节点组授权矩阵。
 
-## 完整使用指南（一步到位）
-1) **填变量**  
-   - `group_vars/all/main.yml`：域名、镜像、`monitor` 开关/端口、订阅代理。  
-   - `group_vars/all/vault.yml`：随机生成 `monitor.report_token/admin_bearer_token/stats_bearer_token/subs_token`，再 `ansible-vault encrypt group_vars/all/vault.yml`。  
-   - 每台主机在 `host_vars/<host>.yml` 设定 `reality_mode`（single/multi）、`monitor_enabled`。  
-2) **准备用户**  
-   - `python3 generate_user.py add <name> [--port ...] [--groups ...] [--hosts ...]` 生成到 `users/`；已有文件用 `--force` 覆盖。  
-   - 老用户迁移标签：`python3 generate_user.py update <name> --groups <...> [--hosts ...]`（仅更新 ACL）。  
-   - 删除：`python3 generate_user.py delete <name>`；查看：`python3 generate_user.py list`。  
-3) **连通性与预演**  
-   - 连通测试：`ansible -i inventory.ini all -m ping`  
-  - 预演：`ansible-playbook -i inventory.ini deploy.yml --check --diff`（只看会改什么）。  
-4) **正式部署**  
-  - 全量：`ansible-playbook -i inventory.ini deploy.yml --ask-vault-pass`  
-  - 只改用户/实例：`ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass`（最快）  
-   - 指定范围：追加 `--limit <group|host>`。  
-   - 切换模式：修改目标主机的 `reality_mode`，再跑同一命令；单/多实例会自动清理旧容器/compose。  
-5) **订阅/Gist（可选但常用）**  
-   - 确保有环境变量：`GITHUB_TOKEN`、`GIST_ID`、`GITHUB_USER`、`SUBS_BASE_URL`（可用 `monitor.subs_base_url`），可选 `SUBS_TOKEN`。  
-   - 部署结束后 `post_tasks` 会在本机执行 `generate_subs_gist.py`：成功会生成 `SUBSCRIPTIONS.txt`，输出每个用户订阅链接（默认走监控/订阅域名代理，可记录访问日志）。  
-6) **验证监控**  
-   - 服务端：`sudo journalctl -u reality-monitor -f`；数据库 `/opt/reality/data/traffic_monitor.db`。  
-   - Agent：`sudo /opt/reality/monitor/.venv/bin/python3 /usr/local/bin/traffic_agent.py`（手动上报）；cron 每分钟运行。  
-   - UI/API（需 IP 白名单或 Bearer）：`.../stats/ui`、`.../stats/daily`、`.../stats/timeseries`、`.../stats/health`；订阅日志 `.../subs/logs`。  
-7) **日常操作**  
-   - 重置节点：`ansible-playbook -i inventory.ini reset.yml --limit <group|host>`。  
-   - 全网审计：`ansible-playbook -i inventory.ini audit.yml`，输出用户-IP 去重统计。  
-   - 查看日志：`tail -n 500 /opt/reality/logs/reality_core/access.log`；容器状态：`docker ps -a --filter name=reality_ --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}'`。  
-8) **故障排查速查**  
-   - Agent 上报失败：检查 `group_vars/all/main.yml` 的 `monitor.server_url` 和 token；`journalctl -u reality-monitor` 看服务端；尝试手动上报命令。  
-   - 证书/域名：确认域名 A 记录到监控节点，80/443 放通，等待 Caddy 自动签证书。  
-   - 订阅 404/403：检查 `monitor.subs_proxy.enabled`、Gist 变量、`SUBS_TOKEN` 与访问 URL。  
+### 2) 密钥配置 `group_vars/all/vault.yml`
+建议至少包含：
+- `vault_monitor_report_token`
+- `vault_monitor_admin_bearer_token`
+- `vault_monitor_stats_bearer_token`
+- `vault_monitor_subs_token`
+- `vault_monitor_gist_user`
+- `vault_monitor_gist_id`
+- `vault_github_token`
 
-## 常见场景操作
-- 新增用户并同步：`python3 generate_user.py add bob` → `ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass`
-- 新增受限用户（仅某组可用）：`python3 generate_user.py add bob --groups netflix` → `ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass`
-- 回收某节点权限：编辑 `users/<name>.yml` 的 `groups/hosts` 后，执行 `ansible-playbook -i inventory.ini deploy.yml --limit <host> --tags users --ask-vault-pass`
-- 切到多实例：在目标 `host_vars/<host>.yml` 设 `reality_mode: multi` → 跑主部署；回切 single 同理。
-- 关闭监控（单台）：该主机 `monitor_enabled: false` → 部署；会停服务/删 agent/cron。
-- 只更新订阅/Gist：确保环境变量到位，`ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass`（post_tasks 会自动跑 Gist）。
-- 手动重启监控服务：`sudo systemctl restart reality-monitor`（spt 节点）；查看日志 `journalctl -u reality-monitor -f`。
-- 清理节点：`ansible-playbook -i inventory.ini reset.yml --limit <group|host>`
-- 审计用户-IP：`ansible-playbook -i inventory.ini audit.yml`
+加密示例：
+```bash
+ansible-vault encrypt group_vars/all/vault.yml
+```
 
-## 使用流程与常用命令
-- 连通性：`ansible -i inventory.ini all -m ping`
-- 预演（不改动）：`ansible-playbook -i inventory.ini deploy.yml --check --diff`
-- 部署：`ansible-playbook -i inventory.ini deploy.yml --ask-vault-pass`
-- 仅改用户/实例（最快）：`ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass`
-- 用户变更并清理旧多实例：`ansible-playbook -i inventory.ini deploy.yml --tags users,cleanup --ask-vault-pass`
-- 指定分组/主机：在以上命令加 `--limit <group|host>`，例如 `--limit premium`
+### 3) 主机覆盖 `host_vars/<host>.yml`
+常用字段：
+- `reality_mode: single|multi`
+- `monitor_enabled: true|false`
 
-## 模式与标签
-- `reality_mode`:  
-  - `single`（默认）：单容器 `reality_core` 管理全部用户。  
-  - `multi`：每用户一个容器 `reality_<user>`，由 docker compose 统一启动。
-- 幂等切换：  
-  - multi → single：自动删除旧的 `reality_*`（保留 `reality_core`）与 `data/docker-compose.yml`。  
-  - single → multi：会移除单实例容器，重新生成 compose。
-- 监控开关：`monitor_enabled`（任意层变量可覆盖），为 `false` 时停止 `reality-monitor`、删除 agent 与 cron。
-- 标签：  
-  - `users`（默认快速变更用户/实例）  
-  - `system`（BBR/依赖/Docker 镜像）  
-  - `cleanup`（多实例残留清理，不在 `users` 中，需显式添加）  
-  - `monitor`（监控角色）  
-  - `always`（预加载用户配置，保持幂等）
+### 4) 节点清单 `inventory.ini`
+- `reality_nodes`：所有部署目标。
+- `free/basic/normal/premium/...`：ACL 用分组。
+- `spt` 默认配置为 `ansible_connection=local`，用于本机监控服务端场景。
 
-## 节点 ACL（Tag-based）
-- 用户可通过 `groups`（节点组）和 `hosts`（节点名）控制可下发范围；二者任一命中即授权。
-- 新增用户默认 `groups=["free"]`、`hosts=[]`；老用户若缺失 `groups` 字段，兼容期内仍按 `["all"]` 处理。
-- 典型创建命令：`python3 generate_user.py add bob --groups netflix`。
-- 回收权限后，建议按目标节点灰度执行：`ansible-playbook -i inventory.ini deploy.yml --limit <host> --tags users --ask-vault-pass`，会同时清理该主机本地旧订阅缓存，避免幽灵订阅。
+## ACL 规则（用户可见性）
+用户文件支持：
+- `groups`: 节点组标签列表。
+- `hosts`: 允许的具体主机名列表。
 
-## 监控与报表
-- 服务：Systemd 单元 `reality-monitor`，数据库 `/opt/reality/data/traffic_monitor.db`。
-- Agent：`/usr/local/bin/traffic_agent.py` 每分钟上报（cron），自动根据 `reality_mode` 选择统计方式。  
-  - single：读取 `reality_core` 的 Xray stats API。  
-  - multi：枚举 `reality_<user>` 容器，读取容器内 `eth0` 的 rx/tx 并上报 delta。  
-  - 手动触发：`sudo /opt/reality/monitor/.venv/bin/python3 /usr/local/bin/traffic_agent.py`
-- 日志：`sudo journalctl -u reality-monitor -f`
-- 访问与接口（需 IP 白名单或 Bearer，配置见 `group_vars/all/main.yml`）：  
-  - UI：`.../stats/ui`  
-  - 报表：`GET .../stats/daily?hours=24&detail=true`，时间序列：`.../stats/timeseries`  
-  - 健康：`.../stats/health`  
-  - 订阅访问日志（可选）：启用 `monitor.subs_proxy.enabled` 后，订阅链接 `.../subs/<sub_id>?token=<subs_token>`，日志 `.../subs/logs`
+匹配逻辑：
+- 命中 `groups` 与节点放行标签交集，或命中 `hosts` 任一主机，即下发该用户到当前节点。
+- 历史兼容：缺失 `groups` 字段时，部署逻辑按 `['all']` 处理（即不过滤）。
+- `generate_user.py add` 默认写入 `groups=["free"]`、`hosts=[]`。
 
-## 订阅与 Gist 更新
-- 部署完成后 `post_tasks` 会在本机运行 `generate_subs_gist.py`，需要环境变量：`GITHUB_TOKEN`、`GIST_ID`、`GITHUB_USER`、`SUBS_BASE_URL`（可配合 `monitor.subs_base_url`）、可选 `SUBS_TOKEN`。
-- 成功后会在项目根生成 `SUBSCRIPTIONS.txt`，包含每个用户的订阅链接（默认经监控/订阅域名代理）。
+## 快速开始
+### 1) 准备用户
+```bash
+python3 generate_user.py add alice
+python3 generate_user.py add bob --groups netflix --hosts ams,dcc
+python3 generate_user.py update bob --groups basic --hosts ams
+python3 generate_user.py list --wide
+```
 
-## 日常运维
-- 查看访问日志：`tail -n 500 /opt/reality/logs/reality_core/access.log`
-- 重置节点：`ansible-playbook -i inventory.ini reset.yml --limit <group|host>`
-- Docker 状态：`docker ps -a --filter name=reality_ --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}'`
+### 2) 连通性检查
+```bash
+ansible -i inventory.ini all -m ping
+```
 
-## 备注
-- `monitor.yml` 为旧版脚本，已弃用。
-- 监控虚拟环境缺 pip 时会自动重建 `/opt/reality/monitor/.venv`。
+### 3) 首次预演
+```bash
+ansible-playbook -i inventory.ini deploy.yml --check --diff --ask-vault-pass
+```
 
+### 4) 正式部署
+```bash
+ansible-playbook -i inventory.ini deploy.yml --ask-vault-pass
+```
 
-ansible-playbook -i inventory.ini audit.yml --vault-password-file ~/.vault_pass
+### 5) 日常仅改用户
+```bash
+ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass
+```
 
-ansible-playbook -i inventory.ini deploy.yml --tags users --vault-password-file ~/.vault_pass
+### 6) 指定范围灰度
+```bash
+ansible-playbook -i inventory.ini deploy.yml --limit premium --tags users --ask-vault-pass
+```
+
+## Playbook 与标签
+### `deploy.yml`
+- `users`：用户配置、容器编排、订阅缓存生成。
+- `system`：sysctl/包安装/基础环境。
+- `docker`：镜像与容器相关任务。
+- `update_image`：强制拉取最新镜像。
+- `cleanup`：清理旧模式残留。
+- `monitor`：监控服务/agent。
+- `gist`：Gist 推送。
+- `always`：预加载用户配置与 ACL 计算。
+
+说明：`--tags users` 是最快路径，但首次初始化建议至少跑一次完整部署，确保依赖齐全。
+
+### `reset.yml`
+- 清理 `reality_core` 和全部 `reality_*` 容器。
+- 清理数据目录、日志目录、compose 文件。
+- 清理本地 `/opt/reality/users/*_<host>.json`。
+- 可选触发 Gist 更新（依赖 vault token）。
+
+### `audit.yml`
+- 从各节点 `{{ reality_logs_dir }}/reality_core/access.log` 抽取用户与源 IP。
+- 在本机汇总输出去重后的用户-IP 统计。
+
+## 监控系统
+### 部署行为
+- 服务端仅在 `monitor.server_host` 部署：`/opt/reality/monitor/server.py` + `reality-monitor.service`。
+- 客户端在所有 `monitor_enabled=true` 节点部署：`/usr/local/bin/traffic_agent.py` + 每分钟 cron。
+- 数据库：`{{ reality_data_dir }}/traffic_monitor.db`。
+
+### 鉴权模型
+- `/report`：仅检查 `token` header（agent 上报入口）。
+- `/stats/*`、`/docs`、`/openapi.json`：IP 白名单或 Bearer Token 访问。
+- `/stats/cleanup` 与 `/stats/ip_report`：除 Bearer/IP 外，还要求 `token: REPORT_TOKEN`。
+
+### 常用接口
+- `GET /stats/ui`
+- `GET /stats/daily?hours=24&detail=true`
+- `GET /stats/timeseries?hours=24&interval=3600`
+- `GET /stats/health?hours=24&stale_minutes=10`
+- `GET /stats/export?hours=24&detail=true&format=csv`
+- `GET /stats/ip_matrix?hours=72`
+- `GET /subs/logs?limit=200`
+
+## 订阅分发（Gist）
+- 数据源：控制端本地 `/opt/reality/users/*.json`。
+- 脚本：`generate_subs_gist.py`。
+- 部署时自动注入环境变量并执行（无需手工 export）。
+- 若手工执行，需提供：`GITHUB_TOKEN`、`GIST_ID`、`GITHUB_USER`、`SUBS_BASE_URL`。
+
+手工执行示例：
+```bash
+GITHUB_TOKEN=... \
+GIST_ID=... \
+GITHUB_USER=... \
+SUBS_BASE_URL=https://subs.example.com \
+SUBS_TOKEN=... \
+python3 generate_subs_gist.py
+```
+
+## generate_user.py 说明
+### 功能
+- `add`：创建用户文件并生成 UUID、端口、short_id、X25519 密钥。
+- `update`：仅更新 ACL（`groups/hosts`）。
+- `delete`：删除对应用户文件（按 `.yml/.yaml/.json` 顺序查找）。
+- `list`：列出用户和端口；`--wide` 额外显示 ACL 视图。
+
+### 典型命令
+```bash
+python3 generate_user.py add alice
+python3 generate_user.py add alice --force --port 24001
+python3 generate_user.py add carol --groups basic,netflix --hosts ams
+python3 generate_user.py update carol --groups premium --hosts ""
+python3 generate_user.py delete alice
+python3 generate_user.py list --wide
+python3 generate_user.py --docker add dave
+```
+
+### 文件结构示例
+```json
+{
+  "name": "alice",
+  "uuid": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "port": 24567,
+  "short_id": "a1b2c3d4e5f60789",
+  "private_key": "...",
+  "public_key": "...",
+  "groups": ["free"],
+  "hosts": []
+}
+```
+
+## 常见运维命令
+```bash
+# 监控服务日志（monitor.server_host）
+sudo journalctl -u reality-monitor -f
+
+# 手动触发 agent 上报
+sudo /opt/reality/monitor/.venv/bin/python3 /usr/local/bin/traffic_agent.py
+
+# 查看单实例访问日志
+tail -n 300 /opt/reality/logs/reality_core/access.log
+
+# 重置某组节点
+ansible-playbook -i inventory.ini reset.yml --limit free --ask-vault-pass
+
+# 全网 IP 审计
+ansible-playbook -i inventory.ini audit.yml --ask-vault-pass
+```
+
+## 故障排查
+- `--tags users` 失败且提示 `rsync` 缺失：先执行完整部署或在目标机安装 `rsync`。
+- 订阅未更新：确认 `vault_github_token` 与 Gist 参数已配置。
+- 监控页面 401：检查访问 IP 是否在 `monitor.ip_allowlist` 或 Bearer 是否正确。
+- 节点无用户容器：优先检查 ACL（`groups/hosts`、`inventory` 分组、`acl_matrix`）。
+
+## 兼容与遗留
+- `monitor.yml`、`monitor_server.py` 为旧方案文件，当前主流程不依赖。
+- `group_vars/all.yml` 标记为 deprecated，请使用 `group_vars/all/main.yml`。
