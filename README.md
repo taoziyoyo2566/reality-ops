@@ -34,6 +34,10 @@ Reality Ops 是一套基于 Ansible 的 Reality (Xray) 节点编排项目，包�
 ```bash
 ansible-galaxy collection install community.general community.docker
 ```
+- SSH 准备：
+```bash
+eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519
+```
 - 目标机：Debian/Ubuntu、Docker Engine 可用、支持 sudo/become。
 - 可选：`ansible-vault`（推荐，保护 token）。
 
@@ -98,22 +102,22 @@ ansible -i inventory.ini all -m ping
 
 ### 3) 首次预演
 ```bash
-ansible-playbook -i inventory.ini deploy.yml --check --diff --ask-vault-pass
+ansible-playbook -i inventory.ini deploy.yml --check --diff --vault-password-file ~/.vault_pass
 ```
 
 ### 4) 正式部署
 ```bash
-ansible-playbook -i inventory.ini deploy.yml --ask-vault-pass
+ansible-playbook -i inventory.ini deploy.yml --vault-password-file ~/.vault_pass
 ```
 
 ### 5) 日常仅改用户
 ```bash
-ansible-playbook -i inventory.ini deploy.yml --tags users --ask-vault-pass
+ansible-playbook -i inventory.ini deploy.yml --tags users --vault-password-file ~/.vault_pass
 ```
 
 ### 6) 指定范围灰度
 ```bash
-ansible-playbook -i inventory.ini deploy.yml --limit premium --tags users --ask-vault-pass
+ansible-playbook -i inventory.ini deploy.yml --limit premium --tags users --vault-password-file ~/.vault_pass
 ```
 
 ## Playbook 与标签
@@ -219,10 +223,10 @@ sudo /opt/reality/monitor/.venv/bin/python3 /usr/local/bin/traffic_agent.py
 tail -n 300 /opt/reality/logs/reality_core/access.log
 
 # 重置某组节点
-ansible-playbook -i inventory.ini reset.yml --limit free --ask-vault-pass
+ansible-playbook -i inventory.ini reset.yml --limit free --vault-password-file ~/.vault_pass
 
 # 全网 IP 审计
-ansible-playbook -i inventory.ini audit.yml --ask-vault-pass
+ansible-playbook -i inventory.ini audit.yml --vault-password-file ~/.vault_pass
 ```
 
 ## 故障排查
