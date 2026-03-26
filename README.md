@@ -50,6 +50,7 @@ eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519
 - `domain_suffix` + `server_hash_suffix`：订阅域名拼接。
 - `reality_server_names`、`reality_dest`：Reality 握手参数。
 - `reality_root_dir` / `reality_data_dir` / `reality_logs_dir`：运行目录。
+- `reality_socks5.*`：可选 socks5 落地配置（默认关闭）。
 - `monitor.*`：监控地址、鉴权 token、订阅代理配置。
 - `acl_matrix`：节点组授权矩阵。
 
@@ -62,6 +63,7 @@ eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519
 - `vault_monitor_gist_user`
 - `vault_monitor_gist_id`
 - `vault_github_token`
+- `vault_dcc_socks5_address` / `vault_dcc_socks5_port` / `vault_dcc_socks5_username` / `vault_dcc_socks5_password`（可选，仅 dcc socks5 落地）
 
 加密示例：
 ```bash
@@ -72,6 +74,29 @@ ansible-vault encrypt group_vars/all/vault.yml
 常用字段：
 - `reality_mode: single|multi`
 - `monitor_enabled: true|false`
+- `reality_socks5.*`（节点级 socks5 覆盖）
+
+#### dcc 节点额外启用 socks5 落地（不影响现有用户）
+思路：
+- 仅在 `host_vars/dcc.yml` 启用 `reality_socks5.enabled`。
+- 仅把新增用户加到 `reality_socks5.target_users`。
+- 未命中的用户继续走 `direct`，行为不变。
+
+示例：
+```yaml
+reality_socks5:
+  enabled: true
+  address: "{{ vault_dcc_socks5_address }}"
+  port: "{{ vault_dcc_socks5_port }}"
+  username: "{{ vault_dcc_socks5_username }}"
+  password: "{{ vault_dcc_socks5_password }}"
+  target_users: ["alice_socks"]
+```
+
+应用：
+```bash
+ansible-playbook -i inventory.ini deploy.yml --limit dcc --tags users --vault-password-file ~/.vault_pass
+```
 
 ### 4) 节点清单 `inventory.ini`
 - `reality_nodes`：所有部署目标。

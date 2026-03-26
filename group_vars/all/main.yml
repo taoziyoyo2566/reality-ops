@@ -19,6 +19,15 @@ reality_mem_swappiness: 60
 reality_conn_limit_single: 24
 reality_conn_limit_multi: 6
 
+# 可选：SOCKS5 落地（默认关闭；可在 host_vars/<host>.yml 覆盖）
+reality_socks5:
+  enabled: false
+  address: ""
+  port: 1080
+  username: ""
+  password: ""
+  target_users: []   # 仅这些用户在当前节点走 socks5 出站
+
 # --- 监控系统配置 ---
 monitor:
   server_host: "spt"           # 指定 Inventory 中哪台机器跑数据库

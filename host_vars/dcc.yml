@@ -1,3 +1,12 @@
 # 多实例部署（禁用监控）
 reality_mode: multi
 monitor_enabled: true
+
+# dcc 节点可选 socks5 落地（默认先关闭；启用后仅影响 target_users）
+reality_socks5:
+  enabled: true
+  address: "{{ vault_dcc_socks5_address | default('') }}"
+  port: "{{ vault_dcc_socks5_port | default(1080) }}"
+  username: "{{ vault_dcc_socks5_username | default('') }}"
+  password: "{{ vault_dcc_socks5_password | default('') }}"
+  target_users: ["lin_isp"]   # 仅这些用户在当前节点走 socks5 出站

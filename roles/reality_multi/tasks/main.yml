@@ -65,6 +65,29 @@
   become: yes
   tags: ['users']
 
+- name: 校验 SOCKS5 配置（启用且指定目标用户时必须完整）
+  vars:
+    socks5_cfg: "{{ reality_socks5 | default({}) }}"
+    socks5_enabled: "{{ socks5_cfg.enabled | default(false) | bool }}"
+    socks5_target_users: "{{ socks5_cfg.target_users | default([]) }}"
+    socks5_address: "{{ socks5_cfg.address | default('') }}"
+    socks5_port: "{{ socks5_cfg.port | default(0) | int }}"
+  assert:
+    that:
+      - socks5_address | length > 0
+      - socks5_port > 0
+      - socks5_port <= 65535
+    fail_msg: >-
+      SOCKS5 已启用且配置了 target_users，但 address/port 无效。
+      当前 address='{{ socks5_address }}', port='{{ socks5_cfg.port | default('') }}'。
+      请检查 host_vars/{{ inventory_hostname }}.yml 与 vault 变量。
+    success_msg: >-
+      SOCKS5 配置校验通过：address={{ socks5_address }}, port={{ socks5_port }}。
+  when:
+    - socks5_enabled
+    - (socks5_target_users | length) > 0
+  tags: ['users', 'config']
+
 - name: 安装基础软件包 (含 rsync)
   apt:
     update_cache: yes
