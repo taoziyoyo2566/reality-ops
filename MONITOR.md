@@ -66,8 +66,7 @@ curl -X POST 'https://monitor.taoziyoyo.com/stats/cleanup?days=90' \
 ### 订阅访问日志（可选）
 如果启用 `monitor.subs_proxy.enabled=true`，并将订阅链接替换为 `https://monitor.taoziyoyo.com/subs/<sub_id>?token=<subs_token>`，服务端会记录 IP / User-Agent / 时间戳 到数据库。
 * 查看日志: `https://monitor.taoziyoyo.com/subs/logs?limit=200` （需 Bearer）
-```
 
 ## 4. 故障排查
-1.  **Agent 连不上**: 检查 `group_vars/all.yml` 中的 `server_url` 是否正确，以及 spt 的 8443 端口是否放行。
+1.  **Agent 连不上**: 检查 `group_vars/all/main.yml` 中的 `monitor.server_url` 是否正确，以及监控入口端口（通常 443）是否放行。
 2.  **HTTPS 证书错误**: 确保你的域名已经 A 记录解析到了 spt 的 IP，且 spt 的 80 端口对外开放（Caddy 需要用 80 端口验证）。

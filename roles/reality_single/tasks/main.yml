@@ -196,7 +196,10 @@
     security_opts:
       - no-new-privileges:true
     pids_limit: 256
-    memory: 512m
+    memory: "{{ reality_memory_limit }}"
+    memory_reservation: "{{ reality_memory_reservation }}"
+    memory_swap: "{{ reality_memory_swap }}"
+    memory_swappiness: "{{ reality_mem_swappiness }}"
     ulimits:
       - "nofile:4096:8192"
       - "nproc:512:1024"

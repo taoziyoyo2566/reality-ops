@@ -5,6 +5,16 @@
   when: (monitor_enabled | default(true)) | bool
   tags: ['monitor', 'system']
   block:
+    - name: 确认监控运行时 Python 版本满足要求
+      assert:
+        that:
+          - ansible_facts.python.version.major | int > 3 or ((ansible_facts.python.version.major | int == 3) and (ansible_facts.python.version.minor | int >= 10))
+        fail_msg: >-
+          监控组件当前固定依赖 FastAPI/Uvicorn 的 Python 3.10+ 版本。
+          当前主机 {{ inventory_hostname }} 的 Python 版本为
+          {{ ansible_facts.python.version.major }}.{{ ansible_facts.python.version.minor }}。
+      tags: ['monitor', 'system']
+
     - name: 确保系统安装了基础依赖
       apt:
         name: ["python3-pip", "python3-venv", "cron"]
@@ -31,11 +41,19 @@
       when: monitor_venv_pip.rc != 0
       tags: ['monitor', 'system']
 
+    - name: 下发固定版本的 Python 依赖清单
+      copy:
+        src: "{{ playbook_dir }}/requirements.txt"
+        dest: "{{ monitor_root_dir }}/requirements.txt"
+        mode: '0644'
+      tags: ['monitor', 'system']
+
     - name: 在虚拟环境中安装 Python 依赖
       pip:
-        name: ["requests", "fastapi", "uvicorn"]
+        requirements: "{{ monitor_root_dir }}/requirements.txt"
         virtualenv: "{{ monitor_venv_dir }}"
         virtualenv_command: /usr/bin/python3 -m venv
+      notify: 重启监控服务
       tags: ['monitor', 'system']
 
     # --- 服务端部署 (spt) ---
@@ -54,6 +72,7 @@
             src: server.py.j2
             dest: "{{ monitor_root_dir }}/server.py"
             mode: '0755'
+          notify: 重启监控服务
           tags: ['monitor', 'monitor_server']
         
         - name: 配置 Systemd 服务
@@ -72,7 +91,7 @@
               [Install]
               WantedBy=multi-user.target
           notify: 重启监控服务
-          tags: ['monitor', 'monitor_server']
+      tags: ['monitor', 'monitor_server']
 
 
     # --- 客户端部署 (所有节点) ---
@@ -88,6 +107,12 @@
         name: "Reality Traffic Report"
         minute: "*"
         job: "{{ monitor_venv_dir }}/bin/python3 /usr/local/bin/traffic_agent.py > /dev/null 2>&1"
+      tags: ['monitor', 'users', 'monitor_config']
+
+    - name: "[Agent] 立即执行一次上报"
+      command: "{{ monitor_venv_dir }}/bin/python3 /usr/local/bin/traffic_agent.py"
+      changed_when: false
+      failed_when: false
       tags: ['monitor', 'users', 'monitor_config']
 
 - name: "[Cleanup] 停用监控"

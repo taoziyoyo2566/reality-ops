@@ -50,7 +50,7 @@ def update_gist(files_content):
     }
     payload = {"files": files_content}
     try:
-        response = requests.patch(url, headers=headers, json=payload)
+        response = requests.patch(url, headers=headers, json=payload, timeout=20)
         response.raise_for_status()
         print(f"✅ Gist 更新成功! ID: {GIST_ID}")
         return True

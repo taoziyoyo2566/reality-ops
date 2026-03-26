@@ -1,0 +1,12 @@
+{
+  "name": "jeff",
+  "uuid": "a8675a00-84cd-46f6-b114-c560641f5873",
+  "port": 20235,
+  "short_id": "79f9c33932063364",
+  "private_key": "iJ1BzI5bnoS_CVUVW7aENVOkYHTUBeP8T66aiLfHckI",
+  "public_key": "YdgQxHHXsr8-nvEPNB_jtJVZjOiusseANYeuSU1LYyY",
+  "groups": [
+    "free"
+  ],
+  "hosts": []
+}

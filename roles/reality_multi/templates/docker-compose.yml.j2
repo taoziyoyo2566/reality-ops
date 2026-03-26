@@ -28,7 +28,10 @@ services:
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
-    mem_limit: 512m
+    mem_limit: "{{ reality_memory_limit }}"
+    mem_reservation: "{{ reality_memory_reservation }}"
+    memswap_limit: "{{ reality_memory_swap }}"
+    mem_swappiness: {{ reality_mem_swappiness }}
     ulimits:
       nofile:
         soft: 4096

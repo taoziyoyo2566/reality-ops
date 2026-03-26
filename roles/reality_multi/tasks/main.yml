@@ -88,11 +88,10 @@
   when: (xray_image_info.images | default([])) | length == 0
   tags: ['system', 'docker']
 
-- name: 拉取/更新 Xray 镜像（仅在显式请求时）
+- name: 拉取 Xray Docker 镜像
   community.docker.docker_image:
     name: "{{ xray_image }}"
     source: pull
-  when: "'update_image' in ansible_run_tags"
   tags: ['system', 'docker', 'update_image']
 
 # ==============================================================================

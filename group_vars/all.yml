@@ -1,1 +1,0 @@
-# Deprecated: 请改用 group_vars/all/main.yml 作为单一配置入口，避免重复定义。

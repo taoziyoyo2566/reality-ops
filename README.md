@@ -30,6 +30,7 @@ Reality Ops 是一套基于 Ansible 的 Reality (Xray) 节点编排项目，包�
 
 ## 运行依赖
 - 控制端：`ansible`、`python3`。
+- 若存在 `reality_mode: multi` 节点，控制端还需要 `docker compose`（用于本地 `compose config` 校验）。
 - Ansible collections：
 ```bash
 ansible-galaxy collection install community.general community.docker
@@ -39,12 +40,13 @@ ansible-galaxy collection install community.general community.docker
 eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519
 ```
 - 目标机：Debian/Ubuntu、Docker Engine 可用、支持 sudo/become。
+- 启用监控的节点需要 Python 3.10+（依赖由仓库根目录 `requirements.txt` 固定）。
 - 可选：`ansible-vault`（推荐，保护 token）。
 
 ## 配置入口
 ### 1) 全局配置 `group_vars/all/main.yml`
 关键字段：
-- `xray_image`：节点镜像。
+- `xray_image`：节点镜像（当前默认 `latest`）。
 - `domain_suffix` + `server_hash_suffix`：订阅域名拼接。
 - `reality_server_names`、`reality_dest`：Reality 握手参数。
 - `reality_root_dir` / `reality_data_dir` / `reality_logs_dir`：运行目录。
@@ -132,6 +134,11 @@ ansible-playbook -i inventory.ini deploy.yml --limit premium --tags users --vaul
 - `always`：预加载用户配置与 ACL 计算。
 
 说明：`--tags users` 是最快路径，但首次初始化建议至少跑一次完整部署，确保依赖齐全。
+
+## 当前策略说明
+- 镜像策略保持 `latest`：完整部署会执行镜像拉取；也可以单独执行 `--tags update_image` 强制刷新镜像。
+- SSH Host Key 校验已开启（`host_key_checking=True`），并通过 `StrictHostKeyChecking=accept-new` 保留首次接入体验。
+- 监控 Python 依赖固定在仓库根目录 `requirements.txt`，部署时会下发并按该文件安装。
 
 ### `reset.yml`
 - 清理 `reality_core` 和全部 `reality_*` 容器。
@@ -237,4 +244,4 @@ ansible-playbook -i inventory.ini audit.yml --vault-password-file ~/.vault_pass
 
 ## 兼容与遗留
 - `monitor.yml`、`monitor_server.py` 为旧方案文件，当前主流程不依赖。
-- `group_vars/all.yml` 标记为 deprecated，请使用 `group_vars/all/main.yml`。
+- `group_vars/all.yml` 已移除，请统一使用 `group_vars/all/main.yml`。
