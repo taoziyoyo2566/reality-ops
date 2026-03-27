@@ -70,6 +70,11 @@ eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519
 ansible-vault encrypt group_vars/all/vault.yml
 ```
 
+编辑示例（推荐，避免手动改密文）：
+```bash
+EDITOR=vim ansible-vault edit group_vars/all/vault.yml --vault-password-file ~/.vault_pass
+```
+
 ### 3) 主机覆盖 `host_vars/<host>.yml`
 常用字段：
 - `reality_mode: single|multi`
@@ -96,6 +101,44 @@ reality_socks5:
 应用：
 ```bash
 ansible-playbook -i inventory.ini deploy.yml --limit dcc --tags users --vault-password-file ~/.vault_pass
+```
+
+仅更新用户/容器，跳过监控与 Gist：
+```bash
+ansible-playbook -i inventory.ini deploy.yml --limit dcc --tags users --skip-tags monitor,gist --vault-password-file ~/.vault_pass
+```
+
+专用 socks5 用户示例（仅 dcc 可见）：
+```bash
+python3 generate_user.py add lin_isp --groups socks5_only --hosts dcc
+python3 generate_user.py list --wide
+```
+
+配置生效核验（控制端本地构建产物）：
+```bash
+grep -n '"protocol": "socks"' /tmp/reality_build/dcc/data/lin_isp/config.json
+```
+
+配置生效核验（目标机落地配置）：
+```bash
+ssh dcc 'grep -n "\"protocol\": \"socks\"" /opt/reality/data/lin_isp/config.json'
+```
+
+仅重载目标用户容器（避免全量抖动）：
+```bash
+ssh dcc 'docker restart reality_lin_isp'
+```
+
+出口验证（客户端）：
+```bash
+# 连接 lin_isp 节点后执行
+curl -s https://api.ipify.org
+```
+
+出口验证（服务端辅助）：
+```bash
+# 在 dcc 上观察是否有到 socks5 服务器的连接
+sudo tcpdump -ni any host <socks5_ip> and port <socks5_port>
 ```
 
 ### 4) 节点清单 `inventory.ini`
@@ -160,6 +203,32 @@ ansible-playbook -i inventory.ini deploy.yml --limit premium --tags users --vaul
 
 说明：`--tags users` 是最快路径，但首次初始化建议至少跑一次完整部署，确保依赖齐全。
 
+## 简短命令模式
+无需修改 `~/.bashrc`，在项目根目录直接使用本地包装器：
+```bash
+./ansible-playbook reset sky
+```
+
+更多示例：
+```bash
+./ansible-playbook deploy premium --tags users
+./ansible-playbook reset sky
+./ansible-playbook audit dcc
+```
+
+说明：
+- `./ansible-playbook deploy|reset|audit` 会自动映射到 `deploy.yml|reset.yml|audit.yml`。
+- `./ansible-playbook reset sky` 会自动展开为 `-e "reset_target_hosts=sky"`。
+- `./ansible-playbook reset <host>` 会自动判断：
+  在 `reality_nodes` 中则自动 `--limit <host>`；
+  不在 `reality_nodes` 中则自动 `--limit spt -e "reset_subs_only=true"`。
+- 若存在 `~/.vault_pass`，会自动追加 `--vault-password-file ~/.vault_pass`。
+- 其他原生参数保持兼容（透传执行），例如：
+```bash
+./ansible-playbook -i inventory.ini reset.yml --syntax-check
+```
+- 如果你坚持输入 `ansible-playbook ...`（不带 `./`），仍然需要 PATH 注入（例如 `source scripts/ansible_shortcuts.sh`）。
+
 ## 当前策略说明
 - 镜像策略保持 `latest`：完整部署会执行镜像拉取；也可以单独执行 `--tags update_image` 强制刷新镜像。
 - SSH Host Key 校验已开启（`host_key_checking=True`），并通过 `StrictHostKeyChecking=accept-new` 保留首次接入体验。
@@ -169,6 +238,13 @@ ansible-playbook -i inventory.ini deploy.yml --limit premium --tags users --vaul
 - 清理 `reality_core` 和全部 `reality_*` 容器。
 - 清理数据目录、日志目录、compose 文件。
 - 清理本地 `/opt/reality/users/*_<host>.json`。
+- 支持 `-e "reset_target_hosts=sky,dcc"`：统一指定本次要处理的节点。
+  在 inventory 里的节点会按连通性执行远端 reset；不在 inventory 的节点仅清理订阅缓存并提示。
+- 支持 `-e "reset_prune_hosts=sky,kagoya"` 显式删除已下线节点的订阅缓存。
+- 支持 `-e "reset_subs_only=true"` 仅做订阅清理与 Gist 更新（不触发远端容器/数据 reset）。
+- 默认有防误操作确认：执行前会显示清理预览，并要求输入 `YES` 才继续。
+- 非交互执行可显式确认：`-e "reset_confirm=YES"`（必要时可配合 `-e "reset_require_confirm=false"`）。
+- 若未确认 `YES`，会安全取消本次 reset（提前结束，不执行删除）。
 - 可选触发 Gist 更新（依赖 vault token）。
 
 ### `audit.yml`
@@ -257,13 +333,33 @@ tail -n 300 /opt/reality/logs/reality_core/access.log
 # 重置某组节点
 ansible-playbook -i inventory.ini reset.yml --limit free --vault-password-file ~/.vault_pass
 
+# 精确重置指定节点（示例: dcc 在 inventory 内，执行连通性检查+远端清理+订阅清理）
+ansible-playbook -i inventory.ini reset.yml \
+  -e "reset_target_hosts=dcc reset_confirm=YES" \
+  --vault-password-file ~/.vault_pass
+
+# 节点已从 inventory 删除时，仅清理订阅并更新 Gist（示例: 删除 sky）
+ansible-playbook -i inventory.ini reset.yml --limit spt --tags local_file,gist \
+  -e "reset_subs_only=true reset_target_hosts=sky reset_confirm=YES" \
+  --vault-password-file ~/.vault_pass
+
 # 全网 IP 审计
 ansible-playbook -i inventory.ini audit.yml --vault-password-file ~/.vault_pass
 ```
 
 ## 故障排查
 - `--tags users` 失败且提示 `rsync` 缺失：先执行完整部署或在目标机安装 `rsync`。
+- `--tags users` 执行时不希望触发监控/Gist：追加 `--skip-tags monitor,gist`。
+- `ansible-playbook` 报本地临时目录不可写（如 `~/.ansible/tmp`）：为本次命令指定 `/tmp`。
+```bash
+ANSIBLE_LOCAL_TEMP=/tmp/.ansible-local \
+ANSIBLE_REMOTE_TEMP=/tmp/.ansible-remote \
+ANSIBLE_SSH_CONTROL_PATH_DIR=/tmp/.ansible/cp \
+ansible-playbook -i inventory.ini deploy.yml --syntax-check
+```
 - 订阅未更新：确认 `vault_github_token` 与 Gist 参数已配置。
+- reset 提示找不到下线节点（如 `sky`）：不要再用 `--limit sky`，改用
+  `--limit spt -e "reset_subs_only=true reset_target_hosts=sky reset_confirm=YES"`。
 - 监控页面 401：检查访问 IP 是否在 `monitor.ip_allowlist` 或 Bearer 是否正确。
 - 节点无用户容器：优先检查 ACL（`groups/hosts`、`inventory` 分组、`acl_matrix`）。
 

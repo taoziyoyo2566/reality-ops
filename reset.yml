@@ -2,6 +2,12 @@
 - hosts: reality_nodes
   become: yes
   gather_facts: false
+  vars:
+    reset_target_hosts: []
+    reset_prune_hosts: []
+    reset_subs_only: false
+    reset_require_confirm: true
+    reset_confirm: ""
   
   pre_tasks:
     # 1. 同样的逻辑：扫描并加载用户列表
@@ -29,10 +35,242 @@
         reality_instances: "{{ hostvars['localhost'].reality_instances | default(hostvars[inventory_hostname].reality_instances | default([])) }}"
 
   tasks:
+    - name: 归一化目标节点列表（兼容 reset_target_hosts/reset_prune_hosts）
+      run_once: true
+      delegate_to: localhost
+      delegate_facts: true
+      set_fact:
+        reset_target_hosts_list: >-
+          {%- set merged = [] -%}
+          {%- for raw_value in [reset_target_hosts | default([]), reset_prune_hosts | default([])] -%}
+            {%- if raw_value is sequence and raw_value is not string -%}
+              {%- for v in raw_value -%}
+                {%- set _ = merged.append(v | string) -%}
+              {%- endfor -%}
+            {%- else -%}
+              {%- for v in (raw_value | string).split(',') -%}
+                {%- set _ = merged.append(v) -%}
+              {%- endfor -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{
+            merged
+            | map('regex_replace', '^\\s+|\\s+$', '')
+            | reject('equalto', '')
+            | unique
+            | list
+          }}
+      tags: ['cleanup', 'local_file']
+
+    - name: 划分目标节点（inventory 内 / inventory 外）
+      run_once: true
+      delegate_to: localhost
+      delegate_facts: true
+      set_fact:
+        reset_inventory_target_hosts: >-
+          {{
+            (hostvars['localhost'].reset_target_hosts_list | default([]))
+            | intersect(groups['reality_nodes'] | default([]))
+            | list
+          }}
+        reset_missing_target_hosts: >-
+          {{
+            (hostvars['localhost'].reset_target_hosts_list | default([]))
+            | difference(groups['reality_nodes'] | default([]))
+            | list
+          }}
+      tags: ['cleanup', 'local_file']
+
+    - name: 查找显式删除节点的订阅缓存文件
+      run_once: true
+      delegate_to: localhost
+      find:
+        paths: "/opt/reality/users"
+        patterns: "*_{{ item }}.json"
+      loop: "{{ hostvars['localhost'].reset_target_hosts_list | default([]) }}"
+      register: reset_prune_sub_files
+      failed_when: false
+      when: (hostvars['localhost'].reset_target_hosts_list | default([]) | length) > 0
+      tags: ['cleanup', 'local_file']
+
+    - name: 计算本次 reset 的有效远端目标节点
+      run_once: true
+      delegate_to: localhost
+      delegate_facts: true
+      set_fact:
+        reset_effective_remote_hosts: >-
+          {{
+            (hostvars['localhost'].reset_inventory_target_hosts | default([]))
+            if ((hostvars['localhost'].reset_target_hosts_list | default([]) | length) > 0)
+            else (ansible_play_hosts_all | default([]))
+          }}
+        reset_preview_host_suffixes: >-
+          {{
+            (hostvars['localhost'].reset_target_hosts_list | default([]))
+            if ((hostvars['localhost'].reset_target_hosts_list | default([]) | length) > 0)
+            else (ansible_play_hosts_all | default([]))
+          }}
+      tags: ['cleanup', 'local_file']
+
+    - name: 预览本次 reset 将删除的订阅缓存文件
+      run_once: true
+      delegate_to: localhost
+      find:
+        paths: "/opt/reality/users"
+        patterns: "*_{{ item }}.json"
+      loop: "{{ hostvars['localhost'].reset_preview_host_suffixes | default([]) }}"
+      register: reset_preview_sub_files
+      failed_when: false
+      tags: ['cleanup', 'local_file']
+
+    - name: 汇总本次 reset 删除预览信息
+      run_once: true
+      delegate_to: localhost
+      delegate_facts: true
+      set_fact:
+        reset_preview_sub_paths: >-
+          {{
+            (reset_preview_sub_files.results | default([]))
+            | map(attribute='files')
+            | list
+            | flatten
+            | map(attribute='path')
+            | list
+          }}
+      tags: ['cleanup', 'local_file']
+
+    - name: 显示 reset 清理预览
+      run_once: true
+      delegate_to: localhost
+      debug:
+        msg: |
+          reset 清理预览:
+          - reset_subs_only: {{ reset_subs_only | bool }}
+          - inventory 内目标节点: {{ hostvars['localhost'].reset_inventory_target_hosts | default([]) | join(', ') | default('无', true) }}
+          - inventory 外目标节点: {{ hostvars['localhost'].reset_missing_target_hosts | default([]) | join(', ') | default('无', true) }}
+          - 将执行远端 reset 的节点: {{ hostvars['localhost'].reset_effective_remote_hosts | default([]) | join(', ') | default('无', true) }}
+          - 预计删除订阅缓存文件数量: {{ hostvars['localhost'].reset_preview_sub_paths | default([]) | length }}
+      tags: ['cleanup', 'local_file']
+
+    - name: 显示将删除的订阅缓存文件清单
+      run_once: true
+      delegate_to: localhost
+      debug:
+        var: hostvars['localhost'].reset_preview_sub_paths
+      when: (hostvars['localhost'].reset_preview_sub_paths | default([]) | length) > 0
+      tags: ['cleanup', 'local_file']
+
+    - name: 交互确认 reset 清理
+      run_once: true
+      delegate_to: localhost
+      pause:
+        prompt: >-
+          即将执行 reset 清理（远端节点 {{ hostvars['localhost'].reset_effective_remote_hosts | default([]) | length }} 个，
+          订阅缓存文件 {{ hostvars['localhost'].reset_preview_sub_paths | default([]) | length }} 个）。
+          输入 YES 继续，其他任意输入取消。
+      register: reset_confirm_input
+      when:
+        - reset_require_confirm | bool
+        - (reset_confirm | default('') | upper) != 'YES'
+      tags: ['cleanup', 'local_file']
+
+    - name: 计算 reset 清理确认结果
+      run_once: true
+      delegate_to: localhost
+      delegate_facts: true
+      set_fact:
+        reset_cleanup_confirmed: >-
+          {{
+            (
+              not (reset_require_confirm | bool)
+            ) or (
+              (reset_confirm | default('') | upper) == 'YES'
+            ) or (
+              (reset_confirm_input.user_input | default('') | upper) == 'YES'
+            )
+          }}
+      tags: ['cleanup', 'local_file']
+
+    - name: 提示已取消 reset 清理
+      run_once: true
+      delegate_to: localhost
+      debug:
+        msg: >-
+          已取消 reset 清理（未确认 YES）。未执行任何删除操作。
+          如需非交互执行可传入 -e "reset_confirm=YES"。
+      when: not (hostvars['localhost'].reset_cleanup_confirmed | default(false))
+      tags: ['cleanup', 'local_file']
+
+    - name: 取消后提前结束本次 reset
+      run_once: true
+      meta: end_play
+      when: not (hostvars['localhost'].reset_cleanup_confirmed | default(false))
+      tags: ['cleanup', 'local_file']
+
+    - name: 删除显式指定节点的订阅缓存文件
+      run_once: true
+      delegate_to: localhost
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: >-
+        {{
+          (reset_prune_sub_files.results | default([]))
+          | map(attribute='files')
+          | list
+          | flatten
+        }}
+      when:
+        - (hostvars['localhost'].reset_target_hosts_list | default([]) | length) > 0
+        - (reset_prune_sub_files.results | default([]) | length) > 0
+      tags: ['cleanup', 'local_file']
+
+    - name: 提示显式删除节点中未命中的订阅缓存
+      run_once: true
+      delegate_to: localhost
+      debug:
+        msg: >-
+          以下节点未匹配到任何本地订阅缓存文件（可能已清理）:
+          {{
+            (reset_prune_sub_files.results | default([]))
+            | selectattr('matched', 'equalto', 0)
+            | map(attribute='item')
+            | list
+            | join(', ')
+          }}
+      when:
+        - (hostvars['localhost'].reset_target_hosts_list | default([]) | length) > 0
+        - >-
+          (
+            (reset_prune_sub_files.results | default([]))
+            | selectattr('matched', 'equalto', 0)
+            | list
+            | length
+          ) > 0
+      tags: ['cleanup', 'local_file']
+
+    - name: 提示不在 inventory 的目标节点仅执行订阅清理
+      run_once: true
+      delegate_to: localhost
+      debug:
+        msg: >-
+          以下目标节点不在 inventory 的 reality_nodes 中，已仅执行本地订阅清理:
+          {{ hostvars['localhost'].reset_missing_target_hosts | join(', ') }}
+      when: (hostvars['localhost'].reset_missing_target_hosts | default([]) | length) > 0
+      tags: ['cleanup', 'local_file']
+
     - name: 标记本地连接主机为可达
       set_fact:
         reset_connectivity_failed: false
-      when: ansible_connection | default('ssh') == 'local'
+      when:
+        - not (reset_subs_only | bool)
+        - >-
+          (
+            (hostvars['localhost'].reset_target_hosts_list | default([]) | length) == 0
+          ) or (
+            inventory_hostname in (hostvars['localhost'].reset_inventory_target_hosts | default([]))
+          )
+        - ansible_connection | default('ssh') == 'local'
       tags: ['cleanup', 'local_file']
 
     - name: 从控制端检测目标主机 SSH 端口连通性
@@ -43,7 +281,15 @@
       register: reset_connectivity
       changed_when: false
       failed_when: false
-      when: hostvars[inventory_hostname].ansible_connection | default('ssh') != 'local'
+      when:
+        - not (reset_subs_only | bool)
+        - >-
+          (
+            (hostvars['localhost'].reset_target_hosts_list | default([]) | length) == 0
+          ) or (
+            inventory_hostname in (hostvars['localhost'].reset_inventory_target_hosts | default([]))
+          )
+        - hostvars[inventory_hostname].ansible_connection | default('ssh') != 'local'
       tags: ['cleanup', 'local_file']
 
     - name: 归一化目标主机连通性结果
@@ -54,6 +300,14 @@
             if (ansible_connection | default('ssh') == 'local')
             else ((reset_connectivity.rc | default(1)) != 0)
           }}
+      when:
+        - not (reset_subs_only | bool)
+        - >-
+          (
+            (hostvars['localhost'].reset_target_hosts_list | default([]) | length) == 0
+          ) or (
+            inventory_hostname in (hostvars['localhost'].reset_inventory_target_hosts | default([]))
+          )
       tags: ['cleanup', 'local_file']
 
     - name: 查找不可达主机的订阅缓存文件
@@ -63,7 +317,15 @@
         patterns: "*_{{ inventory_hostname }}.json"
       register: unreachable_sub_files
       failed_when: false  # 目录不存在时也不报错
-      when: reset_connectivity_failed | default(false)
+      when:
+        - not (reset_subs_only | bool)
+        - >-
+          (
+            (hostvars['localhost'].reset_target_hosts_list | default([]) | length) == 0
+          ) or (
+            inventory_hostname in (hostvars['localhost'].reset_inventory_target_hosts | default([]))
+          )
+        - reset_connectivity_failed | default(false)
       tags: ['cleanup', 'local_file']
 
     - name: 删除不可达主机的订阅缓存文件
@@ -73,12 +335,27 @@
         state: absent
       loop: "{{ unreachable_sub_files.files | default([]) }}"
       when:
+        - not (reset_subs_only | bool)
+        - >-
+          (
+            (hostvars['localhost'].reset_target_hosts_list | default([]) | length) == 0
+          ) or (
+            inventory_hostname in (hostvars['localhost'].reset_inventory_target_hosts | default([]))
+          )
         - reset_connectivity_failed | default(false)
         - (unreachable_sub_files.matched | default(0)) > 0
       tags: ['cleanup', 'local_file']
 
     - name: 执行可达主机的重置流程
-      when: not (reset_connectivity_failed | default(false))
+      when:
+        - not (reset_subs_only | bool)
+        - >-
+          (
+            (hostvars['localhost'].reset_target_hosts_list | default([]) | length) == 0
+          ) or (
+            inventory_hostname in (hostvars['localhost'].reset_inventory_target_hosts | default([]))
+          )
+        - not (reset_connectivity_failed | default(false))
       block:
         # 0. 清理单实例容器（无论 single/multi，保证干净）
         - name: 停止并删除单实例容器 reality_core
@@ -150,6 +427,7 @@
         SUBS_BASE_URL: "{{ monitor.subs_base_url | default(monitor.server_url) }}"
         SUBS_TOKEN: "{{ vault_monitor_subs_token | default('') }}"
         HOST_FILTERS: "{{ lookup('env', 'HOST_FILTERS') | default('') }}"
+        EXCLUDE_HOSTS: "{{ (hostvars['localhost'].reset_target_hosts_list | default([])) | join(',') }}"
       when:
         - (vault_github_token | default('')) | length > 0
 

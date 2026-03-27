@@ -11,6 +11,14 @@ USERS_DIR = os.environ.get('USERS_DIR', '/opt/reality/users')
 SAVE_FILE = 'SUBSCRIPTIONS.txt'  # 本地保存的文件名
 
 
+def parse_env_host_set(name):
+    """解析逗号分隔的主机名环境变量。"""
+    raw = (os.environ.get(name) or '').strip()
+    if not raw:
+        return set()
+    return {item.strip() for item in raw.split(',') if item.strip()}
+
+
 def get_config():
     """
     获取配置（仅通过环境变量，避免依赖 .env 文件）
@@ -60,18 +68,33 @@ def update_gist(files_content):
 
 def generate_subscriptions():
     user_links = defaultdict(list)
+    include_hosts = parse_env_host_set('HOST_FILTERS')
+    exclude_hosts = parse_env_host_set('EXCLUDE_HOSTS')
 
     # 1. 读取本地节点信息
     if not os.path.exists(USERS_DIR):
         print(f"⚠️ 警告: 目录 {USERS_DIR} 不存在。")
         return
 
+    if include_hosts:
+        print(f"HOST_FILTERS 生效: 仅包含 {', '.join(sorted(include_hosts))}")
+    if exclude_hosts:
+        print(f"EXCLUDE_HOSTS 生效: 排除 {', '.join(sorted(exclude_hosts))}")
+
     for filename in os.listdir(USERS_DIR):
-        if not filename.endswith('.json'): continue
+        if not filename.endswith('.json'):
+            continue
         try:
             parts = filename.rsplit('_', 1)
-            if len(parts) != 2: continue
+            if len(parts) != 2:
+                continue
             username = parts[0]
+            host = parts[1][:-5]  # 去掉 .json
+
+            if include_hosts and host not in include_hosts:
+                continue
+            if host in exclude_hosts:
+                continue
             
             filepath = os.path.join(USERS_DIR, filename)
             with open(filepath, 'r') as f:
