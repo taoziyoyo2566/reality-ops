@@ -1,0 +1,12 @@
+{
+  "name": "lanyu",
+  "uuid": "801c7c58-dd74-4a23-a379-a4178f50e3aa",
+  "port": 28555,
+  "short_id": "717663bef7a67462",
+  "private_key": "2F0AeNJhoJchawO5xm85VnlN2BV4EZ21viGBgtCkO1k",
+  "public_key": "VrVoV-OXtppqo_uZVL-cjVeYXfYgVgTBxe8td6LH0E4",
+  "groups": [
+    "free"
+  ],
+  "hosts": [legend]
+}

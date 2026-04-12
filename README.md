@@ -343,6 +343,8 @@ ansible-playbook -i inventory.ini reset.yml --limit spt --tags local_file,gist \
   -e "reset_subs_only=true reset_target_hosts=sky reset_confirm=YES" \
   --vault-password-file ~/.vault_pass
 
+
+
 # 全网 IP 审计
 ansible-playbook -i inventory.ini audit.yml --vault-password-file ~/.vault_pass
 ```
@@ -366,3 +368,7 @@ ansible-playbook -i inventory.ini deploy.yml --syntax-check
 ## 兼容与遗留
 - `monitor.yml`、`monitor_server.py` 为旧方案文件，当前主流程不依赖。
 - `group_vars/all.yml` 已移除，请统一使用 `group_vars/all/main.yml`。
+
+
+openssl rand -base64 32 > .vault_pass
+chmod 600 .vault_pass

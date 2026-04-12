@@ -17,3 +17,6 @@ monitor_venv/
 __pycache__/
 .python-version
 users/*.json
+.vault_pass
+.github
+scripts
