@@ -1,0 +1,12 @@
+{
+  "name": "ano",
+  "uuid": "029f0474-b0c8-4803-b91d-a73edbf3b3c0",
+  "port": 53346,
+  "short_id": "bd454f025007a841",
+  "private_key": "SF87yZMOlhcN_0zKugvzrCLw-uYkWY9jAW9auxAG3Ww",
+  "public_key": "bBfTPXELdhDBujXJnKdJR-JJBctTlsCt8T8lbd9Aa20",
+  "groups": [
+    "premium"
+  ],
+  "hosts": []
+}
