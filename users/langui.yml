@@ -1,0 +1,12 @@
+{
+  "name": "langui",
+  "uuid": "b1e9d82d-36e5-4604-9355-f9df5eac9f40",
+  "port": 27315,
+  "short_id": "daf53ff5b3178bff",
+  "private_key": "qKHghFsEnXMQ4zrpbv2sF88FK527DZji0PG6rr7V_1k",
+  "public_key": "Tjnp1y8Nb0N_Mvb0NCvV6LRZY-Souwa70v0j58oc51E",
+  "groups": [
+    "free"
+  ],
+  "hosts": [legend,jp10,spartan]
+}

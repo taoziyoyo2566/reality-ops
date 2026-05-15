@@ -40,7 +40,7 @@ monitor:
   report_token: "{{ vault_monitor_report_token | default('CHANGEME-report-token') }}"   # 上报认证 Token（Vault）
   admin_bearer_token: "{{ vault_monitor_admin_bearer_token | default('CHANGEME-admin-bearer') }}" # 管理员 Bearer，用于 stats/doc
   stats_bearer_token: "{{ vault_monitor_stats_bearer_token | default('CHANGEME-stats-bearer') }}" # 普通 Bearer，用于只读 stats
-  ip_allowlist: ["127.0.0.1","45.145.75.134","133.18.123.108","49.98.151.252","2604:9cc0:1cb1:0:91ae:5c39:e233:4081","160.191.29.7","2607:8700:5500:32ec::2","2a00:11c0:47:1c95:8868:d8ff:fed5:bc4d"]   # 允许免认证的 IP（CF/内网）
+  ip_allowlist: ["127.0.0.1","45.145.75.134","133.18.123.108","49.98.151.252","2604:9cc0:1cb1:0:91ae:5c39:e233:4081","160.191.29.7","2607:8700:5500:32ec::2","2a00:11c0:47:1c95:8868:d8ff:fed5:bc4d","160.248.69.81"]   # 允许免认证的 IP（CF/内网）
   # trust_proxy_header: "CF-Connecting-IP"  # 从哪一个头部拿真实客户端 IP，CF 默认 CF-Connecting-IP
   trust_proxy_header: "X-Forwarded-For"
   subs_proxy:

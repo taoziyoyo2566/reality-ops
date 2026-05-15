@@ -6,7 +6,7 @@
   "private_key": "8EGyPLQS57qjBPCL5YNUmYCLQbxzi5wUifpl6hYWA0M",
   "public_key": "1Q7Zok4L9OiTrc9FNu-0i_pisM2tN8W9u2BxO-bwix0",
   "groups": [
-    "free"
+    "premium"
   ],
-  "hosts": []
+  "hosts": [spt]
 }

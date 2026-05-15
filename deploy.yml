@@ -20,6 +20,11 @@
         label: "{{ item.path | basename }}"
       tags: ['always']
 
+    - name: "[前置检查] 识别全局 IPv6 地址"
+      set_fact:
+        global_ipv6: "{{ (ansible_all_ipv6_addresses | default([]) | reject('match', '^fe80') | reject('match', '^::1') | list | first) | default('') }}"
+      tags: ['always']
+
     - name: "[核心路由] 节点本位认领：基于 ACL 矩阵的精准过滤"
       set_fact:
         reality_instances: >-

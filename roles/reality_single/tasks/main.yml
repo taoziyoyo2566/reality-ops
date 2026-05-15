@@ -163,7 +163,7 @@
 
 - name: 计算 Reality Core 端口绑定 (IPv6，可选)
   set_fact:
-    reality_core_ports_ipv6: "{{ ((ansible_default_ipv6 | default({})).get('address', '') | length > 0) | ternary(reality_instances | map(attribute='port') | map('string') | map('regex_replace', '^(.*)$', '[' ~ (ansible_default_ipv6 | default({})).get('address', '') ~ ']:\\1:\\1') | list, []) }}"
+    reality_core_ports_ipv6: "{{ (global_ipv6 | length > 0) | ternary(reality_instances | map(attribute='port') | map('string') | map('regex_replace', '^(.*)$', '[' ~ global_ipv6 ~ ']:\\1:\\1') | list, []) }}"
   tags: ['users']
 
 - name: 汇总 Reality Core 端口绑定
@@ -249,12 +249,12 @@
           "id": "{{ item.uuid }}",
           "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=firefox&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
         }
-        {% if ansible_default_ipv6 is defined and ansible_default_ipv6.address is defined %}
+        {% if global_ipv6 | length > 0 %}
         ,
         {
           "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
           "id": "{{ item.uuid }}",
-          "subscription": "vless://{{ item.uuid }}@[{{ ansible_default_ipv6.address }}]:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=firefox&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
+          "subscription": "vless://{{ item.uuid }}@[{{ global_ipv6 }}]:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=firefox&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
         }
         {% endif %}
       ]
