@@ -91,6 +91,26 @@
         state: present
   tags: ['system', 'docker']
 
+- name: 配置 Docker daemon 启用 IPv6 支持
+  copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "ipv6": true,
+        "fixed-cidr-v6": "fd00::/80"
+      }
+    mode: '0644'
+  when: global_ipv6 | length > 0
+  register: docker_daemon_config
+  tags: ['system', 'docker']
+
+- name: 重启 Docker daemon (IPv6 配置变更)
+  systemd:
+    name: docker
+    state: restarted
+  when: docker_daemon_config is changed
+  tags: ['system', 'docker']
+
 - name: 检查 Xray 镜像是否已存在
   community.docker.docker_image_info:
     name: "{{ xray_image }}"

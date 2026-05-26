@@ -1,0 +1,12 @@
+{
+  "name": "hwj",
+  "uuid": "389e36d6-33d5-452c-9002-bb419cefa19c",
+  "port": 29194,
+  "short_id": "cc5c156ffcd13b0b",
+  "private_key": "GFo64I4K2kdYSP2q4yaLJItI7DxjkS4CeAlycKezo2A",
+  "public_key": "jeXW1ET-NiCwNyEcAiCAsSrCe46oMYaIHede_ngJDg4",
+  "groups": [
+    "normal"
+  ],
+  "hosts": [spt,ams]
+}
