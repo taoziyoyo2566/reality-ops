@@ -232,11 +232,12 @@
 
 - name: 预创建日志目录并修正权限
   shell: |
-    mkdir -p {{ reality_logs_dir }}/{{ item.name }}
-    chown -R 10000:10000 {{ reality_logs_dir }}/{{ item.name }}
-  loop: "{{ reality_instances }}"
-  # 虽然这里用了 loop，但只是简单的 mkdir 命令，比 template 快得多。
-  # 也可以优化为本地生成空目录一起 sync 过去，但这步通常不耗时。
+    {% for u in reality_instances %}
+    mkdir -p {{ reality_logs_dir }}/{{ u.name }}
+    {% endfor %}
+    chown -R 10000:10000 {{ reality_logs_dir }}
+  args:
+    executable: /bin/bash
   tags: ['users']
 
 # ==============================================================================
