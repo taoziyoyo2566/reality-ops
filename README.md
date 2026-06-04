@@ -27,6 +27,8 @@ Reality Ops 是一套基于 Ansible 的 Reality (Xray) 节点编排项目，包�
 - `users/*.yml`：用户配置（JSON 结构写入 `.yml` 文件）。
 - `generate_user.py`：用户文件生成/更新/删除/列举工具。
 - `generate_subs_gist.py`：订阅聚合与 Gist 推送脚本。
+- `JPNTT_SOCKS5_EGRESS.md`：jpntt 作为 jp10 SOCKS5 出口 IP 的部署与验证资料。
+- `SOCKS5_EGRESS_IMPLEMENTATION_NOTES.md`：本轮 SOCKS5 出口模块实施、验证、故障和结论记录。
 
 ## 运行依赖
 - 控制端：`ansible`、`python3`。

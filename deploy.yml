@@ -20,6 +20,27 @@
         label: "{{ item.path | basename }}"
       tags: ['always']
 
+    - name: "[前置检查] 校验用户 hosts 列表格式"
+      vars:
+        user_hosts: "{{ item.hosts | default([], true) }}"
+        hosts_with_comma: "{{ (item.hosts if ((item.hosts is sequence) and (item.hosts is not string)) else []) | select('search', ',') | list }}"
+      assert:
+        that:
+          - user_hosts is sequence
+          - user_hosts is not string
+          - hosts_with_comma | length == 0
+        fail_msg: >-
+          用户 '{{ item.name | default('unknown') }}' 的 hosts 配置无效：
+          hosts 必须是节点名列表，不能把多个节点写进同一个字符串。
+          当前 hosts={{ user_hosts }}，含逗号的条目={{ hosts_with_comma }}。
+          请写成 ["lej", "jp10"]，不要写成 ["lej,jp10"]。
+      loop: "{{ all_raw_users | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('unknown') }}"
+      when:
+        - item.hosts is defined
+      tags: ['always']
+
     - name: "[前置检查] 识别全局 IPv6 地址"
       set_fact:
         global_ipv6: "{{ (ansible_facts['all_ipv6_addresses'] | default([]) | reject('match', '^fe80') | reject('match', '^::1') | reject('match', '^fd') | reject('match', '^fc') | list | first) | default('') }}"

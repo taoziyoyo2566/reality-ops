@@ -9,6 +9,7 @@
     "test"
   ],
   "hosts": [
-    "lej"
+    "lej",
+    "jp10"
   ]
 }

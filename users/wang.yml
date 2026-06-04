@@ -8,5 +8,7 @@
   "groups": [
     "premium"
   ],
-  "hosts": []
+  "hosts": [
+    "jp10"
+  ]
 }

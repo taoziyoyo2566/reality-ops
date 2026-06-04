@@ -1,0 +1,55 @@
+# SOCKS5 出口模块配置。
+# 连接信息放在 profile 内，哪些流量使用该出口放在 route 内。
+# profile 可以生成到 Xray outbounds；只有 route 命中时才会真正接管流量。
+# priority 数值越小越优先；多个 profile 命中同一流量时，先生成的规则先生效。
+
+socks5_egress:
+  enabled: true
+  profiles:
+    jpntt_isp:
+      enabled: "{{ vault_socks5_jpntt_enabled | default(false) }}"
+      address: "{{ vault_socks5_jpntt_address | default('') }}"
+      port: "{{ vault_socks5_jpntt_port | default(1080) }}"
+      username: "{{ vault_socks5_jpntt_username | default('') }}"
+      password: "{{ vault_socks5_jpntt_password | default('') }}"
+      priority: 40
+      route:
+        hosts: ["jp10"]
+        users: "{{ vault_socks5_jpntt_route_users | default([]) }}"
+        domains: "{{ vault_socks5_jpntt_route_domains | default([]) }}"
+        ips: "{{ vault_socks5_jpntt_route_ips | default([]) }}"
+        protocols: "{{ vault_socks5_jpntt_route_protocols | default([]) }}"
+        network: "{{ vault_socks5_jpntt_route_network | default('tcp') }}"
+
+    jp10_isp:
+      enabled: "{{ vault_socks5_jp10_isp_enabled | default(false) }}"
+      address: "{{ vault_socks5_jp10_isp_address | default('') }}"
+      port: "{{ vault_socks5_jp10_isp_port | default(1080) }}"
+      username: "{{ vault_socks5_jp10_isp_username | default('') }}"
+      password: "{{ vault_socks5_jp10_isp_password | default('') }}"
+      priority: 100
+      route:
+        hosts: ["jp10"]
+        users: "{{ vault_socks5_jp10_isp_route_users | default([]) }}"
+        domains: "{{ vault_socks5_jp10_isp_route_domains | default([]) }}"
+        ips: "{{ vault_socks5_jp10_isp_route_ips | default([]) }}"
+        protocols: "{{ vault_socks5_jp10_isp_route_protocols | default([]) }}"
+        network: "{{ vault_socks5_jp10_isp_route_network | default('tcp') }}"
+
+    # 临时对照测试：在 jp10 单实例上复用 dcc 的 SOCKS5 出口信息。
+    # 默认关闭；测试时用 -e vault_socks5_dcc_test_enabled=true
+    # 和 -e '{"vault_socks5_dcc_test_route_users":["test"]}' 临时启用。
+    dcc_test:
+      enabled: "{{ vault_socks5_dcc_test_enabled | default(false) }}"
+      address: "{{ vault_dcc_socks5_address | default('') }}"
+      port: "{{ vault_dcc_socks5_port | default(1080) }}"
+      username: "{{ vault_dcc_socks5_username | default('') }}"
+      password: "{{ vault_dcc_socks5_password | default('') }}"
+      priority: 50
+      route:
+        hosts: ["jp10"]
+        users: "{{ vault_socks5_dcc_test_route_users | default([]) }}"
+        domains: "{{ vault_socks5_dcc_test_route_domains | default([]) }}"
+        ips: "{{ vault_socks5_dcc_test_route_ips | default([]) }}"
+        protocols: "{{ vault_socks5_dcc_test_route_protocols | default([]) }}"
+        network: "{{ vault_socks5_dcc_test_route_network | default('tcp') }}"
