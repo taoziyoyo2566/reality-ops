@@ -10,6 +10,7 @@
         patterns: '*.yml,*.yaml'
       register: user_config_files
       delegate_to: localhost
+      become: false
       tags: ['always']
 
     - name: 加载所有用户原始配置
@@ -93,6 +94,7 @@
     - name: 执行脚本更新 GitHub Gist
       command: python3 {{ playbook_dir }}/generate_subs_gist.py
       delegate_to: localhost  # 强制在本机执行
+      become: false
       tags: ['users', 'gist'] # <--- 加上 tag
       register: gist_result
       changed_when: "'Gist 更新成功' in gist_result.stdout"

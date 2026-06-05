@@ -6,6 +6,8 @@ set -euo pipefail
 #   ./ansible-playbook reset sky
 #   ./ansible-playbook deploy premium --tags users
 #   ./ansible-playbook audit dcc
+#   ./ansible-playbook decommission saberu -e "dc_confirm=YES"
+#   ./ansible-playbook dc saberu -e "dc_confirm=YES"
 #   ./ansible-playbook -i inventory.ini reset.yml --syntax-check
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,6 +58,10 @@ find_real_ansible_playbook() {
     echo /usr/bin/ansible-playbook
     return 0
   fi
+  if [[ -x "${repo_root}/monitor_venv/bin/ansible-playbook" ]]; then
+    echo "${repo_root}/monitor_venv/bin/ansible-playbook"
+    return 0
+  fi
   return 1
 }
 
@@ -73,8 +79,13 @@ action="$1"
 shift
 
 case "$action" in
-  deploy|reset|audit)
-    playbook_file="${repo_root}/${action}.yml"
+  deploy|reset|audit|decommission|dc)
+    playbook_action="$action"
+    if [[ "$playbook_action" == "dc" ]]; then
+      playbook_action="decommission"
+    fi
+
+    playbook_file="${repo_root}/${playbook_action}.yml"
     if [[ ! -f "$playbook_file" ]]; then
       echo "未找到 playbook: $playbook_file" >&2
       exit 1
@@ -86,10 +97,15 @@ case "$action" in
       shift
     fi
 
+    if [[ "$playbook_action" == "decommission" && -z "$target" ]]; then
+      echo "decommission 必须指定目标节点: ./ansible-playbook dc <host>" >&2
+      exit 1
+    fi
+
     cmd=("$real_ansible_playbook" -i "$inventory_default" "$playbook_file")
 
     if [[ -n "$target" ]]; then
-      case "$action" in
+      case "$playbook_action" in
         deploy|audit)
           cmd+=(--limit "$target")
           ;;
@@ -99,6 +115,14 @@ case "$action" in
             cmd+=(--limit "$target")
           else
             cmd+=(--limit spt -e "reset_subs_only=true")
+          fi
+          ;;
+        decommission)
+          cmd+=(-e "dc_target=${target}")
+          if host_in_reality_nodes "$target"; then
+            cmd+=(--limit "$target")
+          else
+            cmd+=(--limit spt)
           fi
           ;;
       esac

@@ -316,16 +316,30 @@
 
 # (可选) 输出 IPv6 信息，逻辑同上，略...
 
-- name: 创建本地订阅缓存目录
+- name: 检查本地订阅缓存目录是否可写
   delegate_to: localhost
+  become: false
+  command: test -w /opt/reality/users
+  register: local_sub_cache_writable
+  changed_when: false
+  failed_when: false
+  tags: ['users', 'local_file']
+
+- name: 创建或修复本地订阅缓存目录
+  delegate_to: localhost
+  become: yes
   file:
     path: "/opt/reality/users"
     state: directory
+    owner: "{{ lookup('env', 'USER') }}"
+    group: "{{ lookup('pipe', 'id -gn') }}"
     mode: '0755'
+  when: local_sub_cache_writable.rc | default(1) != 0
   tags: ['users', 'local_file']
 
 - name: 清理当前主机的旧订阅缓存文件 (防止权限回收后残留)
   delegate_to: localhost
+  become: false
   shell: "rm -f /opt/reality/users/*_{{ inventory_hostname }}.json"
   args:
     warn: false
@@ -334,6 +348,7 @@
 
 - name: 生成用户节点 JSON 文件
   delegate_to: localhost
+  become: false
   copy:
     dest: "/opt/reality/users/{{ item.name }}_{{ inventory_hostname }}.json"
     mode: '0644'

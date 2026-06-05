@@ -123,6 +123,7 @@
 # ==============================================================================
 - name: 确保本地构建根目录存在
   delegate_to: localhost
+  become: false
   when: inventory_hostname == (ansible_play_hosts_all | first)
   file:
     path: "/tmp/reality_build"
@@ -132,6 +133,7 @@
 
 - name: 清理当前主机的本地构建目录
   delegate_to: localhost
+  become: false
   file:
     path: "/tmp/reality_build/{{ inventory_hostname }}"
     state: absent
@@ -139,6 +141,7 @@
 
 - name: 确保当前主机本地构建目录存在
   delegate_to: localhost
+  become: false
   file:
     path: "/tmp/reality_build/{{ inventory_hostname }}/data"
     state: directory
@@ -147,6 +150,7 @@
 
 - name: 创建本地构建目录结构
   delegate_to: localhost
+  become: false
   file:
     path: "/tmp/reality_build/{{ inventory_hostname }}/data/{{ item.name }}"
     state: directory
@@ -156,6 +160,7 @@
 
 - name: 本地生成用户配置文件 (config.json)
   delegate_to: localhost
+  become: false
   template:
     src: config.json.j2
     dest: "/tmp/reality_build/{{ inventory_hostname }}/data/{{ item.name }}/config.json"
@@ -165,6 +170,7 @@
 
 - name: 本地生成 Docker Compose 文件
   delegate_to: localhost
+  become: false
   template:
     src: docker-compose.yml.j2
     dest: "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml"
@@ -173,6 +179,7 @@
 
 - name: 校验 Docker Compose 文件语法 (本地)
   delegate_to: localhost
+  become: false
   command: docker compose -f "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml" config
   changed_when: false
   tags: ['users', 'config']
@@ -282,16 +289,30 @@
 # ==============================================================================
 # 5. 后续处理 (本地 JSON 生成)
 # ==============================================================================
-- name: 创建本地订阅缓存目录
+- name: 检查本地订阅缓存目录是否可写
   delegate_to: localhost
+  become: false
+  command: test -w /opt/reality/users
+  register: local_sub_cache_writable
+  changed_when: false
+  failed_when: false
+  tags: ['users', 'local_file']
+
+- name: 创建或修复本地订阅缓存目录
+  delegate_to: localhost
+  become: yes
   file:
     path: "/opt/reality/users"
     state: directory
+    owner: "{{ lookup('env', 'USER') }}"
+    group: "{{ lookup('pipe', 'id -gn') }}"
     mode: '0755'
+  when: local_sub_cache_writable.rc | default(1) != 0
   tags: ['users', 'local_file']
 
 - name: 清理当前主机的旧订阅缓存文件 (防止权限回收后残留)
   delegate_to: localhost
+  become: false
   shell: "rm -f /opt/reality/users/*_{{ inventory_hostname }}.json"
   args:
     warn: false
@@ -300,6 +321,7 @@
 
 - name: 生成用户节点 JSON 文件 (users/用户名_主机名.json)
   delegate_to: localhost
+  become: false
   copy:
     dest: "/opt/reality/users/{{ item.name }}_{{ inventory_hostname }}.json"
     mode: '0644'

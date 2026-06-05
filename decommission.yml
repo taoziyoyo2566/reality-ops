@@ -1,0 +1,548 @@
+---
+- hosts: reality_nodes
+  become: yes
+  gather_facts: false
+  vars:
+    dc_target: ""
+    dc_confirm: ""
+    dc_prune: false
+    dc_rm_vars: false
+    dc_archive: true
+    dc_require_confirm: true
+
+  pre_tasks:
+    - name: 校验 decommission 目标
+      run_once: true
+      delegate_to: localhost
+      become: false
+      assert:
+        that:
+          - dc_target | length > 0
+          - dc_target is match('^[A-Za-z0-9_.-]+$')
+        fail_msg: "必须通过 -e \"dc_target=<host>\" 指定要下线的节点。"
+      tags: ['always']
+
+    - name: 扫描用户配置文件
+      delegate_to: localhost
+      become: false
+      run_once: true
+      find:
+        paths: "{{ playbook_dir }}/users"
+        patterns: '*.yml,*.yaml'
+      register: user_config_files
+      tags: ['always']
+
+    - name: 加载所有用户配置
+      delegate_to: localhost
+      become: false
+      delegate_facts: true
+      run_once: true
+      set_fact:
+        reality_instances: "{{ reality_instances | default([]) + [ lookup('file', item.path) | from_yaml ] }}"
+      loop: "{{ user_config_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      tags: ['always']
+
+    - name: 注入用户配置到当前主机
+      become: false
+      set_fact:
+        reality_instances: "{{ hostvars['localhost'].reality_instances | default(hostvars[inventory_hostname].reality_instances | default([])) }}"
+      tags: ['always']
+
+  tasks:
+    - name: 计算 decommission 目标状态
+      run_once: true
+      delegate_to: localhost
+      become: false
+      delegate_facts: true
+      set_fact:
+        dc_target_in_inventory: "{{ dc_target in (groups['reality_nodes'] | default([])) }}"
+        dc_effective_remote_hosts: "{{ [dc_target] if dc_target in (groups['reality_nodes'] | default([])) else [] }}"
+      tags: ['cleanup', 'local_file', 'prune']
+
+    - name: 检查本地订阅缓存目录是否可写
+      run_once: true
+      delegate_to: localhost
+      become: false
+      command: test -w /opt/reality/users
+      register: dc_local_cache_writable
+      changed_when: false
+      failed_when: false
+      tags: ['cleanup', 'local_file']
+
+    - name: 查找目标节点订阅缓存文件
+      run_once: true
+      delegate_to: localhost
+      become: false
+      find:
+        paths: "/opt/reality/users"
+        patterns: "*_{{ dc_target }}.json"
+      register: dc_sub_files
+      failed_when: false
+      tags: ['cleanup', 'local_file']
+
+    - name: 扫描源码残留引用
+      run_once: true
+      delegate_to: localhost
+      become: false
+      command:
+        cmd: >-
+          git grep -n -- {{ dc_target }} -- inventory.ini host_vars users README.md todo.md
+      check_mode: no
+      register: dc_source_refs
+      changed_when: false
+      failed_when: dc_source_refs.rc not in [0, 1]
+      tags: ['cleanup', 'prune']
+
+    - name: 分类源码残留引用
+      run_once: true
+      delegate_to: localhost
+      become: false
+      delegate_facts: true
+      set_fact:
+        dc_inventory_refs: "{{ dc_source_refs.stdout_lines | default([]) | select('match', '^inventory\\.ini:') | list }}"
+        dc_host_vars_refs: "{{ dc_source_refs.stdout_lines | default([]) | select('match', '^host_vars/') | list }}"
+        dc_user_acl_refs: "{{ dc_source_refs.stdout_lines | default([]) | select('match', '^users/') | list }}"
+        dc_doc_refs: "{{ dc_source_refs.stdout_lines | default([]) | reject('match', '^(inventory\\.ini:|host_vars/|users/)') | list }}"
+      tags: ['cleanup', 'prune']
+
+    - name: 显示 decommission 预览
+      run_once: true
+      delegate_to: localhost
+      become: false
+      debug:
+        msg: |
+          decommission 预览:
+          - dc_target: {{ dc_target }}
+          - 目标仍在 inventory/reality_nodes: {{ hostvars['localhost'].dc_target_in_inventory | bool }}
+          - 将执行远端清理的节点: {{ hostvars['localhost'].dc_effective_remote_hosts | join(', ') | default('无', true) }}
+          - 将删除订阅缓存文件数量: {{ dc_sub_files.matched | default(0) }}
+          - dc_prune: {{ dc_prune | bool }}
+          - dc_rm_vars: {{ dc_rm_vars | bool }}
+          - dc_archive: {{ dc_archive | bool }}
+          - inventory 残留引用: {{ hostvars['localhost'].dc_inventory_refs | default([]) | length }}
+          - host_vars 残留引用: {{ hostvars['localhost'].dc_host_vars_refs | default([]) | length }}
+          - users ACL 残留引用: {{ hostvars['localhost'].dc_user_acl_refs | default([]) | length }}
+          - 文档/其他残留引用: {{ hostvars['localhost'].dc_doc_refs | default([]) | length }}
+      tags: ['cleanup', 'local_file', 'prune']
+
+    - name: 显示将删除的订阅缓存文件
+      run_once: true
+      delegate_to: localhost
+      become: false
+      debug:
+        msg: "{{ dc_sub_files.files | default([]) | map(attribute='path') | list }}"
+      when: (dc_sub_files.matched | default(0)) > 0
+      tags: ['cleanup', 'local_file']
+
+    - name: 显示 inventory 残留引用
+      run_once: true
+      delegate_to: localhost
+      become: false
+      debug:
+        msg: "{{ hostvars['localhost'].dc_inventory_refs | default([]) }}"
+      when: (hostvars['localhost'].dc_inventory_refs | default([]) | length) > 0
+      tags: ['cleanup', 'prune']
+
+    - name: 显示 host_vars 残留引用
+      run_once: true
+      delegate_to: localhost
+      become: false
+      debug:
+        msg: "{{ hostvars['localhost'].dc_host_vars_refs | default([]) }}"
+      when: (hostvars['localhost'].dc_host_vars_refs | default([]) | length) > 0
+      tags: ['cleanup', 'prune']
+
+    - name: 显示 users ACL 残留引用
+      run_once: true
+      delegate_to: localhost
+      become: false
+      debug:
+        msg: "{{ hostvars['localhost'].dc_user_acl_refs | default([]) }}"
+      when: (hostvars['localhost'].dc_user_acl_refs | default([]) | length) > 0
+      tags: ['cleanup', 'prune']
+
+    - name: 显示文档和其他残留引用
+      run_once: true
+      delegate_to: localhost
+      become: false
+      debug:
+        msg: "{{ hostvars['localhost'].dc_doc_refs | default([]) }}"
+      when: (hostvars['localhost'].dc_doc_refs | default([]) | length) > 0
+      tags: ['cleanup', 'prune']
+
+    - name: 交互确认 decommission
+      run_once: true
+      delegate_to: localhost
+      become: false
+      pause:
+        prompt: >-
+          即将下线节点 {{ dc_target }}（远端节点 {{ hostvars['localhost'].dc_effective_remote_hosts | default([]) | length }} 个，
+          订阅缓存文件 {{ dc_sub_files.matched | default(0) }} 个，dc_prune={{ dc_prune | bool }}）。
+          输入 YES 继续，其他任意输入取消。
+      register: dc_confirm_input
+      when:
+        - dc_require_confirm | bool
+        - (dc_confirm | default('') | upper) != 'YES'
+      tags: ['cleanup', 'local_file', 'prune']
+
+    - name: 计算 decommission 确认结果
+      run_once: true
+      delegate_to: localhost
+      become: false
+      delegate_facts: true
+      set_fact:
+        dc_confirmed: >-
+          {{
+            (
+              not (dc_require_confirm | bool)
+            ) or (
+              (dc_confirm | default('') | upper) == 'YES'
+            ) or (
+              (dc_confirm_input.user_input | default('') | upper) == 'YES'
+            )
+          }}
+      tags: ['cleanup', 'local_file', 'prune']
+
+    - name: 提示已取消 decommission
+      run_once: true
+      delegate_to: localhost
+      become: false
+      debug:
+        msg: >-
+          已取消 decommission（未确认 YES）。未执行任何删除操作。
+          如需非交互执行可传入 -e "dc_confirm=YES"。
+      when: not (hostvars['localhost'].dc_confirmed | default(false))
+      tags: ['cleanup', 'local_file', 'prune']
+
+    - name: 取消后提前结束本次 decommission
+      run_once: true
+      meta: end_play
+      when: not (hostvars['localhost'].dc_confirmed | default(false))
+      tags: ['cleanup', 'local_file', 'prune']
+
+    - name: 修复本地订阅缓存目录归属
+      run_once: true
+      delegate_to: localhost
+      become: yes
+      file:
+        path: "/opt/reality/users"
+        state: directory
+        owner: "{{ lookup('env', 'USER') }}"
+        group: "{{ lookup('pipe', 'id -gn') }}"
+        mode: '0755'
+      when: dc_local_cache_writable.rc | default(1) != 0
+      tags: ['cleanup', 'local_file']
+
+    - name: 标记本地目标为可达
+      become: false
+      set_fact:
+        dc_connectivity_failed: false
+        dc_remote_cleanup_allowed: true
+      when:
+        - inventory_hostname == dc_target
+        - ansible_connection | default('ssh') == 'local'
+      tags: ['cleanup']
+
+    - name: 从控制端检测目标主机 SSH 连通性
+      delegate_to: localhost
+      become: false
+      command:
+        cmd: >-
+          ssh -o BatchMode=yes -o ConnectTimeout=10 {{ inventory_hostname }} true
+      check_mode: no
+      register: dc_connectivity
+      changed_when: false
+      failed_when: false
+      when:
+        - inventory_hostname == dc_target
+        - hostvars[inventory_hostname].ansible_connection | default('ssh') != 'local'
+      tags: ['cleanup']
+
+    - name: 归一化目标主机连通性结果
+      become: false
+      set_fact:
+        dc_remote_cleanup_allowed: >-
+          {{
+            true
+            if (ansible_connection | default('ssh') == 'local')
+            else (
+              (dc_connectivity is defined)
+              and not (dc_connectivity.skipped | default(false))
+              and ((dc_connectivity.rc | default(1)) == 0)
+            )
+          }}
+        dc_connectivity_failed: >-
+          {{
+            false
+            if (ansible_connection | default('ssh') == 'local')
+            else (
+              (dc_connectivity is not defined)
+              or (dc_connectivity.skipped | default(false))
+              or ((dc_connectivity.rc | default(1)) != 0)
+            )
+          }}
+      when: inventory_hostname == dc_target
+      tags: ['cleanup']
+
+    - name: 清理可达目标节点的 Reality 运行态
+      when:
+        - inventory_hostname == dc_target
+        - dc_remote_cleanup_allowed | default(false)
+      tags: ['cleanup']
+      block:
+        - name: 停止并删除所有 Reality 容器
+          shell: |
+            docker ps -aq --filter "name=reality_" | xargs -r docker rm -f
+          register: dc_rm_reality
+          changed_when: (dc_rm_reality.stdout | default('')) | length > 0
+          failed_when: dc_rm_reality.rc not in [0]
+          tags: ['cleanup']
+
+        - name: 清理 Reality 数据目录
+          shell: |
+            set -euo pipefail
+            xargs -r rm -rf <<'EOF'
+            {{ reality_data_dir }}/reality_core
+            {{ reality_data_dir }}/docker-compose.yml
+            {% for item in reality_instances %}{{ reality_data_dir }}/{{ item.name }}
+            {% endfor %}
+            EOF
+            if [ -d "{{ reality_data_dir }}" ]; then
+              find "{{ reality_data_dir }}" -mindepth 2 -maxdepth 2 -name config.json -printf '%h\0' | xargs -0 -r rm -rf
+            fi
+          args:
+            executable: /bin/bash
+          changed_when: true
+          tags: ['cleanup']
+
+        - name: 清理 Reality 日志目录
+          shell: |
+            set -euo pipefail
+            xargs -r rm -rf <<'EOF'
+            {{ reality_logs_dir }}/reality_core
+            {% for item in reality_instances %}{{ reality_logs_dir }}/{{ item.name }}
+            {% endfor %}
+            EOF
+          args:
+            executable: /bin/bash
+          changed_when: true
+          tags: ['cleanup']
+
+    - name: 删除目标节点订阅缓存文件
+      run_once: true
+      delegate_to: localhost
+      become: false
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ dc_sub_files.files | default([]) }}"
+      when: (dc_sub_files.matched | default(0)) > 0
+      tags: ['cleanup', 'local_file']
+
+    - name: 执行源码配置清理
+      run_once: true
+      delegate_to: localhost
+      become: false
+      command:
+        cmd: >-
+          python3 - {{ playbook_dir | quote }} {{ dc_target | quote }} {{ (dc_rm_vars | bool) | ternary('1', '0') }} {{ (dc_archive | bool) | ternary('1', '0') }}
+        stdin: |
+          import json
+          import os
+          import shutil
+          import sys
+
+          import yaml
+
+          root, target, rm_vars_raw, archive_raw = sys.argv[1:5]
+          rm_vars = rm_vars_raw == "1"
+          archive = archive_raw == "1"
+          changed = []
+          user_updates = []
+
+          def read_text(path):
+              with open(path, "r", encoding="utf-8") as fh:
+                  return fh.read()
+
+          def write_text(path, content):
+              with open(path, "w", encoding="utf-8") as fh:
+                  fh.write(content)
+
+          def remove_from_flow_hosts_line(raw, target):
+              lines = raw.splitlines(True)
+              changed_line = False
+              new_lines = []
+              for line in lines:
+                  stripped_line = line.rstrip("\n")
+                  newline = line[len(stripped_line):]
+                  if changed_line:
+                      new_lines.append(line)
+                      continue
+                  prefix, sep, rest = stripped_line.partition(":")
+                  if not sep or prefix.strip().strip('"') != "hosts":
+                      new_lines.append(line)
+                      continue
+                  before, open_sep, after_open = rest.partition("[")
+                  body, close_sep, after_close = after_open.rpartition("]")
+                  if not open_sep or not close_sep or after_close.strip() not in ["", ","]:
+                      new_lines.append(line)
+                      continue
+                  entries = [entry.strip() for entry in body.split(",") if entry.strip()]
+                  kept = [entry for entry in entries if entry.strip("'\"") != target]
+                  if len(kept) == len(entries):
+                      new_lines.append(line)
+                      continue
+                  new_lines.append(f"{prefix}:{before}[{','.join(kept)}]{after_close}{newline}")
+                  changed_line = True
+              return "".join(new_lines) if changed_line else None
+
+          users_dir = os.path.join(root, "users")
+          if os.path.isdir(users_dir):
+              for name in sorted(os.listdir(users_dir)):
+                  if not name.endswith((".yml", ".yaml")):
+                      continue
+                  path = os.path.join(users_dir, name)
+                  raw = read_text(path)
+                  try:
+                      data = json.loads(raw)
+                  except json.JSONDecodeError:
+                      try:
+                          yaml_data = yaml.safe_load(raw)
+                      except Exception:
+                          continue
+                      hosts = yaml_data.get("hosts") if isinstance(yaml_data, dict) else None
+                      if isinstance(hosts, list) and target in hosts:
+                          updated = remove_from_flow_hosts_line(raw, target)
+                          if updated is None:
+                              raise RuntimeError(
+                                  f"{path} uses YAML syntax. dc_prune can only rewrite JSON-formatted user configs "
+                                  f"or a simple flow-list hosts line; remove {target!r} manually."
+                              )
+                          user_updates.append((path, updated))
+                      continue
+                  if not isinstance(data, dict):
+                      continue
+                  hosts = data.get("hosts")
+                  if not isinstance(hosts, list) or target not in hosts:
+                      continue
+                  data["hosts"] = [host for host in hosts if host != target]
+                  user_updates.append((path, json.dumps(data, ensure_ascii=False, indent=2) + "\n"))
+
+          inv_path = os.path.join(root, "inventory.ini")
+          if os.path.exists(inv_path):
+              old_lines = read_text(inv_path).splitlines(True)
+              new_lines = []
+              for line in old_lines:
+                  stripped = line.strip()
+                  if stripped and not stripped.startswith("#") and stripped.split()[0] == target:
+                      continue
+                  new_lines.append(line)
+              if new_lines != old_lines:
+                  write_text(inv_path, "".join(new_lines))
+                  changed.append(inv_path)
+
+          for path, content in user_updates:
+              write_text(path, content)
+              changed.append(path)
+
+          host_vars = os.path.join(root, "host_vars", f"{target}.yml")
+          if os.path.exists(host_vars):
+              if rm_vars:
+                  os.remove(host_vars)
+                  changed.append(host_vars)
+              elif archive:
+                  archive_dir = os.path.join(root, "host_vars", "archived")
+                  os.makedirs(archive_dir, exist_ok=True)
+                  archived = os.path.join(archive_dir, f"{target}.yml")
+                  shutil.move(host_vars, archived)
+                  changed.extend([host_vars, archived])
+
+          print(json.dumps({"changed": changed}, ensure_ascii=False, indent=2))
+      register: dc_prune_result
+      changed_when: "'\"changed\": []' not in dc_prune_result.stdout"
+      when: dc_prune | bool
+      tags: ['prune']
+
+    - name: 显示源码配置清理结果
+      run_once: true
+      delegate_to: localhost
+      become: false
+      debug:
+        var: dc_prune_result.stdout_lines
+      when:
+        - dc_prune | bool
+        - dc_prune_result is defined
+      tags: ['prune']
+
+  post_tasks:
+    - name: 下线后更新 GitHub Gist 订阅文件
+      command: python3 {{ playbook_dir }}/generate_subs_gist.py
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: gist_result
+      changed_when: "'Gist 更新成功' in gist_result.stdout"
+      tags: ['cleanup', 'gist']
+      environment:
+        GITHUB_TOKEN: "{{ vault_github_token | default('') }}"
+        GIST_ID: "{{ vault_monitor_gist_id | default('0a7faae910b06151d643c7d5baa43818') }}"
+        GITHUB_USER: "{{ vault_monitor_gist_user | default('') }}"
+        SUBS_BASE_URL: "{{ monitor.subs_base_url | default(monitor.server_url) }}"
+        SUBS_TOKEN: "{{ vault_monitor_subs_token | default('') }}"
+        HOST_FILTERS: "{{ lookup('env', 'HOST_FILTERS') | default('') }}"
+        EXCLUDE_HOSTS: "{{ dc_target }}"
+      when:
+        - (vault_github_token | default('')) | length > 0
+
+    - name: 跳过 Gist 更新（未配置 GITHUB_TOKEN）
+      debug:
+        msg: "未设置 vault_github_token，已跳过 Gist 更新。"
+      run_once: true
+      become: false
+      when:
+        - (vault_github_token | default('')) | length == 0
+
+    - name: 显示订阅更新输出
+      debug:
+        var: gist_result.stdout_lines
+      run_once: true
+      become: false
+      when:
+        - gist_result is defined
+        - gist_result.stdout_lines is defined
+
+    - name: 汇总 decommission 中不可达的节点
+      run_once: true
+      delegate_to: localhost
+      become: false
+      set_fact:
+        dc_unreachable_hosts: >-
+          {%- set unreachable_hosts = [] -%}
+          {%- for host in ansible_play_hosts_all -%}
+            {%- if host == dc_target and (hostvars[host].dc_connectivity_failed | default(false)) -%}
+              {%- set _ = unreachable_hosts.append(host) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ unreachable_hosts }}
+
+    - name: 提示不可达节点仅完成本地清理
+      run_once: true
+      delegate_to: localhost
+      become: false
+      debug:
+        msg: >-
+          以下节点在 decommission 时无法连接，仅清理了控制端订阅缓存和可选源码配置，
+          远端容器、数据和日志并未清理: {{ dc_unreachable_hosts | join(', ') }}
+      when: (dc_unreachable_hosts | default([]) | length) > 0
+
+    - name: 提示目标已不在 inventory
+      run_once: true
+      delegate_to: localhost
+      become: false
+      debug:
+        msg: >-
+          目标节点 {{ dc_target }} 不在 inventory 的 reality_nodes 中，本次不会执行远端清理；
+          已仅处理本地订阅缓存、Gist 和可选源码配置。
+      when: not (hostvars['localhost'].dc_target_in_inventory | default(false))

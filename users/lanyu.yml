@@ -8,5 +8,8 @@
   "groups": [
     "free"
   ],
-  "hosts": [legend,lej,saberu]
+  "hosts": [
+    "legend",
+    "lej"
+  ]
 }

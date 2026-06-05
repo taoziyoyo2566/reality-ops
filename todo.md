@@ -3,14 +3,16 @@
 3,policy.levels 按用户等级设置连接数/空闲时间/流量统计
 3,dns 使用 DoH/DoT + 规则化解析，减少 DNS 泄漏
 
-reset里面删除配置文件太慢了，当前是一个一个的删除，是不是有更快的方式？
+reset 里面本地订阅缓存仍是逐个删除；远端容器/数据已批量处理，后续可评估本地缓存批量删除是否值得优化。
 
-节点/VPS 下线流程改进：
-- 不建议只靠删除 inventory 行触发清理；删除后 Ansible 会丢失远端目标上下文，通常只能做本地订阅清理。
-- 新增 decommission.yml，和 reset.yml 分离。reset 继续表示重置/清空有效节点，decommission 专门表示节点退出服务。
-- 支持 decommission_target=saberu decommission_confirm=YES。
-- 节点仍可连接时：停止远端容器、清理远端数据、清理控制端 /opt/reality/users/*_<host>.json、更新 Gist。
-- 节点不可连接或已删除 inventory 时：只清理控制端订阅缓存并更新 Gist，明确提示远端容器和数据未清理。
-- 支持 lifecycle=decommission 标记节点，例如写在 host_vars/<host>.yml 或 inventory host var 中，用于审计/提示。
-- decommission 流程应检查并提示残留引用：inventory.ini、host_vars/<host>.yml、users/*.yml 的 hosts ACL。
-- 是否自动删除源码配置应做成显式开关，例如 decommission_prune_config=true，默认只提示不修改。
+节点/VPS 下线流程后续改进：
+- 可考虑支持 lifecycle=decommission 标记节点，例如写在 host_vars/<host>.yml、inventory host var 或独立 decommissioned_hosts.yml 中，用于审计/提示。
+
+订阅双栈节点输出模式：
+- 默认将同一台双栈 VPS 的 IPv4/IPv6 合并为一个订阅节点，节点地址使用同时具备 A/AAAA 记录的域名。
+- 新增类似 subscription_dualstack_mode 的配置，建议默认 merged。
+- merged：只输出一个双栈域名节点，面向普通用户。
+- split：输出 _ipv4 与 _ipv6，便于强制地址族、测速和排障。
+- both：同时输出双栈域名节点、_ipv4、_ipv6，面向高级订阅或调试订阅。
+- _ipv4 不能继续使用带 AAAA 的普通域名，应使用 IPv4 literal 或 A-only 子域名；_ipv6 可继续使用 [global_ipv6]。
+- 实现时同步改 reality_single 和 reality_multi 的本地订阅缓存生成逻辑，并在 deploy.yml 前置检查中识别 global_ipv4。

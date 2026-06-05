@@ -14,6 +14,7 @@
     # (只有加载了用户，才能知道要删哪些容器)
     - name: 扫描用户配置文件
       delegate_to: localhost
+      become: false
       run_once: true
       find:
         paths: "{{ playbook_dir }}/users"
@@ -22,6 +23,7 @@
 
     - name: 加载所有用户配置
       delegate_to: localhost
+      become: false
       delegate_facts: true
       run_once: true
       set_fact:
@@ -38,6 +40,7 @@
     - name: 归一化目标节点列表（兼容 reset_target_hosts/reset_prune_hosts）
       run_once: true
       delegate_to: localhost
+      become: false
       delegate_facts: true
       set_fact:
         reset_target_hosts_list: >-
@@ -65,6 +68,7 @@
     - name: 划分目标节点（inventory 内 / inventory 外）
       run_once: true
       delegate_to: localhost
+      become: false
       delegate_facts: true
       set_fact:
         reset_inventory_target_hosts: >-
@@ -81,9 +85,20 @@
           }}
       tags: ['cleanup', 'local_file']
 
+    - name: 检查本地订阅缓存目录是否可写
+      run_once: true
+      delegate_to: localhost
+      become: false
+      command: test -w /opt/reality/users
+      register: reset_local_cache_writable
+      changed_when: false
+      failed_when: false
+      tags: ['cleanup', 'local_file']
+
     - name: 查找显式删除节点的订阅缓存文件
       run_once: true
       delegate_to: localhost
+      become: false
       find:
         paths: "/opt/reality/users"
         patterns: "*_{{ item }}.json"
@@ -96,6 +111,7 @@
     - name: 计算本次 reset 的有效远端目标节点
       run_once: true
       delegate_to: localhost
+      become: false
       delegate_facts: true
       set_fact:
         reset_effective_remote_hosts: >-
@@ -115,6 +131,7 @@
     - name: 预览本次 reset 将删除的订阅缓存文件
       run_once: true
       delegate_to: localhost
+      become: false
       find:
         paths: "/opt/reality/users"
         patterns: "*_{{ item }}.json"
@@ -126,6 +143,7 @@
     - name: 汇总本次 reset 删除预览信息
       run_once: true
       delegate_to: localhost
+      become: false
       delegate_facts: true
       set_fact:
         reset_preview_sub_paths: >-
@@ -142,6 +160,7 @@
     - name: 显示 reset 清理预览
       run_once: true
       delegate_to: localhost
+      become: false
       debug:
         msg: |
           reset 清理预览:
@@ -155,6 +174,7 @@
     - name: 显示将删除的订阅缓存文件清单
       run_once: true
       delegate_to: localhost
+      become: false
       debug:
         var: hostvars['localhost'].reset_preview_sub_paths
       when: (hostvars['localhost'].reset_preview_sub_paths | default([]) | length) > 0
@@ -163,6 +183,7 @@
     - name: 交互确认 reset 清理
       run_once: true
       delegate_to: localhost
+      become: false
       pause:
         prompt: >-
           即将执行 reset 清理（远端节点 {{ hostvars['localhost'].reset_effective_remote_hosts | default([]) | length }} 个，
@@ -177,6 +198,7 @@
     - name: 计算 reset 清理确认结果
       run_once: true
       delegate_to: localhost
+      become: false
       delegate_facts: true
       set_fact:
         reset_cleanup_confirmed: >-
@@ -194,6 +216,7 @@
     - name: 提示已取消 reset 清理
       run_once: true
       delegate_to: localhost
+      become: false
       debug:
         msg: >-
           已取消 reset 清理（未确认 YES）。未执行任何删除操作。
@@ -207,9 +230,23 @@
       when: not (hostvars['localhost'].reset_cleanup_confirmed | default(false))
       tags: ['cleanup', 'local_file']
 
+    - name: 修复本地订阅缓存目录归属
+      run_once: true
+      delegate_to: localhost
+      become: yes
+      file:
+        path: "/opt/reality/users"
+        state: directory
+        owner: "{{ lookup('env', 'USER') }}"
+        group: "{{ lookup('pipe', 'id -gn') }}"
+        mode: '0755'
+      when: reset_local_cache_writable.rc | default(1) != 0
+      tags: ['cleanup', 'local_file']
+
     - name: 删除显式指定节点的订阅缓存文件
       run_once: true
       delegate_to: localhost
+      become: false
       file:
         path: "{{ item.path }}"
         state: absent
@@ -228,6 +265,7 @@
     - name: 提示显式删除节点中未命中的订阅缓存
       run_once: true
       delegate_to: localhost
+      become: false
       debug:
         msg: >-
           以下节点未匹配到任何本地订阅缓存文件（可能已清理）:
@@ -252,6 +290,7 @@
     - name: 提示不在 inventory 的目标节点仅执行订阅清理
       run_once: true
       delegate_to: localhost
+      become: false
       debug:
         msg: >-
           以下目标节点不在 inventory 的 reality_nodes 中，已仅执行本地订阅清理:
@@ -275,6 +314,7 @@
 
     - name: 从控制端检测目标主机 SSH 端口连通性
       delegate_to: localhost
+      become: false
       command:
         cmd: >-
           ssh -o BatchMode=yes -o ConnectTimeout=10 {{ inventory_hostname }} true
@@ -312,6 +352,7 @@
 
     - name: 查找不可达主机的订阅缓存文件
       delegate_to: localhost
+      become: false
       find:
         paths: "/opt/reality/users"
         patterns: "*_{{ inventory_hostname }}.json"
@@ -330,6 +371,7 @@
 
     - name: 删除不可达主机的订阅缓存文件
       delegate_to: localhost
+      become: false
       file:
         path: "{{ item.path }}"
         state: absent
@@ -396,6 +438,7 @@
         # 4. 清理本地主机对应的订阅缓存文件（用于生成链接的 JSON）
         - name: 查找当前主机的订阅缓存文件
           delegate_to: localhost
+          become: false
           find:
             paths: "/opt/reality/users"
             patterns: "*_{{ inventory_hostname }}.json"
@@ -405,6 +448,7 @@
 
         - name: 删除当前主机的订阅缓存文件
           delegate_to: localhost
+          become: false
           file:
             path: "{{ item.path }}"
             state: absent
@@ -416,6 +460,7 @@
     - name: 重置后更新 GitHub Gist 订阅文件
       command: python3 {{ playbook_dir }}/generate_subs_gist.py
       delegate_to: localhost
+      become: false
       run_once: true
       register: gist_result
       changed_when: "'Gist 更新成功' in gist_result.stdout"
@@ -449,6 +494,7 @@
     - name: 汇总 reset 中不可达的节点
       run_once: true
       delegate_to: localhost
+      become: false
       set_fact:
         reset_unreachable_hosts: >-
           {%- set unreachable_hosts = [] -%}
@@ -462,6 +508,7 @@
     - name: 提示不可达节点仅完成本地订阅清理
       run_once: true
       delegate_to: localhost
+      become: false
       debug:
         msg: >-
           以下节点在 reset 时无法连接，仅清理了控制端订阅缓存，

@@ -215,15 +215,19 @@ ansible-playbook -i inventory.ini deploy.yml --limit premium --tags users --vaul
 ```bash
 ./ansible-playbook deploy premium --tags users
 ./ansible-playbook reset sky
+./ansible-playbook dc saberu -e "dc_confirm=YES" -K
 ./ansible-playbook audit dcc
 ```
 
 说明：
-- `./ansible-playbook deploy|reset|audit` 会自动映射到 `deploy.yml|reset.yml|audit.yml`。
+- `./ansible-playbook deploy|reset|audit|decommission|dc` 会自动映射到对应 playbook；`dc` 是 `decommission.yml` 的短别名。
 - `./ansible-playbook reset sky` 会自动展开为 `-e "reset_target_hosts=sky"`。
 - `./ansible-playbook reset <host>` 会自动判断：
   在 `reality_nodes` 中则自动 `--limit <host>`；
   不在 `reality_nodes` 中则自动 `--limit spt -e "reset_subs_only=true"`。
+- `./ansible-playbook decommission <host>` 或 `./ansible-playbook dc <host>` 会自动展开为 `-e "dc_target=<host>"`；
+  在 `reality_nodes` 中则自动 `--limit <host>`，不在则自动 `--limit spt` 只做本地清理。
+- `dc/decommission` 必须指定目标节点；不带 `<host>` 会在 wrapper 层直接报错，不会连接所有节点。
 - 若存在 `~/.vault_pass`，会自动追加 `--vault-password-file ~/.vault_pass`。
 - 其他原生参数保持兼容（透传执行），例如：
 ```bash
@@ -248,6 +252,19 @@ ansible-playbook -i inventory.ini deploy.yml --limit premium --tags users --vaul
 - 非交互执行可显式确认：`-e "reset_confirm=YES"`（必要时可配合 `-e "reset_require_confirm=false"`）。
 - 若未确认 `YES`，会安全取消本次 reset（提前结束，不执行删除）。
 - 可选触发 Gist 更新（依赖 vault token）。
+
+### `decommission.yml`
+- 专门用于节点/VPS 退出服务；`reset.yml` 继续表示有效节点重置/清空。
+- 默认清理运行态和订阅，不修改源码配置：
+  远端可达时删除 `reality_*` 容器、Reality 数据目录、Reality 日志目录和 compose 文件；
+  控制端删除 `/opt/reality/users/*_<host>.json` 并更新 Gist。
+- 节点不可达或已从 inventory 删除时，仅清理控制端订阅缓存、更新 Gist，并明确提示远端未清理。
+- 默认有防误操作确认；非交互执行需传 `-e "dc_confirm=YES"`。
+- 远端运行态清理需要目标机 sudo；控制端首次修复 `/opt/reality/users` 目录归属时也可能需要 `-K`。
+  目录归属修复后，本地订阅缓存查找、删除和生成均由控制用户执行。
+- 可选清理源码配置：`-e "dc_prune=true"` 会移除 `inventory.ini` 中该 host 行、从 `users/*.yml` 的 `hosts` 列表移除该 host，并处理 `host_vars/<host>.yml`。
+- `dc_prune=true` 只自动改 JSON 格式用户文件或简单 flow-list hosts 行；复杂 YAML 用户文件会报错并要求手动处理，避免静默改写格式。
+- `dc_archive=true`（默认）会把 `host_vars/<host>.yml` 移动到 `host_vars/archived/<host>.yml`；`dc_rm_vars=true` 会直接删除该文件。
 
 ### `audit.yml`
 - 从各节点 `{{ reality_logs_dir }}/reality_core/access.log` 抽取用户与源 IP。
@@ -344,6 +361,15 @@ ansible-playbook -i inventory.ini reset.yml \
 ansible-playbook -i inventory.ini reset.yml --limit spt --tags local_file,gist \
   -e "reset_subs_only=true reset_target_hosts=sky reset_confirm=YES" \
   --vault-password-file ~/.vault_pass
+
+# 下线节点：清理远端运行态、日志、本地订阅并更新 Gist
+./ansible-playbook dc saberu -e "dc_confirm=YES" -K
+
+# 下线节点并清理源码引用，host_vars 默认归档到 host_vars/archived/
+./ansible-playbook dc saberu -e "dc_confirm=YES dc_prune=true" -K
+
+# 下线节点并直接删除 host_vars/<host>.yml
+./ansible-playbook dc saberu -e "dc_confirm=YES dc_prune=true dc_rm_vars=true" -K
 
 
 
