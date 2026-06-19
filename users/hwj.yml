@@ -8,5 +8,5 @@
   "groups": [
     "normal"
   ],
-  "hosts": [spt,ams]
+  "hosts": ["spt", "ams"]
 }

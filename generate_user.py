@@ -47,6 +47,7 @@ OPTIONS_WITH_VALUE = (
     "--port",
     "--groups",
     "--hosts",
+    "--deny-hosts",
     "--docker-image",
 )
 USAGE_EXAMPLES = """示例:
@@ -55,6 +56,8 @@ USAGE_EXAMPLES = """示例:
   python3 generate_user.py add carol --groups netflix --hosts ams,spt
   python3 generate_user.py add carol --force       # 覆盖同名文件（会重建 uuid/密钥）
   python3 generate_user.py update carol --groups basic --hosts ams
+  python3 generate_user.py update carol --deny-hosts jp10   # 临时禁止 carol 使用 jp10
+  python3 generate_user.py update carol --deny-hosts ""     # 解除全部封禁
   python3 generate_user.py delete bob              # 删除 bob.yml/.yaml/.json
   python3 generate_user.py list                    # 查看端口占用与文件路径
   python3 generate_user.py list --wide             # 额外展示 ACL(groups/hosts)
@@ -159,6 +162,7 @@ def iter_user_records(
                 display_name = f"{display_name}[{idx}]"
             groups = normalize_acl_list(obj.get("groups"))
             hosts = normalize_acl_list(obj.get("hosts"))
+            deny_hosts = normalize_acl_list(obj.get("deny_hosts"))
             acl_mode = "legacy_all" if "groups" not in obj else "explicit"
             return {
                 "name": name_val or display_name,
@@ -167,6 +171,7 @@ def iter_user_records(
                 "display_name": display_name,
                 "groups": groups,
                 "hosts": hosts,
+                "deny_hosts": deny_hosts,
                 "acl_mode": acl_mode,
             }
 
@@ -208,6 +213,13 @@ def iter_user_records(
                         for h in (r.get("hosts") if isinstance(r.get("hosts"), list) else [])
                     ]
                 )
+                deny_hosts = unique_items(
+                    [
+                        h
+                        for r in records
+                        for h in (r.get("deny_hosts") if isinstance(r.get("deny_hosts"), list) else [])
+                    ]
+                )
                 acl_modes = {
                     r.get("acl_mode")
                     for r in records
@@ -226,6 +238,7 @@ def iter_user_records(
                     "display_name": display_name,
                     "groups": groups,
                     "hosts": hosts,
+                    "deny_hosts": deny_hosts,
                     "acl_mode": acl_mode,
                 }
         else:
@@ -497,6 +510,7 @@ def add_user(args) -> None:
         "public_key": keys["public_key"],
         "groups": parse_groups(args.groups, default=["free"]),
         "hosts": parse_hosts(args.hosts),
+        "deny_hosts": parse_hosts(args.deny_hosts),
     }
 
     out_path = existing_path or os.path.join(users_dir, f"{name}.yml")
@@ -527,8 +541,8 @@ def update_user(args) -> None:
     name = validate_name(args.name)
     users_dir = ensure_users_dir(args.users_dir)
 
-    if args.groups is None and args.hosts is None:
-        sys.stderr.write("update 至少需要传一个参数：--groups 或 --hosts\n")
+    if args.groups is None and args.hosts is None and args.deny_hosts is None:
+        sys.stderr.write("update 至少需要传一个参数：--groups、--hosts 或 --deny-hosts\n")
         sys.exit(1)
 
     path = resolve_user_file(users_dir, name)
@@ -550,6 +564,9 @@ def update_user(args) -> None:
     if args.hosts is not None:
         data["hosts"] = parse_hosts(args.hosts)
         updated_fields.append("hosts")
+    if args.deny_hosts is not None:
+        data["deny_hosts"] = parse_hosts(args.deny_hosts)
+        updated_fields.append("deny_hosts")
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
@@ -577,7 +594,7 @@ def list_users(args) -> None:
 
     records.sort(key=lambda r: (str(r.get("name")), str(r.get("path"))))
     if args.wide:
-        header = f"{'name':<20} {'port':<8} {'groups':<28} {'hosts':<24} path"
+        header = f"{'name':<20} {'port':<8} {'groups':<28} {'hosts':<20} {'deny_hosts':<20} path"
         print(header)
         print("-" * len(header))
     for record in records:
@@ -588,9 +605,10 @@ def list_users(args) -> None:
             groups_display = fit_text(
                 format_acl_groups(record.get("groups"), record.get("acl_mode")), 28
             )
-            hosts_display = fit_text(format_acl_hosts(record.get("hosts")), 24)
+            hosts_display = fit_text(format_acl_hosts(record.get("hosts")), 20)
+            deny_display = fit_text(format_acl_hosts(record.get("deny_hosts")), 20)
             print(
-                f"{str(record.get('display_name')):<20} {port_display:<8} {groups_display:<28} {hosts_display:<24} {rel_path}"
+                f"{str(record.get('display_name')):<20} {port_display:<8} {groups_display:<28} {hosts_display:<20} {deny_display:<20} {rel_path}"
             )
         else:
             print(f"{str(record.get('display_name')):<20} {port_display:<10} {rel_path}")
@@ -633,6 +651,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="允许访问的具体节点，逗号分隔，例如 ams,dcc。默认为空（不指定具体主机）",
     )
     add_parser.add_argument(
+        "--deny-hosts",
+        type=str,
+        default="",
+        help="禁止访问的节点（黑名单），逗号分隔，例如 jp10,ams。优先级最高，覆盖 groups/hosts。默认为空",
+    )
+    add_parser.add_argument(
         "--min-port", type=int, default=DEFAULT_MIN_PORT, help="自动分配端口下限，默认 20000"
     )
     add_parser.add_argument(
@@ -653,6 +677,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="覆盖用户 hosts（逗号分隔）；传空字符串时清空 hosts",
+    )
+    update_parser.add_argument(
+        "--deny-hosts",
+        type=str,
+        default=None,
+        help="覆盖用户 deny_hosts 黑名单（逗号分隔）；传空字符串时解除全部封禁",
     )
 
     delete_parser = subparsers.add_parser("delete", parents=[common], help="删除用户配置文件")

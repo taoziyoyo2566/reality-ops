@@ -42,6 +42,49 @@
         - item.hosts is defined
       tags: ['always']
 
+    - name: "[前置检查] 校验用户 deny_hosts 列表格式"
+      vars:
+        user_deny_hosts: "{{ item.deny_hosts | default([], true) }}"
+        deny_with_comma: "{{ (item.deny_hosts if ((item.deny_hosts is sequence) and (item.deny_hosts is not string)) else []) | select('search', ',') | list }}"
+      assert:
+        that:
+          - user_deny_hosts is sequence
+          - user_deny_hosts is not string
+          - deny_with_comma | length == 0
+        fail_msg: >-
+          用户 '{{ item.name | default('unknown') }}' 的 deny_hosts 配置无效：
+          deny_hosts 必须是节点名列表，不能把多个节点写进同一个字符串。
+          当前 deny_hosts={{ user_deny_hosts }}，含逗号的条目={{ deny_with_comma }}。
+          请写成 ["jp10", "ams"]，不要写成 ["jp10,ams"]。
+      loop: "{{ all_raw_users | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('unknown') }}"
+      when:
+        - item.deny_hosts is defined
+      tags: ['always']
+
+    - name: "[前置检查] 校验节点独占用户列表"
+      vars:
+        exclusive_users: "{{ reality_node_users | default([]) }}"
+        users_with_comma: "{{ (exclusive_users if ((exclusive_users is sequence) and (exclusive_users is not string)) else []) | select('search', ',') | list }}"
+        all_user_names: "{{ all_raw_users | default([]) | map(attribute='name') | list }}"
+        missing_users: "{{ exclusive_users | difference(all_user_names) if ((exclusive_users is sequence) and (exclusive_users is not string)) else [] }}"
+      assert:
+        that:
+          - exclusive_users is sequence
+          - exclusive_users is not string
+          - users_with_comma | length == 0
+          - missing_users | length == 0
+        fail_msg: >-
+          节点 '{{ inventory_hostname }}' 的 reality_node_users 配置无效：
+          reality_node_users 必须是用户 name 列表，不能是字符串，也不能把多个用户写进同一个字符串。
+          当前 reality_node_users={{ exclusive_users }}，含逗号的条目={{ users_with_comma }}，
+          不存在的用户={{ missing_users }}。
+          请写成 ["alice", "bob"]，不要写成 "alice,bob" 或 ["alice,bob"]。
+      when:
+        - reality_node_users is defined
+      tags: ['always']
+
     - name: "[前置检查] 识别全局 IPv6 地址"
       set_fact:
         global_ipv6: "{{ (ansible_facts['all_ipv6_addresses'] | default([]) | reject('match', '^fe80') | reject('match', '^::1') | reject('match', '^fd') | reject('match', '^fc') | list | first) | default('') }}"
@@ -52,28 +95,44 @@
         reality_instances: >-
           {%- set valid_users = [] -%}
 
-          {# 1) 合并当前节点所属组在 ACL 矩阵中的放行标签 #}
-          {%- set node_allowed_groups = [] -%}
-          {%- for g in group_names -%}
-            {%- if g in (acl_matrix | default({})) -%}
-              {%- set _ = node_allowed_groups.extend(acl_matrix[g]) -%}
+          {%- if reality_node_users is defined -%}
+            {# 节点声明独占用户时，完全由 host_vars/group_vars 控制用户归属。 #}
+            {%- for u in all_raw_users | default([]) -%}
+              {%- if u.get('name') in reality_node_users -%}
+                {%- set _ = valid_users.append(u) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- else -%}
+            {# 1) 合并当前节点所属组在 ACL 矩阵中的放行标签 #}
+            {%- set node_allowed_groups = [] -%}
+            {%- for g in group_names -%}
+              {%- if g in (acl_matrix | default({})) -%}
+                {%- set _ = node_allowed_groups.extend(acl_matrix[g]) -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- set node_allowed_groups = node_allowed_groups | unique -%}
+
+            {# 2) 遍历用户，按组交集或主机直连匹配 #}
+            {%- for u in all_raw_users | default([]) -%}
+              {%- set u_groups = u.get('groups', ['all']) -%}
+              {%- set u_hosts = u.get('hosts', []) -%}
+
+              {%- set match_group = ('all' in u_groups) or (u_groups | intersect(node_allowed_groups) | length > 0) -%}
+              {%- set match_host = (inventory_hostname in u_hosts) -%}
+
+              {%- if match_group or match_host -%}
+                {%- set _ = valid_users.append(u) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
+          {#- 减法闸门：用户自带 deny_hosts 命中当前节点则剔除（优先级最高，覆盖 group/host/独占白名单）。 -#}
+          {%- set final_users = [] -%}
+          {%- for u in valid_users -%}
+            {%- if inventory_hostname not in (u.get('deny_hosts', []) | default([], true)) -%}
+              {%- set _ = final_users.append(u) -%}
             {%- endif -%}
           {%- endfor -%}
-          {%- set node_allowed_groups = node_allowed_groups | unique -%}
-
-          {# 2) 遍历用户，按组交集或主机直连匹配 #}
-          {%- for u in all_raw_users | default([]) -%}
-            {%- set u_groups = u.get('groups', ['all']) -%}
-            {%- set u_hosts = u.get('hosts', []) -%}
-
-            {%- set match_group = ('all' in u_groups) or (u_groups | intersect(node_allowed_groups) | length > 0) -%}
-            {%- set match_host = (inventory_hostname in u_hosts) -%}
-
-            {%- if match_group or match_host -%}
-              {%- set _ = valid_users.append(u) -%}
-            {%- endif -%}
-          {%- endfor -%}
-          {{ valid_users }}
+          {{ final_users }}
       tags: ['always']
 
   roles:

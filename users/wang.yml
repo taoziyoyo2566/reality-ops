@@ -10,5 +10,8 @@
   ],
   "hosts": [
     "jp10"
+  ],
+  "deny_hosts": [
+    "dcc"
   ]
 }

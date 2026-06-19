@@ -314,8 +314,6 @@
   delegate_to: localhost
   become: false
   shell: "rm -f /opt/reality/users/*_{{ inventory_hostname }}.json"
-  args:
-    warn: false
   failed_when: false
   tags: ['users', 'local_file']
 
