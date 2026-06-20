@@ -34,7 +34,7 @@
           用户 '{{ item.name | default('unknown') }}' 的 hosts 配置无效：
           hosts 必须是节点名列表，不能把多个节点写进同一个字符串。
           当前 hosts={{ user_hosts }}，含逗号的条目={{ hosts_with_comma }}。
-          请写成 ["lej", "jp10"]，不要写成 ["lej,jp10"]。
+          请写成 ["jp05", "jp10"]，不要写成 ["jp05,jp10"]。
       loop: "{{ all_raw_users | default([]) }}"
       loop_control:
         label: "{{ item.name | default('unknown') }}"

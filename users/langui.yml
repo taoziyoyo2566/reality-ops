@@ -8,5 +8,5 @@
   "groups": [
     "free"
   ],
-  "hosts": ["legend", "jp10", "spt"]
+  "hosts": ["sg", "jp10", "spt"]
 }

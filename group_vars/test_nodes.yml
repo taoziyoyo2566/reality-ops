@@ -1,0 +1,25 @@
+---
+# 测试节点组（staging）的隔离配置 —— 与生产解耦。
+# 关联计划：docs/reviews/fix-monitor-integrity/plan-staging-env-2026-06-13.md
+#
+# 生效前提：inventory.ini 中必须存在 [test_nodes] 组并列出这 4 台测试机：
+#   [test_nodes]
+#   hkcod12
+#   hyu24
+#   hyd13
+#   hyu22
+# 否则本文件不绑定到任何主机，下列隔离不生效。
+#
+# 注意：ansible.cfg 未设 hash_behaviour=merge（默认 replace）。
+# 若日后在此覆盖 monitor: 字典，必须写完整字典，写局部会丢键。
+
+# 隔离层②（监控）：暂不接入监控。
+# 当前先验证 4 台代理节点本身可用；待监控加固代码（plan-harden-monitor）完成后，
+# 再把 monitor 指向独立测试监控（hkcod12 + monitor-test 域名 + 独立 vault token）。
+monitor_enabled: false
+
+# 隔离层②（Gist）：禁止测试部署把订阅推到生产 Gist。
+# deploy.yml 的 Gist 任务只在 ansible_play_hosts_all|first 上跑一次；
+# 用 `--limit hkcod12,hyu24,hyd13,hyu22` 圈定测试机时，首台为 test 节点，
+# 取到此处的空 token → 跳过 Gist，不污染生产订阅。
+vault_github_token: ""

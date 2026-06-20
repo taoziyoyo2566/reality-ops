@@ -324,7 +324,7 @@ jq -r '.[].subscription' /opt/reality/users/test_jp10.json
 
 ```yaml
 "hosts": [
-  "lej,jp10"
+  "jp05,jp10"
 ]
 ```
 
@@ -334,13 +334,13 @@ jq -r '.[].subscription' /opt/reality/users/test_jp10.json
 inventory_hostname in u_hosts
 ```
 
-所以 `jp10` 不会匹配 `"lej,jp10"`，用户不会进入 `jp10` 的 `reality_instances`。
+所以 `jp10` 不会匹配 `"jp05,jp10"`，用户不会进入 `jp10` 的 `reality_instances`。
 
 正确写法：
 
 ```yaml
 "hosts": [
-  "lej",
+  "jp05",
   "jp10"
 ]
 ```

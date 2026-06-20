@@ -364,7 +364,7 @@ ssh jp10 'tail -n 0 -f /opt/reality/logs/reality_core/access.log /opt/reality/lo
 
 如果日志里没有 `user-test`，说明客户端没有打到这个入站，优先检查：
 
-- 是否使用的是 `test.jp10` 而不是 `test.lej`。
+- 是否使用的是 `test.jp10` 而不是 `test.jp05`。
 - 是否误选了 `_ipv6` 节点。
 - 订阅是否刷新。
 - 客户端节点里的端口、UUID、public key、short ID、SNI 是否和 `/opt/reality/users/test_jp10.json` 一致。

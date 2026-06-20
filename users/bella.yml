@@ -1,0 +1,15 @@
+{
+  "name": "bella",
+  "uuid": "8d109991-4eb2-435f-8452-cd44e0d429c5",
+  "port": 36370,
+  "short_id": "f19da1a52da11983",
+  "private_key": "2PIslv9e78Uf7ozphKqEzRqHRoiicNvxHckUK5HweX4",
+  "public_key": "VHA_ENNSnVcvnIafO2cbIN2UQ-gBU1bdViiPzFh9CjI",
+  "groups": [
+    "premium"
+  ],
+  "hosts": [
+    "spt"
+  ],
+  "deny_hosts": []
+}

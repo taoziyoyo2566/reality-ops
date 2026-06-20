@@ -9,10 +9,10 @@
     "premium"
   ],
   "hosts": [
-    "legend",
+    "sg",
     "spt"
   ],
   "deny_hosts": [
-    "jp10"
+    
   ]
 }

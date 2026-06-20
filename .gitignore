@@ -20,3 +20,5 @@ users/*.json
 .vault_pass
 .github
 scripts
+.understand-anything
+.claude
