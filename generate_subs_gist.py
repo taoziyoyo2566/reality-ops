@@ -19,6 +19,15 @@ def parse_env_host_set(name):
     return {item.strip() for item in raw.split(',') if item.strip()}
 
 
+def is_ipv6_link(sub):
+    """判断订阅链接是否为 IPv6 节点。
+
+    URL 里 IPv6 字面量地址必为方括号形式 vless://uuid@[::1]:port，
+    据此识别比依赖 #tag 的 _ipv6 后缀更可靠（tag 由模板手写可能漏改）。
+    """
+    return '@[' in (sub or '')
+
+
 def get_config():
     """
     获取配置（仅通过环境变量，避免依赖 .env 文件）
@@ -114,23 +123,32 @@ def generate_subscriptions():
     output_lines.append(header)
     print(f"正在处理 {len(user_links)} 个用户的订阅...")
     
+    token_suffix = f"?token={SUBS_TOKEN}" if SUBS_TOKEN else ""
     for user, links in user_links.items():
-        # 聚合链接并 Base64 编码 (用于 Gist 内容)
-        content_raw = '\n'.join(links)
-        encoded_content = base64.b64encode(content_raw.encode('utf-8')).decode('utf-8')
-        
-        # 文件名使用 UUID
-        file_id = user  # 使用用户名作为文件名，避免 UUID 难记
-        gist_files[file_id] = {"content": encoded_content}
-        
-        # 生成订阅链接（走 monitor 代理，保持域名一致；token 可选）
-        token_suffix = f"?token={SUBS_TOKEN}" if SUBS_TOKEN else ""
-        sub_url = f"{SUBS_BASE_URL}/{file_id}{token_suffix}"
-        
-        # 记录日志
-        log_line = f"用户: {user:<15} 订阅链接: {sub_url}"
-        print(log_line) # 打印到屏幕
-        output_lines.append(log_line) # 添加到文件缓存
+        # 每个用户生成两份订阅：
+        #   <user>       -> 仅 IPv4（默认/安全，适配不支持 IPv6 的网络）
+        #   <user>-full  -> IPv4 + IPv6（全量，双栈网络可用）
+        # monitor 代理 /{sub_id} 直接映射到同名 Gist 文件，无需改 monitor。
+        v4_links = [link for link in links if not is_ipv6_link(link)]
+        full_links = links
+
+        variants = (
+            (user, v4_links, "仅IPv4"),
+            (f"{user}-full", full_links, "全量v4+v6"),
+        )
+        for file_id, variant_links, label in variants:
+            # 聚合链接并 Base64 编码 (用于 Gist 内容)
+            content_raw = '\n'.join(variant_links)
+            encoded_content = base64.b64encode(content_raw.encode('utf-8')).decode('utf-8')
+            gist_files[file_id] = {"content": encoded_content}
+
+            # 生成订阅链接（走 monitor 代理，保持域名一致；token 可选）
+            sub_url = f"{SUBS_BASE_URL}/{file_id}{token_suffix}"
+
+            # 记录日志
+            log_line = f"用户: {user:<15} [{label:<9}] 订阅链接: {sub_url}"
+            print(log_line) # 打印到屏幕
+            output_lines.append(log_line) # 添加到文件缓存
 
     # 3. 推送更新
     if gist_files:
