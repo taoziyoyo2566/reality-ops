@@ -40,9 +40,9 @@ monitor:
   report_token: "{{ vault_monitor_report_token | default('CHANGEME-report-token') }}"   # 上报认证 Token（Vault）
   admin_bearer_token: "{{ vault_monitor_admin_bearer_token | default('CHANGEME-admin-bearer') }}" # 管理员 Bearer，用于 stats/doc
   stats_bearer_token: "{{ vault_monitor_stats_bearer_token | default('CHANGEME-stats-bearer') }}" # 普通 Bearer，用于只读 stats
-  ip_allowlist: ["127.0.0.1","45.145.75.134","133.18.123.108","49.98.151.252","2604:9cc0:1cb1:0:91ae:5c39:e233:4081","160.191.29.7","2607:8700:5500:32ec::2","2a00:11c0:47:1c95:8868:d8ff:fed5:bc4d","160.248.69.81"]   # 允许免认证的 IP（CF/内网）
-  # trust_proxy_header: "CF-Connecting-IP"  # 从哪一个头部拿真实客户端 IP，CF 默认 CF-Connecting-IP
-  trust_proxy_header: "X-Forwarded-For"
+  ip_allowlist: ["45.145.75.134","133.18.123.108","49.98.151.252","2604:9cc0:1cb1:0:91ae:5c39:e233:4081","160.191.29.7","2607:8700:5500:32ec::2","2a00:11c0:47:1c95:8868:d8ff:fed5:bc4d","160.248.69.81"]   # 运维真实 IP（D1-B：仅在带 CF 注入的 tunnel_secret 头时才放行；本机直连无 secret 头不生效，故移除 127.0.0.1）
+  trust_proxy_header: "CF-Connecting-IP"   # D1-B：从 CF 注入头取真实客户端 IP（白名单判定 + 审计日志）
+  tunnel_secret: "{{ vault_monitor_tunnel_secret | default('') }}"   # D1-B：CF Transform Rule 注入的 X-Monitor-Tunnel-Secret 校验值；未配=fail-closed（只认 Bearer）
   subs_proxy:
     enabled: true               # 是否启用订阅访问记录代理
     gist_user: "{{ vault_monitor_gist_user | default('taoziyoyo2566') }}"

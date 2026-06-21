@@ -60,18 +60,47 @@
     - name: "[Server] 部署监控服务端"
       when: inventory_hostname == monitor.server_host
       block:
-        - name: 确保数据目录存在
+        - name: 创建监控服务端专用用户 (非 root)
+          user:
+            name: reality-monitor
+            system: yes
+            shell: /usr/sbin/nologin
+            create_home: no
+          tags: ['monitor', 'monitor_server']
+
+        - name: 确保数据目录存在 (属主 reality-monitor；recurse 迁移现有 DB)
           file:
             path: "{{ reality_data_dir }}"
             state: directory
-            mode: '0755'
+            owner: reality-monitor
+            group: reality-monitor
+            mode: '0750'
+            recurse: yes
           tags: ['monitor']
 
-        - name: 部署服务端脚本
+        - name: 下发服务端密钥环境文件 (0600, systemd EnvironmentFile)
+          copy:
+            dest: "{{ monitor_root_dir }}/monitor.env"
+            owner: reality-monitor
+            group: reality-monitor
+            mode: '0600'
+            content: |
+              MONITOR_REPORT_TOKEN={{ monitor.report_token }}
+              MONITOR_ADMIN_BEARER_TOKEN={{ monitor.admin_bearer_token }}
+              MONITOR_STATS_BEARER_TOKEN={{ monitor.stats_bearer_token }}
+              MONITOR_TUNNEL_SECRET={{ monitor.tunnel_secret | default('') }}
+              MONITOR_SUBS_TOKEN={{ monitor.subs_proxy.token | default('') }}
+          no_log: true
+          notify: 重启监控服务
+          tags: ['monitor', 'monitor_server']
+
+        - name: 部署服务端脚本 (0640, 属主 reality-monitor)
           template:
             src: server.py.j2
             dest: "{{ monitor_root_dir }}/server.py"
-            mode: '0755'
+            owner: reality-monitor
+            group: reality-monitor
+            mode: '0640'
           notify: 重启监控服务
           tags: ['monitor', 'monitor_server']
         
@@ -83,11 +112,13 @@
               Description=Reality Traffic Monitor
               After=network.target
               [Service]
-              User=root
+              User=reality-monitor
+              EnvironmentFile={{ monitor_root_dir }}/monitor.env
               WorkingDirectory={{ monitor_root_dir }}
               # 使用虚拟环境 Python 启动
               ExecStart={{ monitor_venv_dir }}/bin/python3 {{ monitor_root_dir }}/server.py
               Restart=always
+              NoNewPrivileges=yes
               [Install]
               WantedBy=multi-user.target
           notify: 重启监控服务

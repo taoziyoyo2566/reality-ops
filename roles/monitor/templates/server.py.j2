@@ -7,6 +7,7 @@ import io
 import sqlite3
 import time
 import os
+import hmac
 from typing import Optional, List
 
 app = FastAPI(
@@ -16,16 +17,19 @@ app = FastAPI(
     openapi_url=None
 )
 
-REPORT_TOKEN = "{{ monitor.report_token }}"
-ADMIN_BEARER_TOKEN = "{{ monitor.admin_bearer_token }}"
-STATS_BEARER_TOKEN = "{{ monitor.stats_bearer_token }}"
+# 敏感 token 从 0600 env 文件读取（systemd EnvironmentFile=monitor.env），不再明文渲染进 server.py
+REPORT_TOKEN = os.environ.get("MONITOR_REPORT_TOKEN", "")
+ADMIN_BEARER_TOKEN = os.environ.get("MONITOR_ADMIN_BEARER_TOKEN", "")
+STATS_BEARER_TOKEN = os.environ.get("MONITOR_STATS_BEARER_TOKEN", "")
 IP_ALLOWLIST: List[str] = {{ monitor.ip_allowlist | default(['127.0.0.1']) | to_json }}
 TRUST_PROXY_HEADER = "{{ monitor.trust_proxy_header | default('CF-Connecting-IP') }}"
+TUNNEL_SECRET = os.environ.get("MONITOR_TUNNEL_SECRET", "")
+TUNNEL_SECRET_HEADER = "X-Monitor-Tunnel-Secret"
 
 SUBS_PROXY_ENABLED = {{ monitor.subs_proxy.enabled | default(false) | bool }}
 SUBS_GIST_USER = "{{ monitor.subs_proxy.gist_user | default('') }}"
 SUBS_GIST_ID = "{{ monitor.subs_proxy.gist_id | default('') }}"
-SUBS_TOKEN = "{{ monitor.subs_proxy.token | default('') }}"
+SUBS_TOKEN = os.environ.get("MONITOR_SUBS_TOKEN", "")
 SUBS_REQUIRE_TOKEN = {{ monitor.subs_proxy.require_token | default(true) | bool }}
 
 DB_PATH = "{{ reality_data_dir }}/traffic_monitor.db"
@@ -1591,14 +1595,22 @@ def get_client_ip(request: Request) -> str:
         header_val = request.headers.get(TRUST_PROXY_HEADER)
         if header_val:
             return header_val.split(",")[0].strip()
-    return request.client.host if request.client else "0.0.0.0"
+    # 无可信代理头：不 fallback 到直连对端（避免塌缩为 cloudflared 的 127.0.0.1）
+    return ""
 
 def is_ip_allowed(ip: str) -> bool:
-    return ip in IP_ALLOWLIST
+    return bool(ip) and ip in IP_ALLOWLIST
+
+def tunnel_verified(request: Request) -> bool:
+    # D1-B：仅当配置了 TUNNEL_SECRET 且请求带 CF Transform Rule 注入的匹配头，
+    # 才认定"确经 CF 边缘"。未配 secret 时 fail-closed（禁用白名单放行，只认 Bearer）。
+    if not TUNNEL_SECRET:
+        return False
+    return hmac.compare_digest(request.headers.get(TUNNEL_SECRET_HEADER, ""), TUNNEL_SECRET)
 
 async def auth_guard(request: Request, authorization: Optional[str] = Header(None)):
-    client_ip = get_client_ip(request)
-    if is_ip_allowed(client_ip):
+    # D1-B：放行 = 确经 CF 边缘(secret 头) 且 客户端 IP ∈ 运维白名单；否则要 Bearer。
+    if tunnel_verified(request) and is_ip_allowed(get_client_ip(request)):
         return
     token = None
     if authorization and authorization.lower().startswith("bearer "):
@@ -1620,7 +1632,7 @@ async def debug_whoami(request: Request):
         "trusted_header": TRUST_PROXY_HEADER,
         "x_forwarded_for": request.headers.get("X-Forwarded-For", ""),
         "cf_connecting_ip": request.headers.get("CF-Connecting-IP", ""),
-        "ip_allowlist": IP_ALLOWLIST,
+        "tunnel_verified": tunnel_verified(request),
     }
 
 @app.post("/report")
@@ -1945,4 +1957,4 @@ async def proxy_subscription_alias(sub_id: str, request: Request, token: Optiona
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="{{ monitor.internal_host }}", port={{ monitor.internal_port }})
+    uvicorn.run(app, host="{{ monitor.internal_host }}", port={{ monitor.internal_port }}, proxy_headers=True, forwarded_allow_ips="127.0.0.1")
