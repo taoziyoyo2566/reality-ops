@@ -308,8 +308,9 @@ ansible-playbook -i inventory.ini reset.yml \
 ### 部署
 监控**服务端 + agent 都由 `deploy.yml` 的 `monitor` role 部署**（tag `monitor`），按节点 `monitor_enabled` 开关。
 ```bash
-./ansible-playbook deploy --tags monitor          # 全量：server + 所有节点 agent
-./ansible-playbook deploy spt --tags monitor      # 只更服务端（spt = monitor.server_host）
+./ansible-playbook deploy spt --tags monitor_server -K      # 只更服务端（spt = monitor.server_host）
+./ansible-playbook deploy <node> --tags monitor_agent -K     # 只更单节点 agent
+./ansible-playbook deploy <node> --tags monitor_config -K    # agent 配置/token/cron 批次更新
 ```
 - 服务端仅在 `monitor.server_host`（默认 `spt`）部署：`/opt/reality/monitor/server.py` + `reality-monitor.service`。
 - agent 在所有 `monitor_enabled=true` 节点：`/usr/local/bin/traffic_agent.py` + 每分钟 cron；数据库 `{{ monitor_root_dir }}/data/traffic_monitor.db`（已移出共享的 reality_data_dir，避免与 xray 配置目录属主冲突）。
@@ -325,7 +326,7 @@ GET /stats/export?hours=24&detail=true&format=csv
 GET /stats/ip_matrix?hours=72
 GET /subs/logs?limit=200
 ```
-鉴权(D1-B)：`/report`、`/stats/ip_report` 仅校验 `token` header；`/stats/*`、`/docs` 需 (CF 注入 `X-Monitor-Tunnel-Secret` ∧ `CF-Connecting-IP`∈白名单) 或 `Bearer`，本机/绕 CF 一律 401；`/stats/cleanup` 在 Bearer 外还要 `token`；`/healthz` 无鉴权。
+鉴权(D1-B)：`/report`、`/stats/ip_report` 仅校验 `token` header；`/stats/*`、`/docs` 需 (CF **Request Header** Transform Rule 注入 `X-Monitor-Tunnel-Secret` ∧ `CF-Connecting-IP`∈白名单) 或 `Bearer`，本机/绕 CF 一律 401；`/stats/cleanup` 仅接受 admin Bearer；`/healthz` 无鉴权。
 
 ---
 
@@ -371,7 +372,7 @@ tail -n 300 /opt/reality/logs/reality_core/access.log
 | 用户在 `list` 里看不到 | 用户文件是否合法 JSON（`["spt"]` 而非裸词 `[spt]`） |
 | 订阅未更新 | `vault_github_token` 与 Gist 参数是否配置；是否被 `--skip-tags gist` 跳过 |
 | reset 找不到下线节点（如 `sky`） | 别用 `--limit sky`，改 `--limit spt -e "reset_subs_only=true reset_target_hosts=sky reset_confirm=YES"` |
-| 监控页 401 | CF Transform Rule secret 与 vault `tunnel_secret` 是否一致；运维 IP 是否在 `ip_allowlist`；临时用 Bearer |
+| 监控页 401 | CF 是否配成 **Request Header** Transform Rule（不是 Response Header）；secret 与 vault `tunnel_secret` 是否一致；运维 IP 是否在 `ip_allowlist`；临时用 Bearer |
 
 临时目录不可写时：
 ```bash

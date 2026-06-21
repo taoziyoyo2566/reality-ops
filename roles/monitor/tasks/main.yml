@@ -3,7 +3,7 @@
 
 - name: "[Install] 部署监控"
   when: (monitor_enabled | default(true)) | bool
-  tags: ['monitor', 'system']
+  tags: ['monitor']
   block:
     - name: 确认监控运行时 Python 版本满足要求
       assert:
@@ -19,16 +19,19 @@
       assert:
         that:
           - (monitor.report_token | default('')) | length > 0
-          - monitor.report_token is not match('CHANGEME')
-          - monitor.admin_bearer_token is not match('CHANGEME')
-          - monitor.stats_bearer_token is not match('CHANGEME')
+          - (monitor.report_token | default('')) is not match('CHANGEME')
+          - (monitor.admin_bearer_token | default('')) | length > 0
+          - (monitor.admin_bearer_token | default('')) is not match('CHANGEME')
+          - (monitor.stats_bearer_token | default('')) | length > 0
+          - (monitor.stats_bearer_token | default('')) is not match('CHANGEME')
         fail_msg: "report/admin/stats token 仍为 CHANGEME-* 默认或空——确认 vault 已加载并配置 vault_monitor_*"
       tags: ['monitor', 'monitor_server', 'monitor_config']
 
     - name: "[Guard] 订阅代理 token 必须已配置 (启用时)"
       assert:
         that:
-          - monitor.subs_proxy.token is not match('CHANGEME')
+          - (monitor.subs_proxy.token | default('')) | length > 0
+          - (monitor.subs_proxy.token | default('')) is not match('CHANGEME')
         fail_msg: "subs_proxy.token 仍为 CHANGEME 默认——确认 vault_monitor_subs_token"
       when: (monitor.subs_proxy.enabled | default(false)) | bool
       tags: ['monitor', 'monitor_server']
@@ -37,7 +40,10 @@
       assert:
         that:
           - "'monitor.taoziyoyo.com' not in (monitor.server_url | default(''))"
-        fail_msg: "测试节点 {{ inventory_hostname }} 启用监控但 server_url 仍指向生产；请在 test group_vars 覆盖 monitor 字典"
+          - (monitor.server_host | default('')) != 'spt'
+          - (vault_monitor_report_token | default('')) | length == 0 or (monitor.report_token | default('')) != (vault_monitor_report_token | default(''))
+          - (vault_monitor_tunnel_secret | default('')) | length == 0 or (monitor.tunnel_secret | default('')) != (vault_monitor_tunnel_secret | default(''))
+        fail_msg: "测试节点 {{ inventory_hostname }} 启用监控但仍指向生产 monitor/server/token；请在 test group_vars 覆盖完整 monitor 字典并使用独立 token"
       when: "'test_nodes' in group_names"
       tags: ['monitor']
 
@@ -103,6 +109,135 @@
             mode: '0750'
           tags: ['monitor', 'monitor_server']
 
+        - name: 检查旧监控 DB 是否仍在共享 reality_data_dir
+          stat:
+            path: "{{ reality_data_dir }}/traffic_monitor.db"
+          register: monitor_legacy_db
+          tags: ['monitor', 'monitor_server']
+
+        - name: 检查新监控 DB 是否已存在
+          stat:
+            path: "{{ monitor_root_dir }}/data/traffic_monitor.db"
+          register: monitor_new_db
+          tags: ['monitor', 'monitor_server']
+
+        - name: "[Guard] 旧/新监控 DB 同时存在时停止自动迁移"
+          fail:
+            msg: >-
+              同时发现旧库 {{ reality_data_dir }}/traffic_monitor.db
+              与新库 {{ monitor_root_dir }}/data/traffic_monitor.db。
+              为避免误用空新库或覆盖历史数据，已停止自动迁移；请先人工核对两边
+              行数/大小/integrity_check 后再处理。
+          when:
+            - monitor_legacy_db.stat.exists
+            - monitor_new_db.stat.exists
+          tags: ['monitor', 'monitor_server']
+
+        - name: "[Check] 显示监控 DB 自动迁移计划"
+          debug:
+            msg: >-
+              CHECK MODE：将停止 reality-monitor，备份旧库及 WAL/SHM，
+              并把 {{ reality_data_dir }}/traffic_monitor.db* 迁移到
+              {{ monitor_root_dir }}/data/。--check 不执行停服务/备份/mv。
+          when:
+            - ansible_check_mode
+            - monitor_legacy_db.stat.exists
+            - not monitor_new_db.stat.exists
+          tags: ['monitor', 'monitor_server']
+
+        - name: 停止旧监控服务以迁移 DB
+          systemd:
+            name: reality-monitor
+            state: stopped
+          failed_when: false
+          when:
+            - not ansible_check_mode
+            - monitor_legacy_db.stat.exists
+            - not monitor_new_db.stat.exists
+          tags: ['monitor', 'monitor_server']
+
+        - name: 备份旧监控 DB 主库 (迁移前)
+          copy:
+            src: "{{ reality_data_dir }}/traffic_monitor.db"
+            dest: "{{ monitor_root_dir }}/data/traffic_monitor.db.bak-pre-migrate-{{ ansible_facts.date_time.epoch | default('manual') }}"
+            remote_src: yes
+            owner: reality-monitor
+            group: reality-monitor
+            mode: '0600'
+          when:
+            - not ansible_check_mode
+            - monitor_legacy_db.stat.exists
+            - not monitor_new_db.stat.exists
+          tags: ['monitor', 'monitor_server']
+
+        - name: 检查旧监控 DB WAL/SHM 文件
+          stat:
+            path: "{{ item }}"
+          loop:
+            - "{{ reality_data_dir }}/traffic_monitor.db-wal"
+            - "{{ reality_data_dir }}/traffic_monitor.db-shm"
+          register: monitor_legacy_db_sidecars
+          when:
+            - monitor_legacy_db.stat.exists
+            - not monitor_new_db.stat.exists
+          tags: ['monitor', 'monitor_server']
+
+        - name: 备份旧监控 DB WAL/SHM (迁移前)
+          copy:
+            src: "{{ item.item }}"
+            dest: "{{ monitor_root_dir }}/data/{{ item.item | basename }}.bak-pre-migrate-{{ ansible_facts.date_time.epoch | default('manual') }}"
+            remote_src: yes
+            owner: reality-monitor
+            group: reality-monitor
+            mode: '0600'
+          loop: "{{ monitor_legacy_db_sidecars.results | default([]) }}"
+          when:
+            - not ansible_check_mode
+            - item.stat.exists | default(false)
+          tags: ['monitor', 'monitor_server']
+
+        - name: 迁移旧监控 DB 主库到专属目录
+          command: mv {{ reality_data_dir }}/traffic_monitor.db {{ monitor_root_dir }}/data/traffic_monitor.db
+          when:
+            - not ansible_check_mode
+            - monitor_legacy_db.stat.exists
+            - not monitor_new_db.stat.exists
+          notify: 重启监控服务
+          tags: ['monitor', 'monitor_server']
+
+        - name: 迁移旧监控 DB WAL/SHM 到专属目录
+          command: mv {{ item.item }} {{ monitor_root_dir }}/data/{{ item.item | basename }}
+          loop: "{{ monitor_legacy_db_sidecars.results | default([]) }}"
+          when:
+            - not ansible_check_mode
+            - item.stat.exists | default(false)
+          notify: 重启监控服务
+          tags: ['monitor', 'monitor_server']
+
+        - name: 查找监控 DB 运行文件
+          find:
+            paths: "{{ monitor_root_dir }}/data"
+            patterns:
+              - traffic_monitor.db
+              - traffic_monitor.db-wal
+              - traffic_monitor.db-shm
+            file_type: file
+          register: monitor_db_runtime_files
+          when: not ansible_check_mode or monitor_new_db.stat.exists
+          tags: ['monitor', 'monitor_server']
+
+        - name: 修正监控 DB 运行文件属主
+          file:
+            path: "{{ item.path }}"
+            owner: reality-monitor
+            group: reality-monitor
+            mode: '0640'
+          loop: "{{ monitor_db_runtime_files.files | default([]) }}"
+          when:
+            - monitor_db_runtime_files is defined
+            - not (monitor_db_runtime_files.skipped | default(false))
+          tags: ['monitor', 'monitor_server']
+
         - name: 下发服务端密钥环境文件 (0600, systemd EnvironmentFile)
           copy:
             dest: "{{ monitor_root_dir }}/monitor.env"
@@ -154,7 +289,7 @@
             user: reality-monitor
             minute: "17"
             hour: "4"
-            job: "{{ monitor_venv_dir }}/bin/python3 -c \"import sqlite3,time; cut=int(time.time())-{{ monitor.retention_days | default(90) }}*86400; c=sqlite3.connect('{{ monitor_root_dir }}/data/traffic_monitor.db'); c.execute('DELETE FROM records WHERE timestamp<?',(cut,)); c.execute('DELETE FROM subscription_logs WHERE timestamp<?',(cut,)); c.commit(); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()\" > /dev/null 2>&1"
+            job: "{{ monitor_venv_dir }}/bin/python3 -c \"import sqlite3,time; cut=int(time.time())-{{ monitor.retention_days | default(90) }}*86400; c=sqlite3.connect('{{ monitor_root_dir }}/data/traffic_monitor.db'); c.execute('DELETE FROM records WHERE timestamp<?',(cut,)); c.execute('DELETE FROM subscription_logs WHERE timestamp<?',(cut,)); c.execute('DELETE FROM user_ip_hits WHERE last_seen<?',(cut,)); c.commit(); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()\" > /dev/null 2>&1"
           tags: ['monitor', 'monitor_server']
       tags: ['monitor', 'monitor_server']
 
@@ -168,7 +303,7 @@
         append: yes
         shell: /usr/sbin/nologin
         create_home: no
-      tags: ['monitor', 'users', 'monitor_config']
+      tags: ['monitor', 'monitor_agent', 'monitor_config']
 
     - name: "[Agent] 状态目录 (0700, 属主 reality-monitor-agent)"
       file:
@@ -177,7 +312,7 @@
         owner: reality-monitor-agent
         group: reality-monitor-agent
         mode: '0700'
-      tags: ['monitor', 'users', 'monitor_config']
+      tags: ['monitor', 'monitor_agent', 'monitor_config']
 
     - name: "[Agent] 下发上报 token 文件 (0600)"
       copy:
@@ -187,7 +322,7 @@
         mode: '0600'
         content: "{{ monitor.report_token }}"
       no_log: true
-      tags: ['monitor', 'users', 'monitor_config']
+      tags: ['monitor', 'monitor_agent', 'monitor_config']
 
     - name: "[Agent] 部署上报脚本 (属主 reality-monitor-agent)"
       template:
@@ -196,13 +331,13 @@
         owner: reality-monitor-agent
         group: reality-monitor-agent
         mode: '0755'
-      tags: ['monitor', 'users', 'monitor_config']
+      tags: ['monitor', 'monitor_agent', 'monitor_config']
 
     - name: "[Agent] 移除旧 root crontab 条目 (迁移到专用用户)"
       cron:
         name: "Reality Traffic Report"
         state: absent
-      tags: ['monitor', 'users', 'monitor_config']
+      tags: ['monitor', 'monitor_agent', 'monitor_config']
 
     - name: "[Agent] 设置 Crontab (reality-monitor-agent + 整点抖动)"
       cron:
@@ -211,7 +346,7 @@
         minute: "*"
         # shuf 抖动：cron 用 /bin/sh(dash) 无 $RANDOM，故用 shuf 打散整点惊群
         job: "sleep $(shuf -i 0-45 -n 1); {{ monitor_venv_dir }}/bin/python3 /usr/local/bin/traffic_agent.py > /dev/null 2>&1"
-      tags: ['monitor', 'users', 'monitor_config']
+      tags: ['monitor', 'monitor_agent', 'monitor_config']
 
     - name: "[Agent] 立即执行一次上报 (以 reality-monitor-agent)"
       command: "{{ monitor_venv_dir }}/bin/python3 /usr/local/bin/traffic_agent.py"
@@ -219,7 +354,7 @@
       become_user: reality-monitor-agent
       changed_when: false
       failed_when: false
-      tags: ['monitor', 'users', 'monitor_config']
+      tags: ['monitor', 'monitor_agent']
 
 - name: "[Cleanup] 停用监控"
   when: not ((monitor_enabled | default(true)) | bool)

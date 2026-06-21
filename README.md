@@ -61,6 +61,7 @@ Reality Ops 是一套基于 Ansible 的 Reality (Xray) 节点编排项目，包�
 - `vault_monitor_report_token`
 - `vault_monitor_admin_bearer_token`
 - `vault_monitor_stats_bearer_token`
+- `vault_monitor_tunnel_secret`
 - `vault_monitor_subs_token`
 - `vault_monitor_gist_user`
 - `vault_monitor_gist_id`
@@ -146,12 +147,12 @@ Reality Ops 是一套基于 Ansible 的 Reality (Xray) 节点编排项目，包�
 ### 部署行为
 - 服务端仅在 `monitor.server_host` 部署：`/opt/reality/monitor/server.py` + `reality-monitor.service`。
 - 客户端在所有 `monitor_enabled=true` 节点部署：`/usr/local/bin/traffic_agent.py` + 每分钟 cron。
-- 数据库：`{{ reality_data_dir }}/traffic_monitor.db`。
+- 数据库：`{{ monitor_root_dir }}/data/traffic_monitor.db`。
 
 ### 鉴权模型
 - `/report`：仅检查 `token` header（agent 上报入口）。
 - `/stats/*`、`/docs`、`/openapi.json`：D1-B 鉴权 ——（经 CF：CF 注入 `X-Monitor-Tunnel-Secret` ∧ `CF-Connecting-IP`∈`ip_allowlist`）或 `Authorization: Bearer`；本机/绕 CF 一律 401。
-- `/stats/ip_report`：仅 `token: REPORT_TOKEN`（同 `/report`，已去 auth_guard）。`/stats/cleanup`：Bearer 之外还要 `token`。`/healthz`：无鉴权。
+- `/stats/ip_report`：仅 `token: REPORT_TOKEN`（同 `/report`，已去 auth_guard）。`/stats/cleanup`：仅 admin Bearer。`/healthz`：无鉴权。
 
 ### 常用接口
 - `GET /stats/ui`

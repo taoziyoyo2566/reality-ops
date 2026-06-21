@@ -1620,18 +1620,33 @@ def tunnel_verified(request: Request) -> bool:
         return False
     return hmac.compare_digest(request.headers.get(TUNNEL_SECRET_HEADER, ""), TUNNEL_SECRET)
 
+def extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return None
+
 async def auth_guard(request: Request, authorization: Optional[str] = Header(None)):
     # D1-B：放行 = 确经 CF 边缘(secret 头) 且 客户端 IP ∈ 运维白名单；否则要 Bearer。
     if tunnel_verified(request) and is_ip_allowed(get_client_ip(request)):
         return
-    token = None
-    if authorization and authorization.lower().startswith("bearer "):
-        token = authorization[7:].strip()
+    token = extract_bearer_token(authorization)
     if token and token in (ADMIN_BEARER_TOKEN, STATS_BEARER_TOKEN):
         return
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Unauthorized",
+        headers={"WWW-Authenticate": "Bearer"}
+    )
+
+async def admin_guard(request: Request, authorization: Optional[str] = Header(None)):
+    if tunnel_verified(request) and is_ip_allowed(get_client_ip(request)):
+        return
+    token = extract_bearer_token(authorization)
+    if token and hmac.compare_digest(token, ADMIN_BEARER_TOKEN):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Admin authorization required",
         headers={"WWW-Authenticate": "Bearer"}
     )
 
@@ -1925,19 +1940,26 @@ def export_stats(hours: int = 24, detail: bool = True, format: str = "csv"):
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return Response(content=buffer.getvalue(), media_type="text/csv", headers=headers)
 
-@app.post("/stats/cleanup", dependencies=[Depends(auth_guard)])
-def cleanup_stats(days: int = 90, token: str = Header(None)):
-    if token != REPORT_TOKEN:
-        raise HTTPException(status_code=403, detail="Invalid Token")
+@app.post("/stats/cleanup", dependencies=[Depends(admin_guard)])
+def cleanup_stats(days: int = 90):
     days = max(1, days)
     cutoff = int(time.time()) - (days * 86400)
     conn = get_conn()
     c = conn.cursor()
     c.execute("DELETE FROM records WHERE timestamp < ?", (cutoff,))
-    deleted = c.rowcount
+    deleted_records = c.rowcount
+    c.execute("DELETE FROM subscription_logs WHERE timestamp < ?", (cutoff,))
+    deleted_subscription_logs = c.rowcount
+    c.execute("DELETE FROM user_ip_hits WHERE last_seen < ?", (cutoff,))
+    deleted_user_ip_hits = c.rowcount
     conn.commit()
     conn.close()
-    return {"deleted": deleted, "cutoff": cutoff}
+    return {
+        "deleted_records": deleted_records,
+        "deleted_subscription_logs": deleted_subscription_logs,
+        "deleted_user_ip_hits": deleted_user_ip_hits,
+        "cutoff": cutoff,
+    }
 
 @app.get("/subs/logs", dependencies=[Depends(auth_guard)])
 def get_subscription_logs(limit: int = 200, sub_id: Optional[str] = None):

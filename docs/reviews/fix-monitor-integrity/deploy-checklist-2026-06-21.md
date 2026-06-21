@@ -8,6 +8,17 @@
   - 路径：DB `/opt/reality/monitor/data/traffic_monitor.db`（#1 后已移出共享的 `reality_data_dir`）；env `/opt/reality/monitor/monitor.env`；agent token `/opt/reality/monitor/agent_token`；state `/opt/reality/monitor/state`
   - tags：`monitor_server`（server.py/systemd/env/retention，受 `when spt` 限定）、`monitor_config`（agent.py/cron/token/user）
 
+## 当前状态（2026-06-22 生产）
+
+- [x] `spt` server 金丝雀已实际执行：`reality-monitor.service` active，运行用户已切到 `reality-monitor`。
+- [x] `/healthz` 已返回 `{"status":"ok","db_ok":true,"journal_mode":"wal"}`。
+- [x] 本机 Bearer 访问 `/stats/health` 正常，说明 `monitor.env` token 与服务端鉴权可用。
+- [x] `vault_monitor_tunnel_secret` 已补齐，`MONITOR_TUNNEL_SECRET` 长度为 64。
+- [x] CF 已配置 **Request Header Transform Rule** 注入 `X-Monitor-Tunnel-Secret`；曾误配为 Response Header，会导致源站收不到 secret、`/debug/whoami` 仍 401。
+- [x] 经 CF 的 `https://monitor.taoziyoyo.com/debug/whoami` / `/stats/ui` 已恢复访问（运维白名单 IP：`45.145.75.134`）。
+- [ ] agent 仍未全量升级；继续从 Phase 4 开始分批推进，不要直接全量。
+- [ ] `DE` / `netcup` inventory 身份不一致尚未处理；处理前不要围绕该节点做批量扩面。
+
 ---
 
 ## Phase 0 — 离线预检（不碰线上）
@@ -25,7 +36,7 @@
 
 - [ ] **1.1 生成强随机 secret**：`openssl rand -hex 32` → 记为 `S`
 - [ ] **1.2 写入 vault**：`ansible-vault edit ...` 设 `vault_monitor_tunnel_secret: "S"`
-- [ ] **1.3 CF 仪表盘配 Transform Rule**：对 `monitor.taoziyoyo.com`，**Modify Request Header → Set**（非 Add，须覆盖客户端同名头）`X-Monitor-Tunnel-Secret = S`
+- [ ] **1.3 CF 仪表盘配 Transform Rule**：对 `monitor.taoziyoyo.com`，**Modify Request Header → Set static**（不是 Response Header；须覆盖客户端同名头）`X-Monitor-Tunnel-Secret = S`
 - [ ] **1.4 轮换泄露 token**：
   - cloudflared tunnel token（明文在 `ps`）：CF 仪表盘重建 tunnel token，改 credentials-file 方式
   - 确认 `monitor_server.py:9` 旧硬编码 token（已随文件删除，仍在 git 历史）当前**未被任何 agent/节点使用**；如曾启用则轮换 `vault_monitor_report_token`
@@ -39,17 +50,20 @@
 
 ## Phase 3 — 生产金丝雀：server（spt）先行
 
-- [ ] **3.1 备份 DB**：`cp /opt/reality/data/traffic_monitor.db /opt/reality/data/traffic_monitor.db.bak-$(date +%s)`（~300MB）
+- [ ] **3.1 备份 DB**（稳定在线备份，不移动源文件）：
+  ```
+  install -d -m 0700 /opt/reality/monitor/db-backups
+  sqlite3 /opt/reality/data/traffic_monitor.db ".backup '/opt/reality/monitor/db-backups/traffic_monitor.db.bak-$(date +%s)'"
+  ```
 - [ ] **3.2 备份旧 server.py**：`cp /opt/reality/monitor/server.py /opt/reality/monitor/server.py.bak`
 - [ ] **3.3 部署 server**：`ansible-playbook deploy.yml --tags monitor_server --limit spt`
-  - （建 reality-monitor 用户 + `/opt/reality/monitor/data` 空目录 + server.py(新 DB 路径) + env + systemd + retention）
-- [ ] **3.3b 迁移历史 DB 到新目录**（#1：监控 DB 已移出共享的 `reality_data_dir`）：
+  - （建 reality-monitor 用户 + `/opt/reality/monitor/data` + server.py(新 DB 路径) + env + systemd + retention）
+  - role 会在检测到旧库存在且新库不存在时，先停 `reality-monitor`，在新目录生成 `traffic_monitor.db.bak-pre-migrate-<epoch>`，再只迁移运行文件 `traffic_monitor.db` / `-wal` / `-shm`，最后由 handler 重启服务。
+- [ ] **3.3b 自动迁移结果确认**（若旧库仍存在且新库为空，停止扩面，先人工 reconcile）：
   ```
-  systemctl stop reality-monitor
-  rm -f /opt/reality/monitor/data/traffic_monitor.db*          # 删首启生成的空库
-  mv /opt/reality/data/traffic_monitor.db* /opt/reality/monitor/data/ 2>/dev/null || true
-  chown reality-monitor:reality-monitor /opt/reality/monitor/data/traffic_monitor.db*
-  systemctl start reality-monitor
+  test -f /opt/reality/monitor/data/traffic_monitor.db
+  test ! -f /opt/reality/data/traffic_monitor.db
+  ls -lh /opt/reality/monitor/data/traffic_monitor.db*
   ```
 - [ ] **3.4 部署时验证（本机 BLOCKED 项，现网确认）**：
   - [ ] DB 在新目录且属主对：`stat -c '%U %a' /opt/reality/monitor/data/traffic_monitor.db` → `reality-monitor 6xx`

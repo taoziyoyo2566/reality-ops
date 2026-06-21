@@ -182,6 +182,18 @@ def main():
             current = fallback
 
     last, _, pending = read_state()
+    if not current:
+        if last or pending:
+            log("stats empty; preserve previous baseline and retry pending only")
+        new_pending = dict(pending)
+        for user, p in pending.items():
+            owed_up = int(p.get("up", 0))
+            owed_down = int(p.get("down", 0))
+            if owed_up > 0 or owed_down > 0:
+                if post_report(user, owed_up, owed_down):
+                    new_pending.pop(user, None)
+        write_state(last, None, new_pending)
+        return
 
     # 计算 per-user 增量。首见/计数器重置 → 只建基线、上报 0（根除“重启=累计值”的幻象尖峰）
     deltas = {}

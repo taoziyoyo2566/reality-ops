@@ -12,7 +12,15 @@
 ```
 - **server**：仅 `spt`（`monitor.server_host`），systemd `reality-monitor.service`，非 root `reality-monitor` 用户，绑 `127.0.0.1:8000`（无公网直听），经 CF Tunnel 暴露。
 - **agent**：所有 `[reality_nodes]`，cron 每分钟（`shuf` 抖动），以 `reality-monitor-agent`（docker 组）运行，经 `docker exec` 取 xray stats / 容器网卡 / 日志，上报 `/report`、`/stats/ip_report`。
-- **DB**：SQLite WAL，每日保留 cron 清理。
+- **DB**：SQLite WAL，每日保留 cron 清理 `records`、`subscription_logs`、`user_ip_hits`。
+
+## 当前生产状态（2026-06-22）
+
+- `spt` 的 `monitor_server` 金丝雀已执行完成，`reality-monitor.service` 为 active，运行用户为 `reality-monitor`。
+- `/healthz` 已返回 `{"status":"ok","db_ok":true,"journal_mode":"wal"}`，说明新 DB 路径和 WAL 可用。
+- 本机 Bearer 访问 `/stats/health` 已验证正常。
+- `vault_monitor_tunnel_secret` 已配置为 64 字符 secret；Cloudflare 已配置 **Request Header Transform Rule** 注入 `X-Monitor-Tunnel-Secret`，浏览器经 `https://monitor.taoziyoyo.com/stats/ui` 可从白名单 IP 访问。
+- agent 全量升级尚未完成；后续按部署 checklist Phase 4/5 分批推进。
 
 ## 2. 组件与文件位置
 
@@ -42,6 +50,35 @@
 - **本机/非经 CF 的请求无 secret 头 → 一律 401**（含本机 `curl 127.0.0.1:8000/stats/*`），这是预期（闭合本机绕过）。
 - secret 双处一致：vault `vault_monitor_tunnel_secret` ↔ CF Transform Rule 注入值。**不一致或缺失 → fail-closed（仅 Bearer 可用）。**
 
+**Cloudflare Transform Rule 配置**
+
+必须配置为 **Request Header Transform Rule**，不是 Response Header：
+
+```text
+Rule name:
+monitor inject tunnel secret
+
+When incoming requests match:
+http.host eq "monitor.taoziyoyo.com"
+
+Modify request header:
+Set static
+
+Header name:
+X-Monitor-Tunnel-Secret
+
+Value:
+<vault_monitor_tunnel_secret / MONITOR_TUNNEL_SECRET 的原始值，不加引号>
+```
+
+验证：
+
+```bash
+curl -s https://monitor.taoziyoyo.com/debug/whoami
+```
+
+预期 `tunnel_verified` 为 `true`，且 `client_ip` 是当前运维公网 IP。
+
 ## 4. 日常运维
 
 **健康检查**
@@ -62,8 +99,9 @@ curl -s -H 'Authorization: Bearer <stats_token>' http://127.0.0.1:8000/stats/hea
 4. **tunnel secret 还需同步改 CF Transform Rule 注入值**（否则仪表板 fail-closed）
 
 **数据保留 / VACUUM**
-- 自动：保留 cron 每日删 `> retention_days`（默认 90）的 records/subscription_logs + `wal_checkpoint(TRUNCATE)`
+- 自动：保留 cron 每日删 `> retention_days`（默认 90）的 records/subscription_logs/user_ip_hits + `wal_checkpoint(TRUNCATE)`
 - 调整：改 `monitor.retention_days` → `--tags monitor_server --limit spt`
+- 手动 cleanup：`POST /stats/cleanup?days=90` 仅接受 `Authorization: Bearer <admin_token>`，stats token 只读。
 - **整库 VACUUM**（缩文件，会整库加锁，**低频手工、择低峰**）：`systemctl stop reality-monitor; sudo -u reality-monitor sqlite3 /opt/reality/monitor/data/traffic_monitor.db 'VACUUM;'; systemctl start reality-monitor`
 
 **增 / 减节点 agent**
@@ -76,7 +114,7 @@ curl -s -H 'Authorization: Bearer <stats_token>' http://127.0.0.1:8000/stats/hea
 
 | 症状 | 排查 → 处理 |
 |---|---|
-| 仪表板经 CF 返回 **401** | secret 不一致：核对 vault `tunnel_secret` 与 CF Transform Rule 注入值；或运维 IP 不在 `ip_allowlist`。临时：带 Bearer 访问 |
+| 仪表板经 CF 返回 **401** | 先确认 CF 配的是 **Request Header** Transform Rule，不是 Response Header；再核对 vault `tunnel_secret` 与 CF 注入值、运维 IP 是否在 `ip_allowlist`。临时：带 Bearer 访问 |
 | 本机 `curl 127.0.0.1:8000/stats/*` 无 token **返回 200** | **回归！** 不该发生（应 401）：检查 `127.0.0.1` 是否被误加回 `ip_allowlist`、或 `auth_guard` 被改 |
 | `user_ip_hits` 不增长（IP 审计死） | 查 `agent.log`；确认 `REALITY_MODE` 与日志路径（single=reality_core / multi=各容器）；`docker exec <c> cat /var/log/xray/access.log` 是否有 `email:`+`from`；server `/stats/ip_report` 是否 200 |
 | `database is locked` / 整点 500 | `PRAGMA journal_mode` 应为 `wal`；确认 `get_conn` 的 `busy_timeout`；agent cron 抖动是否生效（`shuf`）|
@@ -94,4 +132,3 @@ curl -s -H 'Authorization: Bearer <stats_token>' http://127.0.0.1:8000/stats/hea
 ## 7. 安全模型备注
 
 D1-B = "CF 注入共享密钥头 ∧ 运维 IP 白名单" 双条件放行 + Bearer 兜底。secret 证明"确经 CF 边缘"（本机/绕 CF 无法伪造，因 CF Transform Rule `Set` 覆盖客户端同名头），白名单证明"是运维"。两者正交，闭合"本机任意进程零 token 读全量数据"的 loopback 后门，同时仪表板零改动。详见 [`plan-harden-monitor`](../../reviews/fix-monitor-integrity/plan-harden-monitor-2026-06-13.md) §6 A1。
-</content>

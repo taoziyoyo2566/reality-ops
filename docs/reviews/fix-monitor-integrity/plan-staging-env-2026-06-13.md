@@ -58,7 +58,7 @@
 | ①〔**未启用**〕独立 inventory | `inventory.test.ini`（`[reality_nodes]` 只含这 4 台 + 分组）| 推荐的物理隔离；用户决定保留生产 inventory，故未采用 |
 | ② 测试 group_vars | `group_vars/test_nodes.yml` 或随测试 inventory | 完整 `monitor` 字典指向 hkcod12;`vault_github_token: ""` 禁 Gist;独立 token / 测试 Gist |
 | ③ ACL 独占 | `deploy.yml` 改 + 4 个 host_vars | 测试机只装 `test` 用户,挡掉 18 个 'all' 用户 |
-| ④ 监控目标 guard | `roles/monitor/tasks/main.yml` 新增 assert | **补偿放弃层①的物理隔离**：测试组节点启用监控时硬断言 `monitor.server_url`/`report_token` ≠ 生产值,禁止测试 agent 误报生产 monitor（评审第 2 条）|
+| ④ 监控目标 guard | `roles/monitor/tasks/main.yml` 新增 assert | **补偿放弃层①的物理隔离**：测试组节点启用监控时硬断言 `monitor.server_url` 不含生产域、`monitor.server_host` 不是 `spt`，且 report/tunnel token 不复用生产 vault 值,禁止测试 agent 误报生产 monitor（评审第 2 条）|
 
 ## 5. 待实现改动清单（恢复时执行）
 
@@ -79,7 +79,7 @@
 4. **`group_vars/test_nodes.yml`**（或测试专用 all）：完整 `monitor` 字典（`server_host: hkcod12`、`server_url: https://monitor-test.taoziyoyo.com`、独立 token、`subs_proxy` 按需）；`vault_github_token: ""`。
 5. **CF**：加 `monitor-test.taoziyoyo.com` → hkcod12（用户在 CF 侧操作）。
 6. （可选，B 轮）`test` 用户订阅/凭证用于真实拨号验证节点。
-7. **监控目标 guard（隔离层④，翻开监控前必做）**：在 `roles/monitor/tasks/main.yml` 监控 block 起始加 `assert`——当节点 `in groups['test_nodes']` 且 `monitor_enabled` 时,硬断言 `monitor.server_url`/`report_token` ≠ 生产值,否则 fail。把"必须 `--limit`"这条操作纪律变成硬失败，补偿放弃层①后的物理隔离缺失。
+7. **监控目标 guard（隔离层④，翻开监控前必做）**：在 `roles/monitor/tasks/main.yml` 监控 block 起始加 `assert`——当节点 `in groups['test_nodes']` 且 `monitor_enabled` 时,硬断言 `monitor.server_url` 不含生产域、`monitor.server_host` 不是 `spt`，且 report/tunnel token 不复用生产 vault 值,否则 fail。把"必须 `--limit`"这条操作纪律变成硬失败，补偿放弃层①后的物理隔离缺失。
 
 ## 6. 待用户提供的输入（恢复时先问）
 
