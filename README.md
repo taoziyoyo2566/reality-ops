@@ -150,8 +150,8 @@ Reality Ops 是一套基于 Ansible 的 Reality (Xray) 节点编排项目，包�
 
 ### 鉴权模型
 - `/report`：仅检查 `token` header（agent 上报入口）。
-- `/stats/*`、`/docs`、`/openapi.json`：IP 白名单或 Bearer Token 访问。
-- `/stats/cleanup` 与 `/stats/ip_report`：除 Bearer/IP 外，还要求 `token: REPORT_TOKEN`。
+- `/stats/*`、`/docs`、`/openapi.json`：D1-B 鉴权 ——（经 CF：CF 注入 `X-Monitor-Tunnel-Secret` ∧ `CF-Connecting-IP`∈`ip_allowlist`）或 `Authorization: Bearer`；本机/绕 CF 一律 401。
+- `/stats/ip_report`：仅 `token: REPORT_TOKEN`（同 `/report`，已去 auth_guard）。`/stats/cleanup`：Bearer 之外还要 `token`。`/healthz`：无鉴权。
 
 ### 常用接口
 - `GET /stats/ui`
@@ -194,5 +194,5 @@ Reality Ops 是一套基于 Ansible 的 Reality (Xray) 节点编排项目，包�
 > 各子命令的命令用法见 operations.md §2。
 
 ## 兼容与遗留
-- `monitor.yml`、`monitor_server.py` 为旧方案文件，当前主流程不依赖。
+- `monitor.yml`、`monitor_server.py` 旧方案文件**已删除**（曾含硬编码 token，部署时轮换）。
 - `group_vars/all.yml` 已移除，请统一使用 `group_vars/all/main.yml`。

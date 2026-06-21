@@ -15,6 +15,32 @@
           {{ ansible_facts.python.version.major }}.{{ ansible_facts.python.version.minor }}。
       tags: ['monitor', 'system']
 
+    - name: "[Guard] 监控 token 必须已配置 (非空/非 CHANGEME)"
+      assert:
+        that:
+          - (monitor.report_token | default('')) | length > 0
+          - monitor.report_token is not match('CHANGEME')
+          - monitor.admin_bearer_token is not match('CHANGEME')
+          - monitor.stats_bearer_token is not match('CHANGEME')
+        fail_msg: "report/admin/stats token 仍为 CHANGEME-* 默认或空——确认 vault 已加载并配置 vault_monitor_*"
+      tags: ['monitor', 'monitor_server', 'monitor_config']
+
+    - name: "[Guard] 订阅代理 token 必须已配置 (启用时)"
+      assert:
+        that:
+          - monitor.subs_proxy.token is not match('CHANGEME')
+        fail_msg: "subs_proxy.token 仍为 CHANGEME 默认——确认 vault_monitor_subs_token"
+      when: (monitor.subs_proxy.enabled | default(false)) | bool
+      tags: ['monitor', 'monitor_server']
+
+    - name: "[Guard] 测试节点禁止上报生产 monitor (staging 隔离层④)"
+      assert:
+        that:
+          - "'monitor.taoziyoyo.com' not in (monitor.server_url | default(''))"
+        fail_msg: "测试节点 {{ inventory_hostname }} 启用监控但 server_url 仍指向生产；请在 test group_vars 覆盖 monitor 字典"
+      when: "'test_nodes' in group_names"
+      tags: ['monitor']
+
     - name: 确保系统安装了基础依赖
       apt:
         name: ["python3-pip", "python3-venv", "cron"]
@@ -68,15 +94,14 @@
             create_home: no
           tags: ['monitor', 'monitor_server']
 
-        - name: 确保数据目录存在 (属主 reality-monitor；recurse 迁移现有 DB)
+        - name: 监控 DB 专属目录 (reality-monitor 0750；独立于 xray 的 reality_data_dir，不 recurse 共享目录)
           file:
-            path: "{{ reality_data_dir }}"
+            path: "{{ monitor_root_dir }}/data"
             state: directory
             owner: reality-monitor
             group: reality-monitor
             mode: '0750'
-            recurse: yes
-          tags: ['monitor']
+          tags: ['monitor', 'monitor_server']
 
         - name: 下发服务端密钥环境文件 (0600, systemd EnvironmentFile)
           copy:
@@ -129,7 +154,7 @@
             user: reality-monitor
             minute: "17"
             hour: "4"
-            job: "{{ monitor_venv_dir }}/bin/python3 -c \"import sqlite3,time; cut=int(time.time())-{{ monitor.retention_days | default(90) }}*86400; c=sqlite3.connect('{{ reality_data_dir }}/traffic_monitor.db'); c.execute('DELETE FROM records WHERE timestamp<?',(cut,)); c.execute('DELETE FROM subscription_logs WHERE timestamp<?',(cut,)); c.commit(); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()\" > /dev/null 2>&1"
+            job: "{{ monitor_venv_dir }}/bin/python3 -c \"import sqlite3,time; cut=int(time.time())-{{ monitor.retention_days | default(90) }}*86400; c=sqlite3.connect('{{ monitor_root_dir }}/data/traffic_monitor.db'); c.execute('DELETE FROM records WHERE timestamp<?',(cut,)); c.execute('DELETE FROM subscription_logs WHERE timestamp<?',(cut,)); c.commit(); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()\" > /dev/null 2>&1"
           tags: ['monitor', 'monitor_server']
       tags: ['monitor', 'monitor_server']
 

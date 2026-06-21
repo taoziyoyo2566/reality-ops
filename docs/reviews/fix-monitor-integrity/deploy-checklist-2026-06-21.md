@@ -5,7 +5,7 @@
 - **关键事实**：
   - server 仅在 `spt`（`monitor.server_host`，`ansible_connection=local`），监听 `127.0.0.1:8000`，经 CF Tunnel 暴露 `monitor.taoziyoyo.com`
   - agent 跑在**所有** `[reality_nodes]`；`[reality_nodes]` 同时含 4 台测试机（hkcod12/hyu24/hyd13/hyu22）→ **任何 deploy 必须 `--limit`，否则打到全部生产**
-  - 路径：DB `/opt/reality/data/traffic_monitor.db`；env `/opt/reality/monitor/monitor.env`；agent token `/opt/reality/monitor/agent_token`；state `/opt/reality/monitor/state`
+  - 路径：DB `/opt/reality/monitor/data/traffic_monitor.db`（#1 后已移出共享的 `reality_data_dir`）；env `/opt/reality/monitor/monitor.env`；agent token `/opt/reality/monitor/agent_token`；state `/opt/reality/monitor/state`
   - tags：`monitor_server`（server.py/systemd/env/retention，受 `when spt` 限定）、`monitor_config`（agent.py/cron/token/user）
 
 ---
@@ -42,12 +42,21 @@
 - [ ] **3.1 备份 DB**：`cp /opt/reality/data/traffic_monitor.db /opt/reality/data/traffic_monitor.db.bak-$(date +%s)`（~300MB）
 - [ ] **3.2 备份旧 server.py**：`cp /opt/reality/monitor/server.py /opt/reality/monitor/server.py.bak`
 - [ ] **3.3 部署 server**：`ansible-playbook deploy.yml --tags monitor_server --limit spt`
-  - （生产 spt 上 venv/目录已存在；monitor_server tag 覆盖 user/dir/env/server.py/systemd/retention）
+  - （建 reality-monitor 用户 + `/opt/reality/monitor/data` 空目录 + server.py(新 DB 路径) + env + systemd + retention）
+- [ ] **3.3b 迁移历史 DB 到新目录**（#1：监控 DB 已移出共享的 `reality_data_dir`）：
+  ```
+  systemctl stop reality-monitor
+  rm -f /opt/reality/monitor/data/traffic_monitor.db*          # 删首启生成的空库
+  mv /opt/reality/data/traffic_monitor.db* /opt/reality/monitor/data/ 2>/dev/null || true
+  chown reality-monitor:reality-monitor /opt/reality/monitor/data/traffic_monitor.db*
+  systemctl start reality-monitor
+  ```
 - [ ] **3.4 部署时验证（本机 BLOCKED 项，现网确认）**：
-  - [ ] DB 属主迁移：`stat -c '%U' /opt/reality/data/traffic_monitor.db` = `reality-monitor`（数据目录 recurse chown）
+  - [ ] DB 在新目录且属主对：`stat -c '%U %a' /opt/reality/monitor/data/traffic_monitor.db` → `reality-monitor 6xx`
+  - [ ] **xray 未受影响**（#1 关键回归）：`reality_data_dir` 未被 monitor 改动，spt 上 `docker ps` 正常、`docker logs reality_core` 无权限错误
   - [ ] 服务以非 root 跑：`systemctl show reality-monitor -p User` = `reality-monitor`；`systemctl status reality-monitor` active
   - [ ] env 已下发且 0600：`stat -c '%a %U' /opt/reality/monitor/monitor.env` = `600 reality-monitor`
-  - [ ] WAL 生效：`sudo -u reality-monitor sqlite3 /opt/reality/data/traffic_monitor.db 'PRAGMA journal_mode;'` = `wal`（且生成 `-wal/-shm`，reality-monitor 可写）
+  - [ ] WAL 生效：`sudo -u reality-monitor sqlite3 /opt/reality/monitor/data/traffic_monitor.db 'PRAGMA journal_mode;'` = `wal`（且生成 `-wal/-shm`，reality-monitor 可写）
   - [ ] healthz：`curl -s http://127.0.0.1:8000/healthz` → `{"status":"ok","db_ok":true,"journal_mode":"wal"}`
   - [ ] **A1 鉴权**：`curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/stats/daily` = **401**；带 `-H 'Authorization: Bearer <stats_token>'` = **200**
   - [ ] **仪表板经 CF**：浏览器开 `https://monitor.taoziyoyo.com/stats/ui`（运维白名单 IP）→ 正常加载（CF 注入 secret 生效）。若 401 → 检查 Phase 1.2/1.3 的 S 是否一致
@@ -95,4 +104,3 @@
 - 修复主计划：[`plan-harden-monitor-2026-06-13.md`](./plan-harden-monitor-2026-06-13.md)
 - 各阶段 changelog：[`round2`](./round2-2026-06-21.changelog.md)（阶段1）·[`round3`](./round3-2026-06-21.changelog.md)（阶段2-server）·[`round4`](./round4-2026-06-21.changelog.md)（阶段2-agent）·[`round5`](./round5-2026-06-21.changelog.md)（阶段3）
 - staging 环境：[`plan-staging-env-2026-06-13.md`](./plan-staging-env-2026-06-13.md)
-</content>

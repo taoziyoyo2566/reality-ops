@@ -36,7 +36,7 @@ SUBS_GIST_ID = "{{ monitor.subs_proxy.gist_id | default('') }}"
 SUBS_TOKEN = os.environ.get("MONITOR_SUBS_TOKEN", "")
 SUBS_REQUIRE_TOKEN = {{ monitor.subs_proxy.require_token | default(true) | bool }}
 
-DB_PATH = "{{ reality_data_dir }}/traffic_monitor.db"
+DB_PATH = "{{ monitor_root_dir }}/data/traffic_monitor.db"
 
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -1706,7 +1706,7 @@ def receive_ip_report(payload: IPReport, token: str = Header(None)):  # 同步 d
     return {"status": "ok", "count": len(payload.entries)}
 
 @app.get("/stats/ip_matrix", dependencies=[Depends(auth_guard)])
-async def get_ip_matrix(hours: int = 72, user: Optional[str] = None, node: Optional[str] = None):
+def get_ip_matrix(hours: int = 72, user: Optional[str] = None, node: Optional[str] = None):
     hours = max(1, hours)
     cutoff = int(time.time()) - hours * 3600
     conn = get_conn()
@@ -1821,7 +1821,7 @@ async def stats_ui():
 
 # --- 【核心修改】 ---
 @app.get("/stats/daily", dependencies=[Depends(auth_guard)])
-async def get_daily_stats(hours: int = 24, detail: bool = True, user: Optional[str] = None, node: Optional[str] = None):
+def get_daily_stats(hours: int = 24, detail: bool = True, user: Optional[str] = None, node: Optional[str] = None):
     """
     获取流量报表
     - detail=True (默认): 按 [用户 + 节点] 分组，显示每个用户在每个节点的用量
@@ -1830,7 +1830,7 @@ async def get_daily_stats(hours: int = 24, detail: bool = True, user: Optional[s
     return fetch_daily_stats(hours, detail, user=user, node=node)
 
 @app.get("/stats/timeseries", dependencies=[Depends(auth_guard)])
-async def get_timeseries(hours: int = 24, interval: int = 3600, user: str = None, node: str = None):
+def get_timeseries(hours: int = 24, interval: int = 3600, user: str = None, node: str = None):
     hours = max(1, hours)
     interval = max(300, min(interval, 86400))
     now = int(time.time())
@@ -1865,7 +1865,7 @@ async def get_timeseries(hours: int = 24, interval: int = 3600, user: str = None
     return {"start": start_time, "end": now, "interval": interval, "series": series}
 
 @app.get("/stats/health", dependencies=[Depends(auth_guard)])
-async def get_health(hours: int = 24, stale_minutes: int = 10):
+def get_health(hours: int = 24, stale_minutes: int = 10):
     hours = max(1, hours)
     now = int(time.time())
     stale_seconds = max(60, stale_minutes * 60)
@@ -1904,7 +1904,7 @@ async def get_health(hours: int = 24, stale_minutes: int = 10):
     return result
 
 @app.get("/stats/export", dependencies=[Depends(auth_guard)])
-async def export_stats(hours: int = 24, detail: bool = True, format: str = "csv"):
+def export_stats(hours: int = 24, detail: bool = True, format: str = "csv"):
     data = fetch_daily_stats(hours, detail)
     if format.lower() == "json":
         return data
@@ -1926,7 +1926,7 @@ async def export_stats(hours: int = 24, detail: bool = True, format: str = "csv"
     return Response(content=buffer.getvalue(), media_type="text/csv", headers=headers)
 
 @app.post("/stats/cleanup", dependencies=[Depends(auth_guard)])
-async def cleanup_stats(days: int = 90, token: str = Header(None)):
+def cleanup_stats(days: int = 90, token: str = Header(None)):
     if token != REPORT_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid Token")
     days = max(1, days)
@@ -1940,7 +1940,7 @@ async def cleanup_stats(days: int = 90, token: str = Header(None)):
     return {"deleted": deleted, "cutoff": cutoff}
 
 @app.get("/subs/logs", dependencies=[Depends(auth_guard)])
-async def get_subscription_logs(limit: int = 200, sub_id: Optional[str] = None):
+def get_subscription_logs(limit: int = 200, sub_id: Optional[str] = None):
     if not SUBS_PROXY_ENABLED:
         return []
     limit = max(1, min(limit, 1000))

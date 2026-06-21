@@ -236,7 +236,11 @@ def _parse_log_lines(lines, fixed_user=None):
         m_user = re.search(r"email:\s*(\S+)", line)
         if not m_user:
             continue
-        out[m_user.group(1).strip()].add(ip)
+        # 归一：xray single email = 用户.主机，与 get_core_stats 一致 strip 主机后缀，
+        # 避免 user_ip_hits.user(reap.spt) 与 records.user(reap) 错位
+        u = m_user.group(1).strip()
+        u = u.split('.')[0] if '.' in u else u
+        out[u].add(ip)
     return out
 
 

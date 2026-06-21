@@ -1,5 +1,7 @@
 # 📊 Reality Traffic Monitor 使用指南
 
+> ⚠️ **本文部分内容已过时**（旧鉴权"白名单或 Bearer"、Caddy、旧采集说明）。现状：鉴权已改 **D1-B**（CF 注入 secret 头 + 白名单 / Bearer），HTTPS 经 **CF Tunnel**（非 Caddy）。**权威运维见 [`docs/features/monitor/operations.md`](docs/features/monitor/operations.md)。**
+
 ## 1. 简介
 这是一套自建的流量监控系统，采用 C/S 架构：
 * **服务端**: 部署在 `spt`，使用 FastAPI + SQLite 存储数据，Caddy 提供 HTTPS 访问。

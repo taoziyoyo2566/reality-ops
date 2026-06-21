@@ -8,7 +8,7 @@
 浏览器/运维 ──┐
               ├─ CF 边缘(注入 X-Monitor-Tunnel-Secret + CF-Connecting-IP) ─ CF Tunnel(cloudflared) ─→ 127.0.0.1:8000 (uvicorn, spt)
 各节点 agent ─┘ (经 monitor.taoziyoyo.com)                                                              │
-                                                                                          SQLite(WAL) /opt/reality/data/traffic_monitor.db
+                                                                                          SQLite(WAL) /opt/reality/monitor/data/traffic_monitor.db
 ```
 - **server**：仅 `spt`（`monitor.server_host`），systemd `reality-monitor.service`，非 root `reality-monitor` 用户，绑 `127.0.0.1:8000`（无公网直听），经 CF Tunnel 暴露。
 - **agent**：所有 `[reality_nodes]`，cron 每分钟（`shuf` 抖动），以 `reality-monitor-agent`（docker 组）运行，经 `docker exec` 取 xray stats / 容器网卡 / 日志，上报 `/report`、`/stats/ip_report`。
@@ -21,7 +21,7 @@
 | server 脚本 | `/opt/reality/monitor/server.py`（0640，reality-monitor）|
 | server 密钥 env | `/opt/reality/monitor/monitor.env`（0600；systemd `EnvironmentFile`）|
 | systemd 单元 | `/etc/systemd/system/reality-monitor.service` |
-| DB | `/opt/reality/data/traffic_monitor.db`（+ `-wal`/`-shm`）|
+| DB | `/opt/reality/monitor/data/traffic_monitor.db`（+ `-wal`/`-shm`）|
 | agent 脚本 | `/usr/local/bin/traffic_agent.py` |
 | agent token | `/opt/reality/monitor/agent_token`（0600，reality-monitor-agent）|
 | agent 状态/锁/日志 | `/opt/reality/monitor/state/{traffic_cache.json, agent.lock, agent.log}`（0700）|
@@ -64,7 +64,7 @@ curl -s -H 'Authorization: Bearer <stats_token>' http://127.0.0.1:8000/stats/hea
 **数据保留 / VACUUM**
 - 自动：保留 cron 每日删 `> retention_days`（默认 90）的 records/subscription_logs + `wal_checkpoint(TRUNCATE)`
 - 调整：改 `monitor.retention_days` → `--tags monitor_server --limit spt`
-- **整库 VACUUM**（缩文件，会整库加锁，**低频手工、择低峰**）：`systemctl stop reality-monitor; sudo -u reality-monitor sqlite3 /opt/reality/data/traffic_monitor.db 'VACUUM;'; systemctl start reality-monitor`
+- **整库 VACUUM**（缩文件，会整库加锁，**低频手工、择低峰**）：`systemctl stop reality-monitor; sudo -u reality-monitor sqlite3 /opt/reality/monitor/data/traffic_monitor.db 'VACUUM;'; systemctl start reality-monitor`
 
 **增 / 减节点 agent**
 - 增：`ansible-playbook deploy.yml --tags monitor_config --limit <node>`（建用户/token/cron/脚本）
