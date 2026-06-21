@@ -8,6 +8,7 @@ import sqlite3
 import time
 import os
 import hmac
+import logging
 from typing import Optional, List
 
 app = FastAPI(
@@ -16,6 +17,9 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None
 )
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("reality-monitor")
 
 # 敏感 token 从 0600 env 文件读取（systemd EnvironmentFile=monitor.env），不再明文渲染进 server.py
 REPORT_TOKEN = os.environ.get("MONITOR_REPORT_TOKEN", "")
@@ -1643,6 +1647,24 @@ async def debug_whoami(request: Request):
         "tunnel_verified": tunnel_verified(request),
     }
 
+@app.get("/healthz")
+def healthz():
+    # 无鉴权探活：服务存活 + DB 可连 + journal 模式（供 systemd/外部监控）
+    db_ok = False
+    journal = None
+    try:
+        conn = get_conn()
+        journal = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        conn.execute("SELECT 1")
+        conn.close()
+        db_ok = True
+    except Exception as e:
+        logger.warning("healthz db check failed: %s", e)
+    return JSONResponse(
+        {"status": "ok" if db_ok else "degraded", "db_ok": db_ok, "journal_mode": journal},
+        status_code=200 if db_ok else 503,
+    )
+
 @app.post("/report")
 def receive_report(report: TrafficReport, token: str = Header(None)):  # 同步 def：自动入线程池，不阻塞事件循环
     if token != REPORT_TOKEN:
@@ -1676,8 +1698,8 @@ def receive_ip_report(payload: IPReport, token: str = Header(None)):  # 同步 d
                     "ON CONFLICT(user, node, ip) DO UPDATE SET last_seen = excluded.last_seen, hit_count = user_ip_hits.hit_count + 1",
                     (user, payload.node, ip_val, now, now)
                 )
-            except Exception:
-                # 单条失败不影响其他
+            except Exception as e:
+                logger.debug("ip_hit insert skipped (%s/%s): %s", user, ip_val, e)
                 continue
     conn.commit()
     conn.close()
@@ -1782,9 +1804,8 @@ def log_subscription_hit(sub_id: str, request: Request):
         )
         conn.commit()
         conn.close()
-    except Exception:
-        # logging suppressed to keep UI clean
-        pass
+    except Exception as e:
+        logger.warning("log_subscription_hit failed: %s", e)
 
 @app.get("/openapi.json", include_in_schema=False, dependencies=[Depends(auth_guard)])
 async def custom_openapi():
@@ -1851,7 +1872,9 @@ async def get_health(hours: int = 24, stale_minutes: int = 10):
     conn = get_conn()
     c = conn.cursor()
 
-    c.execute("SELECT node, MAX(timestamp) FROM records GROUP BY node")
+    # C1：限定回看窗口（≥7天），避免对百万行全表扫描；超窗未上报的节点视为离线、不再展示
+    lookback = now - max(hours, 24 * 7) * 3600
+    c.execute("SELECT node, MAX(timestamp) FROM records WHERE timestamp > ? GROUP BY node", (lookback,))
     last_seen_rows = c.fetchall()
     last_seen = {r[0]: r[1] for r in last_seen_rows}
 

@@ -37,6 +37,7 @@ monitor:
   internal_host: "127.0.0.1"
   internal_port: 8000
   port: 8000                   # 监控服务端口
+  retention_days: 90           # C1：records/subscription_logs 保留天数（server 端保留 cron 清理）
   report_token: "{{ vault_monitor_report_token | default('CHANGEME-report-token') }}"   # 上报认证 Token（Vault）
   admin_bearer_token: "{{ vault_monitor_admin_bearer_token | default('CHANGEME-admin-bearer') }}" # 管理员 Bearer，用于 stats/doc
   stats_bearer_token: "{{ vault_monitor_stats_bearer_token | default('CHANGEME-stats-bearer') }}" # 普通 Bearer，用于只读 stats

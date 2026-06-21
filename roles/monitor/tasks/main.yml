@@ -122,6 +122,15 @@
               [Install]
               WantedBy=multi-user.target
           notify: 重启监控服务
+
+        - name: "[Server] 数据保留 cron (每日 DELETE + WAL checkpoint)"
+          cron:
+            name: "Reality Monitor Retention"
+            user: reality-monitor
+            minute: "17"
+            hour: "4"
+            job: "{{ monitor_venv_dir }}/bin/python3 -c \"import sqlite3,time; cut=int(time.time())-{{ monitor.retention_days | default(90) }}*86400; c=sqlite3.connect('{{ reality_data_dir }}/traffic_monitor.db'); c.execute('DELETE FROM records WHERE timestamp<?',(cut,)); c.execute('DELETE FROM subscription_logs WHERE timestamp<?',(cut,)); c.commit(); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()\" > /dev/null 2>&1"
+          tags: ['monitor', 'monitor_server']
       tags: ['monitor', 'monitor_server']
 
 

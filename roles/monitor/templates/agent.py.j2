@@ -172,23 +172,19 @@ def post_report(user, up, down):
 def main():
     if REALITY_MODE == "single":
         current = get_core_stats()
-        container_now = get_container_bytes("reality_core")
     else:
         current = get_multi_stats()
-        container_now = None
 
     # 兜底：single 未返回数据但存在多实例容器
     if not current and REALITY_MODE == "single":
         fallback = get_multi_stats()
         if fallback:
             current = fallback
-            container_now = container_now or get_container_bytes("reality_core")
 
-    last, last_container, pending = read_state()
+    last, _, pending = read_state()
 
     # 计算 per-user 增量。首见/计数器重置 → 只建基线、上报 0（根除“重启=累计值”的幻象尖峰）
     deltas = {}
-    total_up = total_down = 0
     for user, flow in current.items():
         prev = last.get(user)
         if prev is None:
@@ -201,26 +197,15 @@ def main():
             if dd < 0:
                 dd = 0
         deltas[user] = {"up": du, "down": dd}
-        total_up += du
-        total_down += dd
-
-    # 容器放大对齐（single 模式；B1 去放大留阶段 3）
-    up_factor = down_factor = 1.0
-    if REALITY_MODE == "single" and container_now and last_container:
-        cu = max(0, container_now.get("up", 0) - last_container.get("up", 0))
-        cd = max(0, container_now.get("down", 0) - last_container.get("down", 0))
-        if cu > 0 and total_up > 0:
-            up_factor = max(1.0, cu / total_up)
-        if cd > 0 and total_down > 0:
-            down_factor = max(1.0, cd / total_down)
 
     # 投递：成功(200)才清该用户 pending；失败把欠量累加结转（单值/用户，非无界追加）。
     # last 始终推进到 current（基线随计数器走，避免下轮重复计）。
+    # B1：直接信任 xray uplink/downlink 增量，不再用容器流量放大对齐（旧放大 max(1.0,…) 只增不减、人为膨胀 per-user）。
     new_pending = dict(pending)
     for user in set(current.keys()) | set(pending.keys()):
         d = deltas.get(user, {"up": 0, "down": 0})
-        adj_up = int(d["up"] * up_factor)
-        adj_down = int(d["down"] * down_factor)
+        adj_up = d["up"]
+        adj_down = d["down"]
         p = pending.get(user, {"up": 0, "down": 0})
         owed_up = adj_up + int(p.get("up", 0))
         owed_down = adj_down + int(p.get("down", 0))
@@ -232,7 +217,7 @@ def main():
         else:
             new_pending.pop(user, None)
 
-    write_state(current, container_now, new_pending)
+    write_state(current, None, new_pending)
 
 
 def _parse_log_lines(lines, fixed_user=None):
