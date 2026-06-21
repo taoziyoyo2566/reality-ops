@@ -3,42 +3,82 @@ import json
 import requests
 import os
 import re
+import time
+import fcntl
 from collections import defaultdict
 
 NODE_NAME = "{{ inventory_hostname }}"
-# 【核心】此处引用 monitor.server_public_ip 和 monitor.port
 SERVER_URL = "{{ monitor.server_url }}/report"
-# 【核心】此处引用 monitor.report_token (来自 vault)
-API_TOKEN = "{{ monitor.report_token }}"
-CACHE_FILE = "/tmp/reality_traffic_cache.json"
-LOG_FILE = "/opt/reality/logs/reality_core/access.log"  # 用于用户-IP 采集
+IP_REPORT_URL = SERVER_URL.replace("/report", "/stats/ip_report")
 REALITY_MODE = "{{ reality_mode | default('single') }}"
+HTTP_TIMEOUT = 5
+
+# report_token 从 0600 文件读取（不再明文渲染进世界可读脚本）
+TOKEN_FILE = "/opt/reality/monitor/agent_token"
+try:
+    with open(TOKEN_FILE) as _f:
+        API_TOKEN = _f.read().strip()
+except Exception:
+    API_TOKEN = ""
+
+# 状态/锁/日志：迁出 /tmp（随机器持久），属主 reality-monitor-agent
+STATE_DIR = "/opt/reality/monitor/state"
+STATE_FILE = os.path.join(STATE_DIR, "traffic_cache.json")
+LOCK_FILE = os.path.join(STATE_DIR, "agent.lock")
+AGENT_LOG = os.path.join(STATE_DIR, "agent.log")
 
 
-def load_cache():
-    """向后兼容地读取缓存，返回 (users, container)。"""
+def log(msg):
     try:
-        with open(CACHE_FILE, 'r') as f:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        if os.path.isfile(AGENT_LOG) and os.path.getsize(AGENT_LOG) > 1_000_000:
+            open(AGENT_LOG, "w").close()  # 简单截断，防无限增长
+        with open(AGENT_LOG, "a") as f:
+            f.write(f"{int(time.time())} {NODE_NAME} {msg}\n")
+    except Exception:
+        pass
+
+
+def acquire_lock():
+    """单实例文件锁：防 cron 重叠（上一次未结束就再触发）导致双计/状态损坏。"""
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        f = open(LOCK_FILE, "w")
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return f
+    except Exception:
+        return None
+
+
+def read_state():
+    """返回 (users_baseline, container_baseline, pending)。"""
+    try:
+        with open(STATE_FILE) as f:
             data = json.load(f)
-            if isinstance(data, dict) and "users" in data:
-                return data.get("users", {}), data.get("container")
-            if isinstance(data, dict):
-                # 旧格式：仅用户流量
-                return data, None
+        if isinstance(data, dict):
+            return (data.get("users", {}) or {},
+                    data.get("container"),
+                    data.get("pending", {}) or {})
     except Exception:
         pass
-    return {}, None
+    return {}, None, {}
 
 
-def save_cache(users, container=None):
-    payload = {"users": users}
-    if container:
-        payload["container"] = container
+def write_state(users, container, pending):
+    """原子写：临时文件 + fsync + os.replace，避免进程中断留下半截损坏文件。"""
     try:
-        with open(CACHE_FILE, 'w') as f:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        payload = {"users": users, "pending": pending}
+        if container:
+            payload["container"] = container
+        tmp = STATE_FILE + ".tmp"
+        with open(tmp, "w") as f:
             json.dump(payload, f)
-    except Exception:
-        pass
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, STATE_FILE)
+    except Exception as e:
+        log(f"write_state failed: {e}")
 
 
 def list_multi_containers():
@@ -81,14 +121,15 @@ def get_multi_stats():
         stats[user] = counters
     return stats
 
+
 def get_core_stats():
     # 只查询 reality_core 容器
     cmd = "docker exec reality_core xray api statsquery --server=127.0.0.1:10085"
     try:
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if res.returncode != 0: return {}
+        if res.returncode != 0:
+            return {}
         data = json.loads(res.stdout)
-        
         stats = {}
         if 'stat' in data:
             for item in data['stat']:
@@ -97,16 +138,36 @@ def get_core_stats():
                     raw_user = parts[1]
                     # 清洗用户名，去掉主机名后缀
                     real_user = raw_user.split('.')[0] if '.' in raw_user else raw_user
-                    
                     type_ = parts[3]
                     val = int(item['value'])
-                    
-                    if real_user not in stats: stats[real_user] = {'up': 0, 'down': 0}
-                    if type_ == 'uplink': stats[real_user]['up'] += val
-                    if type_ == 'downlink': stats[real_user]['down'] += val
+                    if real_user not in stats:
+                        stats[real_user] = {'up': 0, 'down': 0}
+                    if type_ == 'uplink':
+                        stats[real_user]['up'] += val
+                    if type_ == 'downlink':
+                        stats[real_user]['down'] += val
         return stats
-    except:
+    except Exception:
         return {}
+
+
+def post_report(user, up, down):
+    """投递单用户增量；仅当 HTTP 200 才算成功（4xx/5xx 不算）。"""
+    try:
+        r = requests.post(
+            SERVER_URL,
+            json={"node": NODE_NAME, "user": user, "up_delta": up, "down_delta": down},
+            headers={"token": API_TOKEN},
+            timeout=HTTP_TIMEOUT,
+        )
+        if r.status_code == 200:
+            return True
+        log(f"post_report {user} non-200: {r.status_code}")
+        return False
+    except Exception as e:
+        log(f"post_report {user} failed: {e}")
+        return False
+
 
 def main():
     if REALITY_MODE == "single":
@@ -116,100 +177,136 @@ def main():
         current = get_multi_stats()
         container_now = None
 
-    # 兜底：single 模式未返回数据且存在多实例容器时，尝试多实例统计
+    # 兜底：single 未返回数据但存在多实例容器
     if not current and REALITY_MODE == "single":
         fallback = get_multi_stats()
         if fallback:
             current = fallback
             container_now = container_now or get_container_bytes("reality_core")
 
-    last, last_container = load_cache()
+    last, last_container, pending = read_state()
 
+    # 计算 per-user 增量。首见/计数器重置 → 只建基线、上报 0（根除“重启=累计值”的幻象尖峰）
     deltas = {}
     total_up = total_down = 0
     for user, flow in current.items():
-        last_flow = last.get(user, {'up': 0, 'down': 0})
-        
-        up_delta = flow['up'] - last_flow['up']
-        if up_delta < 0: up_delta = flow['up']
-        
-        down_delta = flow['down'] - last_flow['down']
-        if down_delta < 0: down_delta = flow['down']
-        
-        deltas[user] = {"up": up_delta, "down": down_delta}
-        total_up += up_delta
-        total_down += down_delta
+        prev = last.get(user)
+        if prev is None:
+            du = dd = 0
+        else:
+            du = flow['up'] - prev.get('up', 0)
+            dd = flow['down'] - prev.get('down', 0)
+            if du < 0:
+                du = 0
+            if dd < 0:
+                dd = 0
+        deltas[user] = {"up": du, "down": dd}
+        total_up += du
+        total_down += dd
 
-    # 若统计流量明显小于容器网络流量，则用容器流量放大对齐（single 模式）
+    # 容器放大对齐（single 模式；B1 去放大留阶段 3）
     up_factor = down_factor = 1.0
     if REALITY_MODE == "single" and container_now and last_container:
-        container_up = max(0, container_now.get("up", 0) - last_container.get("up", 0))
-        container_down = max(0, container_now.get("down", 0) - last_container.get("down", 0))
-        if container_up > 0 and total_up > 0:
-            up_factor = max(1.0, container_up / total_up)
-        if container_down > 0 and total_down > 0:
-            down_factor = max(1.0, container_down / total_down)
-    
-    for user, delta in deltas.items():
-        adj_up = int(delta["up"] * up_factor)
-        adj_down = int(delta["down"] * down_factor)
-        
-        if adj_up > 0 or adj_down > 0:
-            try:
-                # 【核心】Header 中携带 Token
-                requests.post(SERVER_URL, json={
-                    "node": NODE_NAME, "user": user, 
-                    "up_delta": adj_up, "down_delta": adj_down
-                }, headers={"token": API_TOKEN}, timeout=5)
-            except: pass
+        cu = max(0, container_now.get("up", 0) - last_container.get("up", 0))
+        cd = max(0, container_now.get("down", 0) - last_container.get("down", 0))
+        if cu > 0 and total_up > 0:
+            up_factor = max(1.0, cu / total_up)
+        if cd > 0 and total_down > 0:
+            down_factor = max(1.0, cd / total_down)
 
-    save_cache(current, container_now)
+    # 投递：成功(200)才清该用户 pending；失败把欠量累加结转（单值/用户，非无界追加）。
+    # last 始终推进到 current（基线随计数器走，避免下轮重复计）。
+    new_pending = dict(pending)
+    for user in set(current.keys()) | set(pending.keys()):
+        d = deltas.get(user, {"up": 0, "down": 0})
+        adj_up = int(d["up"] * up_factor)
+        adj_down = int(d["down"] * down_factor)
+        p = pending.get(user, {"up": 0, "down": 0})
+        owed_up = adj_up + int(p.get("up", 0))
+        owed_down = adj_down + int(p.get("down", 0))
+        if owed_up > 0 or owed_down > 0:
+            if post_report(user, owed_up, owed_down):
+                new_pending.pop(user, None)
+            else:
+                new_pending[user] = {"up": owed_up, "down": owed_down}
+        else:
+            new_pending.pop(user, None)
+
+    write_state(current, container_now, new_pending)
+
+
+def _parse_log_lines(lines, fixed_user=None):
+    """从 access.log 行提取 {user: set(ip)}。fixed_user 给定则所有 IP 归该用户（multi）。"""
+    out = defaultdict(set)
+    for line in lines:
+        m_ip = re.search(r"from (\d+\.\d+\.\d+\.\d+|\[[0-9a-fA-F:]+\])", line)
+        if not m_ip:
+            m_ip = re.search(r"from ([^\s:]+)", line)  # 退化：from <ip>:port
+        if not m_ip:
+            continue
+        ip = m_ip.group(1).strip("[]")
+        if fixed_user:
+            out[fixed_user].add(ip)
+            continue
+        m_user = re.search(r"email:\s*(\S+)", line)
+        if not m_user:
+            continue
+        out[m_user.group(1).strip()].add(ip)
+    return out
+
+
+def _read_access_log(container):
+    """经 docker exec 读容器内日志（绕开 host 文件属主限制；与 stats 读取一致）。"""
+    cmd = f"docker exec {container} cat /var/log/xray/access.log"
+    try:
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+        if res.returncode != 0:
+            return []
+        return res.stdout.splitlines()[-4000:]
+    except Exception:
+        return []
+
 
 def collect_user_ips():
-    """
-    简单解析 access.log，按用户提取唯一 IP 列表。
-    仅读取最近部分内容，避免日志过大；重复上报会在服务端去重。
-    """
-    if not os.path.isfile(LOG_FILE):
-        return {}
-    try:
-        ips = defaultdict(set)
-        # 只看最近几千行，避免读取超大文件
-        with open(LOG_FILE, 'r', encoding='utf-8', errors='ignore') as f:
-            lines = f.readlines()[-4000:]
-        for line in lines:
-            # 形如: ... from <ip>:port ... email: <user>
-            ip_match = re.search(r"from ([^\\s:]+)", line)
-            user_match = re.search(r"email:\\s*([^\\s]+)", line)
-            if not ip_match or not user_match:
-                continue
-            ip = ip_match.group(1).strip()
-            user = user_match.group(1).strip()
-            if ip and user:
-                ips[user].add(ip)
-        # 转换为普通 dict -> list
-        return {user: list(values) for user, values in ips.items()}
-    except Exception:
-        return {}
+    """按模式采集用户-IP：single 解析 reality_core 日志的 email；multi 遍历各容器（用户=容器名）。"""
+    merged = defaultdict(set)
+    if REALITY_MODE == "single":
+        for u, ips in _parse_log_lines(_read_access_log("reality_core")).items():
+            merged[u] |= ips
+    else:
+        for name in list_multi_containers():
+            user = name.replace("reality_", "", 1)
+            for u, ips in _parse_log_lines(_read_access_log(name), fixed_user=user).items():
+                merged[u] |= ips
+    return {u: list(v) for u, v in merged.items()}
+
 
 def send_ip_report(user_ips):
     if not user_ips:
         return
+    payload = {
+        "node": NODE_NAME,
+        "entries": [{"user": u, "ips": ips} for u, ips in user_ips.items()],
+    }
     try:
-        payload = {
-            "node": NODE_NAME,
-            "entries": [{"user": u, "ips": ips} for u, ips in user_ips.items()],
-        }
-        requests.post(
-            SERVER_URL.replace("/report", "/stats/ip_report"),
-            json=payload,
-            headers={"token": API_TOKEN},
-            timeout=5,
-        )
-    except Exception:
-        pass
+        r = requests.post(IP_REPORT_URL, json=payload, headers={"token": API_TOKEN}, timeout=HTTP_TIMEOUT)
+        if r.status_code != 200:
+            log(f"ip_report non-200: {r.status_code}")
+    except Exception as e:
+        log(f"ip_report failed: {e}")
+
 
 if __name__ == "__main__":
-    main()
-    # 额外上报用户-IP 去重信息（用于共享判定）
-    send_ip_report(collect_user_ips())
+    lock = acquire_lock()
+    if lock is None:
+        log("another instance running; skip this tick")
+    else:
+        try:
+            main()
+            send_ip_report(collect_user_ips())
+        finally:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+                lock.close()
+            except Exception:
+                pass

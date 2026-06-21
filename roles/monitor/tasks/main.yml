@@ -126,22 +126,63 @@
 
 
     # --- 客户端部署 (所有节点) ---
-    - name: "[Agent] 部署上报脚本"
+    - name: "[Agent] 创建上报专用用户 (加入 docker 组)"
+      user:
+        name: reality-monitor-agent
+        system: yes
+        groups: docker
+        append: yes
+        shell: /usr/sbin/nologin
+        create_home: no
+      tags: ['monitor', 'users', 'monitor_config']
+
+    - name: "[Agent] 状态目录 (0700, 属主 reality-monitor-agent)"
+      file:
+        path: "{{ monitor_root_dir }}/state"
+        state: directory
+        owner: reality-monitor-agent
+        group: reality-monitor-agent
+        mode: '0700'
+      tags: ['monitor', 'users', 'monitor_config']
+
+    - name: "[Agent] 下发上报 token 文件 (0600)"
+      copy:
+        dest: "{{ monitor_root_dir }}/agent_token"
+        owner: reality-monitor-agent
+        group: reality-monitor-agent
+        mode: '0600'
+        content: "{{ monitor.report_token }}"
+      no_log: true
+      tags: ['monitor', 'users', 'monitor_config']
+
+    - name: "[Agent] 部署上报脚本 (属主 reality-monitor-agent)"
       template:
         src: agent.py.j2
         dest: "/usr/local/bin/traffic_agent.py"
+        owner: reality-monitor-agent
+        group: reality-monitor-agent
         mode: '0755'
       tags: ['monitor', 'users', 'monitor_config']
 
-    - name: "[Agent] 设置 Crontab"
+    - name: "[Agent] 移除旧 root crontab 条目 (迁移到专用用户)"
       cron:
         name: "Reality Traffic Report"
-        minute: "*"
-        job: "{{ monitor_venv_dir }}/bin/python3 /usr/local/bin/traffic_agent.py > /dev/null 2>&1"
+        state: absent
       tags: ['monitor', 'users', 'monitor_config']
 
-    - name: "[Agent] 立即执行一次上报"
+    - name: "[Agent] 设置 Crontab (reality-monitor-agent + 整点抖动)"
+      cron:
+        name: "Reality Traffic Report"
+        user: reality-monitor-agent
+        minute: "*"
+        # shuf 抖动：cron 用 /bin/sh(dash) 无 $RANDOM，故用 shuf 打散整点惊群
+        job: "sleep $(shuf -i 0-45 -n 1); {{ monitor_venv_dir }}/bin/python3 /usr/local/bin/traffic_agent.py > /dev/null 2>&1"
+      tags: ['monitor', 'users', 'monitor_config']
+
+    - name: "[Agent] 立即执行一次上报 (以 reality-monitor-agent)"
       command: "{{ monitor_venv_dir }}/bin/python3 /usr/local/bin/traffic_agent.py"
+      become: yes
+      become_user: reality-monitor-agent
       changed_when: false
       failed_when: false
       tags: ['monitor', 'users', 'monitor_config']
@@ -172,7 +213,14 @@
         state: absent
       tags: ['monitor', 'cleanup']
 
-    - name: "[Cleanup] 移除上报 Crontab"
+    - name: "[Cleanup] 移除上报 Crontab (reality-monitor-agent)"
+      cron:
+        name: "Reality Traffic Report"
+        user: reality-monitor-agent
+        state: absent
+      tags: ['monitor', 'cleanup']
+
+    - name: "[Cleanup] 移除遗留 root crontab 条目"
       cron:
         name: "Reality Traffic Report"
         state: absent
