@@ -1,0 +1,98 @@
+# 监控加固 灰度/部署 Checklist
+
+- **针对**：`fix/monitor-integrity` 分支阶段 1/2/3（提交 `5ea94fb`/`d72cc7b`/`a14a668`/`ce383a9`）
+- **硬约束**：线上节点不中断；每步 staging/金丝雀全绿才扩面；现网部署需单独授权 + 外部评审（W-R20）
+- **关键事实**：
+  - server 仅在 `spt`（`monitor.server_host`，`ansible_connection=local`），监听 `127.0.0.1:8000`，经 CF Tunnel 暴露 `monitor.taoziyoyo.com`
+  - agent 跑在**所有** `[reality_nodes]`；`[reality_nodes]` 同时含 4 台测试机（hkcod12/hyu24/hyd13/hyu22）→ **任何 deploy 必须 `--limit`，否则打到全部生产**
+  - 路径：DB `/opt/reality/data/traffic_monitor.db`；env `/opt/reality/monitor/monitor.env`；agent token `/opt/reality/monitor/agent_token`；state `/opt/reality/monitor/state`
+  - tags：`monitor_server`（server.py/systemd/env/retention，受 `when spt` 限定）、`monitor_config`（agent.py/cron/token/user）
+
+---
+
+## Phase 0 — 离线预检（不碰线上）
+
+- [ ] `git -C ~/workspace pull` 同步治理文件；确认在 `fix/monitor-integrity`、工作树干净
+- [ ] **在有 ansible 的机器**补 Gate-2（本机 BLOCKED）：
+  - `ansible-playbook deploy.yml --syntax-check`
+  - `ansible-inventory --graph`（确认 test_nodes 与生产档位分组无误）
+- [ ] `--check --diff` 试跑（**务必 `--limit spt`**）：`ansible-playbook deploy.yml --tags monitor_server --limit spt --check --diff`
+- [ ] 确认 vault 可解密：`ansible-vault view group_vars/all/<vault文件>`（或对应文件）
+
+## Phase 1 — 前置（CF + vault + 轮换）⚠️ 决定 D1-B 是否生效
+
+> **fail-closed 语义**：`MONITOR_TUNNEL_SECRET` 未配或与 CF 注入值不一致时，鉴权退化为"仅 Bearer"——仪表板经 CF 也需带 token。**要让仪表板零改动可用，下面 1.1–1.3 必须在 server 部署前/同步完成且值一致。**
+
+- [ ] **1.1 生成强随机 secret**：`openssl rand -hex 32` → 记为 `S`
+- [ ] **1.2 写入 vault**：`ansible-vault edit ...` 设 `vault_monitor_tunnel_secret: "S"`
+- [ ] **1.3 CF 仪表盘配 Transform Rule**：对 `monitor.taoziyoyo.com`，**Modify Request Header → Set**（非 Add，须覆盖客户端同名头）`X-Monitor-Tunnel-Secret = S`
+- [ ] **1.4 轮换泄露 token**：
+  - cloudflared tunnel token（明文在 `ps`）：CF 仪表盘重建 tunnel token，改 credentials-file 方式
+  - 确认 `monitor_server.py:9` 旧硬编码 token（已随文件删除，仍在 git 历史）当前**未被任何 agent/节点使用**；如曾启用则轮换 `vault_monitor_report_token`
+- [ ] **1.5** 确认 vault 里 `vault_monitor_report_token / admin_bearer / stats_bearer / subs_token` 均已设（server/agent 改从 env/文件读，缺值会导致全鉴权失败）
+
+## Phase 2 — Staging 验证（4 台测试机，推荐；安全修复尤其建议）
+
+> 现状：`group_vars/test_nodes.yml` `monitor_enabled:false`（监控延后）。要验证监控需临时启用并**指向独立测试监控**，且 plan-staging §4.2 层④ guard 须先实现（防测试 agent 误报生产）。
+- [ ] 若跳过完整 staging：至少在 1 台测试机验证 agent（`--tags monitor_config --limit hyu24`），观察 `/opt/reality/monitor/state/agent.log` 无异常、cron 以 `reality-monitor-agent` 落地
+- [ ] A1 端到端（若搭了测试监控）：本机 `curl 127.0.0.1:8000/stats/daily` 无 secret 头 = **401**；经 CF 测试域名（CF 注入 secret + 运维白名单 IP）= **200** 且仪表板正常
+
+## Phase 3 — 生产金丝雀：server（spt）先行
+
+- [ ] **3.1 备份 DB**：`cp /opt/reality/data/traffic_monitor.db /opt/reality/data/traffic_monitor.db.bak-$(date +%s)`（~300MB）
+- [ ] **3.2 备份旧 server.py**：`cp /opt/reality/monitor/server.py /opt/reality/monitor/server.py.bak`
+- [ ] **3.3 部署 server**：`ansible-playbook deploy.yml --tags monitor_server --limit spt`
+  - （生产 spt 上 venv/目录已存在；monitor_server tag 覆盖 user/dir/env/server.py/systemd/retention）
+- [ ] **3.4 部署时验证（本机 BLOCKED 项，现网确认）**：
+  - [ ] DB 属主迁移：`stat -c '%U' /opt/reality/data/traffic_monitor.db` = `reality-monitor`（数据目录 recurse chown）
+  - [ ] 服务以非 root 跑：`systemctl show reality-monitor -p User` = `reality-monitor`；`systemctl status reality-monitor` active
+  - [ ] env 已下发且 0600：`stat -c '%a %U' /opt/reality/monitor/monitor.env` = `600 reality-monitor`
+  - [ ] WAL 生效：`sudo -u reality-monitor sqlite3 /opt/reality/data/traffic_monitor.db 'PRAGMA journal_mode;'` = `wal`（且生成 `-wal/-shm`，reality-monitor 可写）
+  - [ ] healthz：`curl -s http://127.0.0.1:8000/healthz` → `{"status":"ok","db_ok":true,"journal_mode":"wal"}`
+  - [ ] **A1 鉴权**：`curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/stats/daily` = **401**；带 `-H 'Authorization: Bearer <stats_token>'` = **200**
+  - [ ] **仪表板经 CF**：浏览器开 `https://monitor.taoziyoyo.com/stats/ui`（运维白名单 IP）→ 正常加载（CF 注入 secret 生效）。若 401 → 检查 Phase 1.2/1.3 的 S 是否一致
+  - [ ] retention cron：`crontab -u reality-monitor -l | grep Retention`
+- [ ] **3.5 观察一个上报周期**：现有 agent（仍 root，未升级）继续上报 → records 持续写入、无 `database is locked`（`journalctl -u reality-monitor`）
+
+## Phase 4 — 生产金丝雀：agent 1–2 台
+
+- [ ] **4.1 选 1 台低风险节点**部署：`ansible-playbook deploy.yml --tags monitor_config --limit <node1>`
+- [ ] **4.2 部署时验证**：
+  - [ ] `reality-monitor-agent` 用户存在且在 docker 组：`id reality-monitor-agent`
+  - [ ] token 文件：`stat -c '%a %U' /opt/reality/monitor/agent_token` = `600 reality-monitor-agent`
+  - [ ] cron 迁移：`crontab -u reality-monitor-agent -l | grep -q shuf` 且 `crontab -l`（root）无 "Reality Traffic Report" 残留
+  - [ ] **cron 真执行**（nologin 用户关键风险）：等 1–2 分钟后 `/opt/reality/monitor/state/traffic_cache.json` 出现、`state/agent.log` 无致命错误
+  - [ ] **首跑 re-baseline 正常**：该节点首个周期上报 0（基线重建），第二周期起正常增量——确认服务端**无巨值单条**
+  - [ ] **IP 审计恢复**：上报一轮后 `user_ip_hits` 出现该节点新行（B3+B4+B5 验证）：`sqlite3 ... "SELECT count(*) FROM user_ip_hits WHERE node='<node1>'"` > 0
+  - [ ] pending 正常：制造一次失败（停 server 1 周期再起）→ 校验**无丢行、无重复行**、`state` 里 pending 累计后清空
+- [ ] **4.3** 再加 1 台（multi 模式节点优先，验证 B3 多容器日志路径）
+
+## Phase 5 — 全量扩面
+
+- [ ] 分批 `--limit <批次>` 推 agent 到其余生产节点（避免一次性全量）
+- [ ] 全量后复核：`/stats/health` 各节点 last_seen 新鲜、`user_ip_hits` 全节点非 0、无锁错误、仪表板正常
+- [ ] 关掉测试机监控/确认 test_nodes 未误接（`group_vars/test_nodes.yml` 仍 `monitor_enabled:false`）
+
+---
+
+## 回滚
+
+| 层 | 回滚 |
+|---|---|
+| server | 恢复 `server.py.bak` + DB `.bak`；`systemctl restart reality-monitor`；如需退 WAL：`sqlite3 DB 'PRAGMA journal_mode=delete;'` |
+| 鉴权 | 临时放宽：在 vault 清空 `vault_monitor_tunnel_secret`（fail-closed→纯 Bearer），用 Bearer 访问；或 `git revert` server 模板后重部署 |
+| agent | `git revert` agent 模板重部署该节点；旧 root cron 已被移除，回滚需手工恢复或重部署旧版 |
+| 全量 | `git revert` 相关提交 → `--check` → 分批重部署 |
+
+## 部署时仍 BLOCKED（本机无法验，必须现网确认）
+
+- `ansible-playbook --syntax-check`（Phase 0）
+- nologin 用户（reality-monitor / reality-monitor-agent）的 cron 实际执行（Debian 13 通常可，**必须 Phase 3.4/4.2 实测**）
+- `become_user` warm-up、docker exec 采集（single/multi）、生产 DB→WAL 切换 + `-wal/-shm` 属主
+- CF Transform Rule → server 端 secret 头端到端
+
+## 关联文档
+- 修复主计划：[`plan-harden-monitor-2026-06-13.md`](./plan-harden-monitor-2026-06-13.md)
+- 各阶段 changelog：[`round2`](./round2-2026-06-21.changelog.md)（阶段1）·[`round3`](./round3-2026-06-21.changelog.md)（阶段2-server）·[`round4`](./round4-2026-06-21.changelog.md)（阶段2-agent）·[`round5`](./round5-2026-06-21.changelog.md)（阶段3）
+- staging 环境：[`plan-staging-env-2026-06-13.md`](./plan-staging-env-2026-06-13.md)
+</content>
