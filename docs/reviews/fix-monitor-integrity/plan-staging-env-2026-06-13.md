@@ -34,7 +34,7 @@
 - **隐蔽共享通道——Gist**：`deploy.yml` post_task 跑 `generate_subs_gist.py` 推**生产 Gist**（`when vault_github_token|length>0`）。测试环境必须禁掉（test group_vars 置空 `vault_github_token`），否则把测试订阅推到生产 Gist 污染真实用户。
 - **monitor 角色未参数化**：服务名 `reality-monitor`、库 `traffic_monitor.db`、端口 `monitor.internal_port` 写死。→ 不能在 spt 上安全并存第二实例；测试监控应放在独立机器（独立服务/库,自然无冲突）。
 - **test 用户现状**（`users/test.yml`）：`groups:["test"]`（acl_matrix 无此键→组逻辑不匹配任何节点）、`hosts:["jp05","jp10"]`（仅靠主机点名授权,落在生产 jp05/jp10）。
-- **CF 头已透传**：nginx 把 `CF-Connecting-IP` 透传到 uvicorn,`request.client.host` 已是真实 IP（A1 可用 CF 子域端到端验证）。
+- **入口为 CF Tunnel（非 nginx，2026-06-21 实测纠正）**：生产 `monitor.taoziyoyo.com` 经 cloudflared → `127.0.0.1:8000`（详见关联计划 §0.1）。测试监控同构（hkcod12 上 cloudflared → loopback:8000）。故 A1 以**本机 loopback** 为准绳验证（`curl 127.0.0.1:8000/...`），不依赖 nginx/XFF 旧路径。
 
 ## 4. 设计：三层隔离 + 监控兼节点拓扑
 
@@ -49,13 +49,16 @@
 
 > **为何不用 spt 当测试监控**：spt 是要保护的生产监控机;在其上并存测试实例需把角色全参数化(端口/库/服务名/vhost),且有覆盖生产 server.py / 重启生产服务 / 写进 300MB 生产库的风险。用一台测试 VPS 兼任监控(像 spt 一样)最安全、管理手法一致(唯一区别:测试监控经 SSH 管理,spt 是本机 local)。
 
-### 4.2 三层隔离（缺一不可,三者齐备才算与生产完全独立）
+### 4.2 隔离层（当前 ②③④ 软隔离生效；① 物理隔离为推荐但用户决定未启用）
+
+> **状态**：原设计为"三层物理隔离"，但 round1 用户决定保留生产 `inventory.ini`、**放弃层①**（详见顶部设计变更 + `round1` changelog）。**当前实际 = ②③④ 软隔离 + 运行时 `--limit`，无物理隔离**——故新增层④ guard 补偿。**切勿误以为已物理隔离。**
 
 | 层 | 文件 | 作用 |
 |---|---|---|
-| ① 独立 inventory | `inventory.test.ini`（`[reality_nodes]` 只含这 4 台 + 分组）| Ansible 物理上只能连测试机,碰不到生产 |
+| ①〔**未启用**〕独立 inventory | `inventory.test.ini`（`[reality_nodes]` 只含这 4 台 + 分组）| 推荐的物理隔离；用户决定保留生产 inventory，故未采用 |
 | ② 测试 group_vars | `group_vars/test_nodes.yml` 或随测试 inventory | 完整 `monitor` 字典指向 hkcod12;`vault_github_token: ""` 禁 Gist;独立 token / 测试 Gist |
 | ③ ACL 独占 | `deploy.yml` 改 + 4 个 host_vars | 测试机只装 `test` 用户,挡掉 18 个 'all' 用户 |
+| ④ 监控目标 guard | `roles/monitor/tasks/main.yml` 新增 assert | **补偿放弃层①的物理隔离**：测试组节点启用监控时硬断言 `monitor.server_url`/`report_token` ≠ 生产值,禁止测试 agent 误报生产 monitor（评审第 2 条）|
 
 ## 5. 待实现改动清单（恢复时执行）
 
@@ -76,6 +79,7 @@
 4. **`group_vars/test_nodes.yml`**（或测试专用 all）：完整 `monitor` 字典（`server_host: hkcod12`、`server_url: https://monitor-test.taoziyoyo.com`、独立 token、`subs_proxy` 按需）；`vault_github_token: ""`。
 5. **CF**：加 `monitor-test.taoziyoyo.com` → hkcod12（用户在 CF 侧操作）。
 6. （可选，B 轮）`test` 用户订阅/凭证用于真实拨号验证节点。
+7. **监控目标 guard（隔离层④，翻开监控前必做）**：在 `roles/monitor/tasks/main.yml` 监控 block 起始加 `assert`——当节点 `in groups['test_nodes']` 且 `monitor_enabled` 时,硬断言 `monitor.server_url`/`report_token` ≠ 生产值,否则 fail。把"必须 `--limit`"这条操作纪律变成硬失败，补偿放弃层①后的物理隔离缺失。
 
 ## 6. 待用户提供的输入（恢复时先问）
 
@@ -88,7 +92,7 @@
 ## 7. 验证场景（环境就绪后）
 
 - **节点可用**：test 用户拿订阅/凭证真实连 4 台节点,流量能通。
-- **A1**：`curl -H "X-Forwarded-For:<白名单IP>" https://monitor-test...` 应 **401**;真实白名单 IP 经 CF 访问 **200**。
+- **A1（D1-B）**：本机 `curl 127.0.0.1:8000/stats/daily` 无 secret 头应 **401**（伪造 CF-Connecting-IP 仍 401）;带 `Authorization: Bearer` 应 **200**;经 CF 测试域名（CF 注入 secret 头 + 白名单 IP）应 **200** 且仪表板正常。
 - **A2**：停 hkcod12 监控→agent 攒 pending 数轮→重启→**无丢行**;重启某节点→**无巨值单条尖峰**。
 - **A3**：4 agent cron 对齐同分钟并发→`journal_mode=wal`、**零 `database is locked`**、压测时仪表板不卡。
 
