@@ -8,7 +8,7 @@
   - 路径：DB `/opt/reality/monitor/data/traffic_monitor.db`（#1 后已移出共享的 `reality_data_dir`）；env `/opt/reality/monitor/monitor.env`；agent token `/opt/reality/monitor/agent_token`；state `/opt/reality/monitor/state`
   - tags：`monitor_server`（server.py/systemd/env/retention，受 `when spt` 限定）、`monitor_config`（agent.py/cron/token/user）
 
-## 当前状态（2026-06-22 生产）
+## 当前状态（2026-06-23 生产）
 
 - [x] `spt` server 金丝雀已实际执行：`reality-monitor.service` active，运行用户已切到 `reality-monitor`。
 - [x] `/healthz` 已返回 `{"status":"ok","db_ok":true,"journal_mode":"wal"}`。
@@ -18,7 +18,9 @@
 - [x] 经 CF 的 `https://monitor.taoziyoyo.com/debug/whoami` / `/stats/ui` 已恢复访问（运维白名单 IP：`45.145.75.134`）。
 - [x] `jp10` agent 第一台生产灰度已执行：专用用户在 docker 组、cron 已迁移、`traffic_cache.json` 出现用户基线，`/stats/health` 中 `jp10 stale=false`。
 - [x] `jp10` 灰度暴露 single stats 解析缺陷：`xray statsquery` 会返回缺少 `value` 的 stat 项，已在 agent 模板中修复为跳过无值项并兼容 `user>>>...` / `inbound>>>user-*` 两类计数。
-- [ ] agent 仍未全量升级；继续从 Phase 4 第二台开始分批推进，不要直接全量。
+- [x] agent 已分批升级并验证：`jp10`、`dzire`、`sg`、`ams`、`jp05`、`dcc`、`hk-hn`、`hk-hn2`、`jpntt` 均已恢复 `stale=false`。
+- [x] `jpntt` 灰度暴露 access.log OOM 风险：旧 agent 会整文件 `cat` 后再截尾；已改为容器内 `tail -n 4000` 后再解析。
+- [x] warm-up 已改为 root 下 `sudo -n -u reality-monitor-agent -- ...`，避免 Ansible 对 nologin 用户创建 remote tmp 的 warning/延迟。
 - [ ] `DE` / `netcup` inventory 身份不一致尚未处理；处理前不要围绕该节点做批量扩面。
 
 ---

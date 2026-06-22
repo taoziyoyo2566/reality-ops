@@ -291,14 +291,19 @@ def _parse_log_lines(lines, fixed_user=None):
 
 
 def _read_access_log(container):
-    """经 docker exec 读容器内日志（绕开 host 文件属主限制；与 stats 读取一致）。"""
-    cmd = f"docker exec {container} cat /var/log/xray/access.log"
+    """经 docker exec 只读最近日志，避免把超大 access.log 整体拉进 agent 内存。"""
     try:
-        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=15)
+        res = subprocess.run(
+            ["docker", "exec", container, "sh", "-c", "tail -n 4000 /var/log/xray/access.log 2>/dev/null"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
         if res.returncode != 0:
             return []
-        return res.stdout.splitlines()[-4000:]
-    except Exception:
+        return res.stdout.splitlines()
+    except Exception as e:
+        log(f"read_access_log {container} failed: {e}")
         return []
 
 

@@ -14,14 +14,14 @@
 - **agent**：所有 `[reality_nodes]`，cron 每分钟（`shuf` 抖动），以 `reality-monitor-agent`（docker 组）运行，经 `docker exec` 取 xray stats / 容器网卡 / 日志，上报 `/report`、`/stats/ip_report`。
 - **DB**：SQLite WAL，每日保留 cron 清理 `records`、`subscription_logs`、`user_ip_hits`。
 
-## 当前生产状态（2026-06-22）
+## 当前生产状态（2026-06-23）
 
 - `spt` 的 `monitor_server` 金丝雀已执行完成，`reality-monitor.service` 为 active，运行用户为 `reality-monitor`。
 - `/healthz` 已返回 `{"status":"ok","db_ok":true,"journal_mode":"wal"}`，说明新 DB 路径和 WAL 可用。
 - 本机 Bearer 访问 `/stats/health` 已验证正常。
 - `vault_monitor_tunnel_secret` 已配置为 64 字符 secret；Cloudflare 已配置 **Request Header Transform Rule** 注入 `X-Monitor-Tunnel-Secret`，浏览器经 `https://monitor.taoziyoyo.com/stats/ui` 可从白名单 IP 访问。
-- `jp10` 已完成第一台 agent 灰度：`reality-monitor-agent` 在 docker 组，cron 已迁移，`traffic_cache.json` 已出现用户基线，`/stats/health` 显示 `jp10 stale=false`。
-- agent 全量升级尚未完成；后续先部署 single stats 解析修复后的模板，再按部署 checklist Phase 4/5 分批推进。
+- 生产 agent 已分批升级并验证：`jp10`、`dzire`、`sg`、`ams`、`jp05`、`dcc`、`hk-hn`、`hk-hn2`、`jpntt` 均已恢复 `stale=false`。
+- 剩余暂不批量处理：`DE` / `netcup` inventory 身份不一致，需先统一 canonical host name。
 
 ## 2. 组件与文件位置
 

@@ -349,9 +349,16 @@
       tags: ['monitor', 'monitor_agent', 'monitor_config']
 
     - name: "[Agent] 立即执行一次上报 (以 reality-monitor-agent)"
-      command: "{{ monitor_venv_dir }}/bin/python3 /usr/local/bin/traffic_agent.py"
+      command:
+        argv:
+          - sudo
+          - -n
+          - -u
+          - reality-monitor-agent
+          - --
+          - "{{ monitor_venv_dir }}/bin/python3"
+          - /usr/local/bin/traffic_agent.py
       become: yes
-      become_user: reality-monitor-agent
       changed_when: false
       failed_when: false
       tags: ['monitor', 'monitor_agent']
