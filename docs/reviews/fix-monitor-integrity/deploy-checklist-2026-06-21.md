@@ -16,7 +16,9 @@
 - [x] `vault_monitor_tunnel_secret` 已补齐，`MONITOR_TUNNEL_SECRET` 长度为 64。
 - [x] CF 已配置 **Request Header Transform Rule** 注入 `X-Monitor-Tunnel-Secret`；曾误配为 Response Header，会导致源站收不到 secret、`/debug/whoami` 仍 401。
 - [x] 经 CF 的 `https://monitor.taoziyoyo.com/debug/whoami` / `/stats/ui` 已恢复访问（运维白名单 IP：`45.145.75.134`）。
-- [ ] agent 仍未全量升级；继续从 Phase 4 开始分批推进，不要直接全量。
+- [x] `jp10` agent 第一台生产灰度已执行：专用用户在 docker 组、cron 已迁移、`traffic_cache.json` 出现用户基线，`/stats/health` 中 `jp10 stale=false`。
+- [x] `jp10` 灰度暴露 single stats 解析缺陷：`xray statsquery` 会返回缺少 `value` 的 stat 项，已在 agent 模板中修复为跳过无值项并兼容 `user>>>...` / `inbound>>>user-*` 两类计数。
+- [ ] agent 仍未全量升级；继续从 Phase 4 第二台开始分批推进，不要直接全量。
 - [ ] `DE` / `netcup` inventory 身份不一致尚未处理；处理前不要围绕该节点做批量扩面。
 
 ---
@@ -79,13 +81,13 @@
 
 ## Phase 4 — 生产金丝雀：agent 1–2 台
 
-- [ ] **4.1 选 1 台低风险节点**部署：`ansible-playbook deploy.yml --tags monitor_config --limit <node1>`
+- [x] **4.1 选 1 台低风险节点**部署：`jp10` 已完成第一台灰度（命令形态：`./ansible-playbook deploy jp10 --tags monitor_agent -K`）
 - [ ] **4.2 部署时验证**：
-  - [ ] `reality-monitor-agent` 用户存在且在 docker 组：`id reality-monitor-agent`
+  - [x] `reality-monitor-agent` 用户存在且在 docker 组：`id reality-monitor-agent`
   - [ ] token 文件：`stat -c '%a %U' /opt/reality/monitor/agent_token` = `600 reality-monitor-agent`
-  - [ ] cron 迁移：`crontab -u reality-monitor-agent -l | grep -q shuf` 且 `crontab -l`（root）无 "Reality Traffic Report" 残留
-  - [ ] **cron 真执行**（nologin 用户关键风险）：等 1–2 分钟后 `/opt/reality/monitor/state/traffic_cache.json` 出现、`state/agent.log` 无致命错误
-  - [ ] **首跑 re-baseline 正常**：该节点首个周期上报 0（基线重建），第二周期起正常增量——确认服务端**无巨值单条**
+  - [x] cron 迁移：`crontab -u reality-monitor-agent -l | grep -q shuf` 且 `crontab -l`（root）无 "Reality Traffic Report" 残留
+  - [x] **cron 真执行**（nologin 用户关键风险）：`/opt/reality/monitor/state/traffic_cache.json` 已出现用户基线
+  - [x] **首跑 re-baseline 正常**：`jp10` 修复后服务端 `last_seen_ago_sec` 刷新到秒级，`stale=false`
   - [ ] **IP 审计恢复**：上报一轮后 `user_ip_hits` 出现该节点新行（B3+B4+B5 验证）：`sqlite3 ... "SELECT count(*) FROM user_ip_hits WHERE node='<node1>'"` > 0
   - [ ] pending 正常：制造一次失败（停 server 1 周期再起）→ 校验**无丢行、无重复行**、`state` 里 pending 累计后清空
 - [ ] **4.3** 再加 1 台（multi 模式节点优先，验证 B3 多容器日志路径）
@@ -116,5 +118,5 @@
 
 ## 关联文档
 - 修复主计划：[`plan-harden-monitor-2026-06-13.md`](./plan-harden-monitor-2026-06-13.md)
-- 各阶段 changelog：[`round2`](./round2-2026-06-21.changelog.md)（阶段1）·[`round3`](./round3-2026-06-21.changelog.md)（阶段2-server）·[`round4`](./round4-2026-06-21.changelog.md)（阶段2-agent）·[`round5`](./round5-2026-06-21.changelog.md)（阶段3）
+- 各阶段 changelog：[`round2`](./round2-2026-06-21.changelog.md)（阶段1）·[`round3`](./round3-2026-06-21.changelog.md)（阶段2-server）·[`round4`](./round4-2026-06-21.changelog.md)（阶段2-agent）·[`round5`](./round5-2026-06-21.changelog.md)（阶段3）·[`round7`](./round7-2026-06-22.changelog.md)（jp10 agent 灰度）
 - staging 环境：[`plan-staging-env-2026-06-13.md`](./plan-staging-env-2026-06-13.md)

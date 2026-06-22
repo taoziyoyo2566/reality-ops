@@ -9,14 +9,14 @@
 
 监控加固方向正确：D1-B 鉴权、token 外置、专用用户、DB 独立目录、WAL、staging guard 都明显优于旧实现。
 
-从项目架构角度看，`spt` 服务端金丝雀已完成，可以作为当前生产基线继续观察；但仍不适合直接全量 agent 扩面。剩余风险主要集中在节点身份一致性、运维入口一致性、agent 分批升级验证。
+从项目架构角度看，`spt` 服务端金丝雀已完成，`jp10` 第一台 agent 灰度也已跑通，可以继续进入第二台 agent 灰度；但仍不适合直接全量 agent 扩面。剩余风险主要集中在节点身份一致性、运维入口一致性、agent 分批升级验证。
 
 ## 当前处理状态
 
-- 已处理：P0-1 agent 空采样清空 baseline、P0-2 monitor tag 边界、P1-1 旧/新 DB 并存 fail closed 与 check-mode 兼容、P1-2 cleanup admin-only、P1-3 `user_ip_hits` retention。
+- 已处理：P0-1 agent 空采样清空 baseline、P0-2 monitor tag 边界、P1-1 旧/新 DB 并存 fail closed 与 check-mode 兼容、P1-2 cleanup admin-only、P1-3 `user_ip_hits` retention、P1-4 single stats 解析缺陷。
 - 未处理：P0-3 `DE` / `netcup` canonical host name 需要先确认以哪个名字作为 inventory 主身份；P2-1 Ansible shortcut 入口统一仍待收敛。
 - 已上线：`spt + monitor_server` 已实际执行，`reality-monitor.service` active，`/healthz` 为 ok/wal；Bearer `/stats/health` 正常；CF Request Header Transform Rule 已配通，`/stats/ui` 从白名单 IP 可访问。
-- 当前建议：进入 Phase 4，挑 1-2 台低风险节点部署 `monitor_agent`/`monitor_config` 验证 cron、docker 采集、pending、IP 审计；不要在确认 `DE/netcup` 前改 inventory 主机名，也不要直接全量 agent 展开。
+- 当前建议：Phase 4 继续第二台节点，优先选 multi 模式节点验证多容器日志/IP 审计；不要在确认 `DE/netcup` 前改 inventory 主机名，也不要直接全量 agent 展开。
 
 ## Findings
 
@@ -78,6 +78,14 @@
 - 影响：IP 审计表长期增长；查询按 `last_seen` 过滤但存储不回收，后续会带来磁盘和索引膨胀。
 - 建议：同步执行 `DELETE FROM user_ip_hits WHERE last_seen<?`，并保留 WAL checkpoint。
 
+### P1-4：single 模式 stats 解析会被缺少 `value` 的 stat 项拖成空采样
+
+- 状态：已修复。agent 解析 `xray statsquery` 时跳过无 `value` 或 0 值项；同时兼容 `user>>>name.host>>>traffic>>>...` 与 `inbound>>>user-name>>>traffic>>>...` 两类计数，优先使用 user 维度，inbound 只补缺失方向，避免双计。
+- 位置：`roles/monitor/templates/agent.py.j2:125-178`
+- 现象：`jp10` 灰度中，`xray api statsquery` 返回了缺少 `value` 的 stat 项；旧解析一旦遇到缺失字段或只看单一命名形态，可能导致 `traffic_cache.json` 被写成 `{"users": {}, "pending": {}}`，服务端 `jp10` 长期 `stale=true`。
+- 影响：single 节点 agent 看似执行成功（exit 0、无日志），但不产生基线或增量，上报静默中断。
+- 建议：扩面前先部署修复后的 agent 模板；每台灰度节点必须检查 `traffic_cache.json` 非空、`/stats/health` 中该节点 `stale=false`。
+
 ### P2-1：两个 Ansible 入口能力不一致
 
 - 位置：`ansible-playbook:46-64`、`scripts/ansible_shortcuts.sh:48-104`
@@ -95,11 +103,12 @@
 - 现网 `spt` 服务端金丝雀已执行：`systemctl status reality-monitor` active，`curl http://127.0.0.1:8000/healthz` 返回 ok/wal。
 - 现网 Bearer `/stats/health` 已返回节点健康数据。
 - CF 端到端已验证：Request Header Transform Rule 注入 `X-Monitor-Tunnel-Secret` 后，`monitor.taoziyoyo.com` 仪表板恢复访问；误配为 Response Header 时会 401。
+- `jp10` agent 灰度已验证：`reality-monitor-agent` 在 docker 组，cron 已迁移；修复 stats 解析后 `traffic_cache.json` 出现用户基线，`/stats/health` 中 `jp10 last_seen_ago_sec=5`、`stale=false`、`report_count=10`。
 
 ## 建议修复顺序
 
 1. 观察 `spt` server 金丝雀 24 小时：`/stats/health`、`journalctl -u reality-monitor`、retention cron、DB WAL 文件增长情况。
-2. 选择 1 台低风险节点进入 Phase 4，部署 `monitor_agent`/`monitor_config`，验证 cron、docker exec、pending、IP 审计。
+2. 选择第 2 台节点进入 Phase 4，优先选 multi 模式节点，验证 cron、docker exec、pending、IP 审计。
 3. 确认 P0-3：选择 canonical host name，是 `DE` 还是 `netcup`，再统一 inventory、group membership、host_vars 和 wrapper 目标名。
 4. 修 P2-1：让 `scripts/ansible_shortcuts.sh` 复用根目录 `./ansible-playbook`，或废弃 shortcut。
 5. Phase 4 两台节点稳定后，再按批次进入全量 agent，不要一次性全量。

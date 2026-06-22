@@ -20,7 +20,8 @@
 - `/healthz` 已返回 `{"status":"ok","db_ok":true,"journal_mode":"wal"}`，说明新 DB 路径和 WAL 可用。
 - 本机 Bearer 访问 `/stats/health` 已验证正常。
 - `vault_monitor_tunnel_secret` 已配置为 64 字符 secret；Cloudflare 已配置 **Request Header Transform Rule** 注入 `X-Monitor-Tunnel-Secret`，浏览器经 `https://monitor.taoziyoyo.com/stats/ui` 可从白名单 IP 访问。
-- agent 全量升级尚未完成；后续按部署 checklist Phase 4/5 分批推进。
+- `jp10` 已完成第一台 agent 灰度：`reality-monitor-agent` 在 docker 组，cron 已迁移，`traffic_cache.json` 已出现用户基线，`/stats/health` 显示 `jp10 stale=false`。
+- agent 全量升级尚未完成；后续先部署 single stats 解析修复后的模板，再按部署 checklist Phase 4/5 分批推进。
 
 ## 2. 组件与文件位置
 

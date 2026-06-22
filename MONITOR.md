@@ -11,7 +11,8 @@
 * `spt` 监控服务端已完成加固金丝雀部署，`reality-monitor.service` 以 `reality-monitor` 用户运行。
 * `/healthz` 已验证为 `{"status":"ok","db_ok":true,"journal_mode":"wal"}`。
 * `vault_monitor_tunnel_secret` 已配置，Cloudflare **Request Header Transform Rule** 已注入 `X-Monitor-Tunnel-Secret`，`https://monitor.taoziyoyo.com/stats/ui` 可从白名单 IP 免 Bearer 访问。
-* 尚未全量升级 agent；agent 扩面仍按 [`deploy-checklist`](docs/reviews/fix-monitor-integrity/deploy-checklist-2026-06-21.md) Phase 4/5 分批推进。
+* `jp10` 已完成第一台 agent 灰度：专用用户/cron/docker 权限正常，`/stats/health` 已恢复 `stale=false`。
+* 尚未全量升级 agent；扩面前需部署已修复的 agent 模板（single stats 解析会跳过无 `value` 项），并继续按 [`deploy-checklist`](docs/reviews/fix-monitor-integrity/deploy-checklist-2026-06-21.md) Phase 4/5 分批推进。
 
 ## 2. 访问地址
 * **可视化仪表盘**: `https://monitor.taoziyoyo.com/stats/ui` （需 D1-B 白名单或 Bearer）

@@ -130,24 +130,58 @@ def get_core_stats():
         if res.returncode != 0:
             return {}
         data = json.loads(res.stdout)
-        stats = {}
+        user_stats = {}
+        inbound_stats = {}
+
+        def clean_user(raw_user):
+            user = raw_user
+            if user.startswith("user-"):
+                user = user[5:]
+            user = user.split('@')[0] if '@' in user else user
+            user = user.split('.')[0] if '.' in user else user
+            return user
+
+        def add_stat(bucket, raw_user, type_, value):
+            if type_ not in ('uplink', 'downlink'):
+                return
+            real_user = clean_user(raw_user)
+            if not real_user:
+                return
+            if real_user not in bucket:
+                bucket[real_user] = {'up': 0, 'down': 0}
+            if type_ == 'uplink':
+                bucket[real_user]['up'] += value
+            if type_ == 'downlink':
+                bucket[real_user]['down'] += value
+
         if 'stat' in data:
             for item in data['stat']:
-                parts = item['name'].split('>>>')
-                if len(parts) == 4 and parts[0] == 'user':
-                    raw_user = parts[1]
-                    # 清洗用户名，去掉主机名后缀
-                    real_user = raw_user.split('.')[0] if '.' in raw_user else raw_user
-                    type_ = parts[3]
-                    val = int(item['value'])
-                    if real_user not in stats:
-                        stats[real_user] = {'up': 0, 'down': 0}
-                    if type_ == 'uplink':
-                        stats[real_user]['up'] += val
-                    if type_ == 'downlink':
-                        stats[real_user]['down'] += val
+                try:
+                    val = int(item.get('value', 0) or 0)
+                except Exception:
+                    continue
+                if val <= 0:
+                    continue
+                parts = item.get('name', '').split('>>>')
+                if len(parts) != 4 or parts[2] != 'traffic':
+                    continue
+                if parts[0] == 'user':
+                    add_stat(user_stats, parts[1], parts[3], val)
+                elif parts[0] == 'inbound' and parts[1].startswith('user-'):
+                    add_stat(inbound_stats, parts[1], parts[3], val)
+
+        # 优先使用 xray user 维度；inbound user-* 只补 user 维度缺失的用户/方向，避免双计。
+        stats = user_stats
+        for user, flow in inbound_stats.items():
+            if user not in stats:
+                stats[user] = flow
+                continue
+            for direction in ('up', 'down'):
+                if stats[user].get(direction, 0) == 0 and flow.get(direction, 0) > 0:
+                    stats[user][direction] = flow[direction]
         return stats
-    except Exception:
+    except Exception as e:
+        log(f"get_core_stats failed: {e}")
         return {}
 
 
