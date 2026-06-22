@@ -1,0 +1,3 @@
+# de 节点监控配置
+reality_mode: single
+monitor_enabled: true

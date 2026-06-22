@@ -13,10 +13,10 @@
 
 ## 当前处理状态
 
-- 已处理：P0-1 agent 空采样清空 baseline、P0-2 monitor tag 边界、P1-1 旧/新 DB 并存 fail closed 与 check-mode 兼容、P1-2 cleanup admin-only、P1-3 `user_ip_hits` retention、P1-4 single stats 解析缺陷。
-- 未处理：P0-3 `DE` / `netcup` canonical host name 需要先确认以哪个名字作为 inventory 主身份；P2-1 Ansible shortcut 入口统一仍待收敛。
+- 已处理：P0-1 agent 空采样清空 baseline、P0-2 monitor tag 边界、P0-3 `DE` / `netcup` canonical host name 统一为 `de`、P1-1 旧/新 DB 并存 fail closed 与 check-mode 兼容、P1-2 cleanup admin-only、P1-3 `user_ip_hits` retention、P1-4 single stats 解析缺陷。
+- 未处理：P2-1 Ansible shortcut 入口统一仍待收敛。
 - 已上线：`spt + monitor_server` 已实际执行，`reality-monitor.service` active，`/healthz` 为 ok/wal；Bearer `/stats/health` 正常；CF Request Header Transform Rule 已配通，`/stats/ui` 从白名单 IP 可访问。
-- 当前建议：Phase 4 继续第二台节点，优先选 multi 模式节点验证多容器日志/IP 审计；不要在确认 `DE/netcup` 前改 inventory 主机名，也不要直接全量 agent 展开。
+- 当前建议：`de` 单节点执行 agent 验证，确认 `/stats/health` fresh 后再视情况做全量复跑；不要直接无 `--limit` 展开。
 
 ## Findings
 
@@ -43,13 +43,14 @@
 
 ### P0-3：inventory 主机名不一致，`DE` 和 `netcup` 被当成两个节点身份
 
-- 位置：`inventory.ini:4`、`inventory.ini:34-36`、`host_vars/netcup.yml:1-3`
+- 状态：已修复。canonical host name 统一为 `de`；`host_vars/netcup.yml` 改为 `host_vars/de.yml`；`[free]` 分组改为 `de`；连接暂通过 `ansible_host=netcup` 复用现有 SSH config。
+- 位置：`inventory.ini:4`、`inventory.ini:34-36`、`host_vars/de.yml:1-3`
 - 现象：`[reality_nodes]` 中是 `DE`，但 `[free]` 分组和 host_vars 使用 `netcup`。
 - 影响：
   - 部署目标是 `DE`，但 `host_vars/netcup.yml` 不会应用到 `DE`。
   - `DE` 不在 `[free]` 组，ACL 档位和用户下发会偏离预期。
   - wrapper 的 `host_in_reality_nodes` 判断也只认 `[reality_nodes]` 第一列，`./ansible-playbook deploy netcup` 与 `deploy DE` 语义不一致。
-- 建议：统一 canonical host name。推荐使用 `netcup ansible_host=DE ansible_python_interpreter=/usr/bin/python3` 或把所有 `netcup` 引用统一改成 `DE`。同时补 inventory consistency check：所有 `host_vars/*.yml` 主机必须在 inventory 中，所有分组主机必须在 `[reality_nodes]` 或明确允许例外。
+- 建议：后续若本机 SSH config 已补 `Host de`，可去掉 `ansible_host=netcup`，让连接名也完全收敛到 `de`。
 
 ### P1-1：DB 自动迁移遇到“旧库和新库同时存在”会静默跳过
 
@@ -109,6 +110,6 @@
 
 1. 观察 `spt` server 金丝雀 24 小时：`/stats/health`、`journalctl -u reality-monitor`、retention cron、DB WAL 文件增长情况。
 2. 选择第 2 台节点进入 Phase 4，优先选 multi 模式节点，验证 cron、docker exec、pending、IP 审计。
-3. 确认 P0-3：选择 canonical host name，是 `DE` 还是 `netcup`，再统一 inventory、group membership、host_vars 和 wrapper 目标名。
+3. 对 `de` 单节点执行 monitor agent 验证，确认 host_vars 与 `[free]` 档位均按 `de` 生效。
 4. 修 P2-1：让 `scripts/ansible_shortcuts.sh` 复用根目录 `./ansible-playbook`，或废弃 shortcut。
 5. Phase 4 两台节点稳定后，再按批次进入全量 agent，不要一次性全量。

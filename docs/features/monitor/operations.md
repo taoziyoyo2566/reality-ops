@@ -21,7 +21,7 @@
 - 本机 Bearer 访问 `/stats/health` 已验证正常。
 - `vault_monitor_tunnel_secret` 已配置为 64 字符 secret；Cloudflare 已配置 **Request Header Transform Rule** 注入 `X-Monitor-Tunnel-Secret`，浏览器经 `https://monitor.taoziyoyo.com/stats/ui` 可从白名单 IP 访问。
 - 生产 agent 已分批升级并验证：`jp10`、`dzire`、`sg`、`ams`、`jp05`、`dcc`、`hk-hn`、`hk-hn2`、`jpntt` 均已恢复 `stale=false`。
-- 剩余暂不批量处理：`DE` / `netcup` inventory 身份不一致，需先统一 canonical host name。
+- `DE` / `netcup` inventory 身份不一致已处理：canonical host name 统一为 `de`，连接暂复用 SSH config `Host netcup`。
 
 ## 2. 组件与文件位置
 
