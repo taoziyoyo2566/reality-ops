@@ -22,6 +22,7 @@
 - `vault_monitor_tunnel_secret` 已配置为 64 字符 secret；Cloudflare 已配置 **Request Header Transform Rule** 注入 `X-Monitor-Tunnel-Secret`，浏览器经 `https://monitor.taoziyoyo.com/stats/ui` 可从白名单 IP 访问。
 - 生产 agent 已分批升级并验证：`jp10`、`dzire`、`sg`、`ams`、`jp05`、`dcc`、`hk-hn`、`hk-hn2`、`jpntt` 均已恢复 `stale=false`。
 - `DE` / `netcup` inventory 身份不一致已处理：canonical host name 统一为 `de`，连接暂复用 SSH config `Host netcup`。
+- 旧节点名历史数据已清理：`lej`→`jp05`、`legend`→`sg`、`netcup`→`de`，`/stats/health` 不再显示旧节点名。
 
 ## 2. 组件与文件位置
 
@@ -89,6 +90,21 @@ systemctl status reality-monitor; journalctl -u reality-monitor -n 50
 curl -s -H 'Authorization: Bearer <stats_token>' http://127.0.0.1:8000/stats/health   # 各节点 last_seen / stale
 ```
 
+本机读取 stats token：
+```bash
+STATS_TOKEN=$(sudo awk -F= '/^MONITOR_STATS_BEARER_TOKEN=/{print $2}' /opt/reality/monitor/monitor.env)
+
+curl -sS -H "Authorization: Bearer $STATS_TOKEN" \
+  "http://127.0.0.1:8000/stats/health"
+```
+
+精确检查某些节点是否仍出现在 health 里（不要用 `grep` 判断 JSON 数组，匹配到一项会打印整行）：
+```bash
+curl -sS -H "Authorization: Bearer $STATS_TOKEN" \
+  "http://127.0.0.1:8000/stats/health" \
+  | /opt/reality/monitor/.venv/bin/python3 -c 'import sys,json; print([x for x in json.load(sys.stdin) if x["node"] in {"lej","legend","netcup"}])'
+```
+
 **新增运维访问 IP**（白名单渲染进 server.py）
 1. 编辑 `group_vars/all/main.yml` → `monitor.ip_allowlist` 增 IP
 2. `ansible-playbook deploy.yml --tags monitor_server --limit spt`（重渲染 + 重启）
@@ -105,11 +121,89 @@ curl -s -H 'Authorization: Bearer <stats_token>' http://127.0.0.1:8000/stats/hea
 - 手动 cleanup：`POST /stats/cleanup?days=90` 仅接受 `Authorization: Bearer <admin_token>`，stats token 只读。
 - **整库 VACUUM**（缩文件，会整库加锁，**低频手工、择低峰**）：`systemctl stop reality-monitor; sudo -u reality-monitor sqlite3 /opt/reality/monitor/data/traffic_monitor.db 'VACUUM;'; systemctl start reality-monitor`
 
+**清理旧节点历史数据**
+
+节点改名后，如果历史数据没有保留价值，可直接删除旧节点名在监控库里的记录。先确认新 agent 已按新节点名上报，再执行：
+
+```bash
+sudo install -d -m 0700 /opt/reality/monitor/db-backups
+sudo systemctl stop reality-monitor
+
+sudo /opt/reality/monitor/.venv/bin/python3 - <<'PY'
+import sqlite3, time
+
+db = "/opt/reality/monitor/data/traffic_monitor.db"
+legacy_nodes = ("lej", "legend", "netcup")
+
+backup = f"/opt/reality/monitor/db-backups/traffic_monitor.db.before-legacy-node-clean-{int(time.time())}"
+
+src = sqlite3.connect(db)
+dst = sqlite3.connect(backup)
+src.backup(dst)
+dst.close()
+
+cur = src.cursor()
+
+for table in ("records", "user_ip_hits"):
+    q = ",".join("?" for _ in legacy_nodes)
+    cur.execute(f"SELECT COUNT(*) FROM {table} WHERE node IN ({q})", legacy_nodes)
+    before = cur.fetchone()[0]
+
+    cur.execute(f"DELETE FROM {table} WHERE node IN ({q})", legacy_nodes)
+    deleted = cur.rowcount
+
+    print(f"{table}: before={before}, deleted={deleted}")
+
+src.commit()
+cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+src.close()
+
+print("backup:", backup)
+PY
+
+sudo systemctl start reality-monitor
+```
+
+验证旧节点已消失：
+```bash
+curl -sS -H "Authorization: Bearer $STATS_TOKEN" \
+  "http://127.0.0.1:8000/stats/health" \
+  | /opt/reality/monitor/.venv/bin/python3 -c 'import sys,json; print([x for x in json.load(sys.stdin) if x["node"] in {"lej","legend","netcup"}])'
+```
+
+预期输出为 `[]`。注意 heredoc 中 Python 代码必须从行首开始，不能整体缩进，否则会触发 `IndentationError`。
+
 **增 / 减节点 agent**
 - 增：`ansible-playbook deploy.yml --tags monitor_config --limit <node>`（建用户/token/cron/脚本）
 - 减/停某节点监控：`monitor_enabled: false`（host_vars/group_vars）→ 部署触发 cleanup（停服务、删脚本、移 cron）
 
 **关停整套监控**：`monitor_enabled: false` → cleanup block 生效。
+
+**agent 灰度 / 全量刷新**
+
+```bash
+# 单节点预演和实际执行
+./ansible-playbook deploy jp10 --tags monitor_agent --check --diff -K
+./ansible-playbook deploy jp10 --tags monitor_agent -K
+
+# 多节点必须写成一个 inventory pattern
+./ansible-playbook deploy 'sg:ams:jp05' --tags monitor_agent --check --diff -K
+./ansible-playbook deploy 'sg:ams:jp05' --tags monitor_agent -K
+
+# 全量生产 agent 刷新
+./ansible-playbook deploy 'dzire:de:ams:dcc:sg:jp05:hk-hn:hk-hn2:jp10:jpntt:spt' --tags monitor_agent -K
+```
+
+执行后验证：
+```bash
+ssh <node> 'id reality-monitor-agent && groups reality-monitor-agent'
+ssh <node> 'sudo crontab -u reality-monitor-agent -l'
+ssh <node> 'sudo -u reality-monitor-agent /opt/reality/monitor/.venv/bin/python3 /usr/local/bin/traffic_agent.py; echo exit=$?'
+ssh <node> 'sudo wc -c /opt/reality/monitor/state/traffic_cache.json && sudo head -c 1000 /opt/reality/monitor/state/traffic_cache.json; echo'
+curl -sS -H "Authorization: Bearer $STATS_TOKEN" "http://127.0.0.1:8000/stats/health"
+```
+
+`agent.log` 不存在不一定是异常；脚本只有遇到跳过/失败路径时才写日志。以 `traffic_cache.json` 非空、`/stats/health` 中该节点 `stale=false` 为准。
 
 ## 5. 故障排查
 

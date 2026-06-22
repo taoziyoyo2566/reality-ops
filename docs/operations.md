@@ -178,6 +178,10 @@ ssh <节点> 'docker ps --format "{{.Names}}"'
 ./ansible-playbook deploy jp10 --tags users
 ./ansible-playbook deploy premium --tags users
 
+# 多节点显式刷新：目标必须写成一个 inventory pattern，不要把多个主机写成多个位置参数
+./ansible-playbook deploy 'dzire:de:ams:dcc:sg:jp05:hk-hn:hk-hn2:jp10:jpntt:spt' --tags users --check --diff -K
+./ansible-playbook deploy 'dzire:de:ams:dcc:sg:jp05:hk-hn:hk-hn2:jp10:jpntt:spt' --tags users -K
+
 # 只刷订阅（不碰容器，最快）：清理该节点旧订阅缓存 + 按当前用户重生成 + 推 Gist
 # 适用：容器已正确、只是订阅缓存陈旧（解封后、被删/被封用户残留在订阅里）
 ./ansible-playbook deploy dcc --tags local_file,gist -K
@@ -203,6 +207,43 @@ ssh <节点> 'docker ps --format "{{.Names}}"'
 
 - `--tags users` 是最快路径，但**首次初始化至少完整跑一次**确保依赖齐全。
 - 镜像策略为 `latest`：完整部署会拉镜像；也可单独 `--tags update_image` 强刷。
+
+### 5.1 用户 / 订阅一致性收尾
+
+新增用户、修改用户档位/hosts/deny_hosts、节点改名或发现订阅里有旧节点时，按这个顺序收口：
+
+```bash
+# 1) 先确认本地订阅缓存里是否有旧节点名或目标用户残留
+sudo find /opt/reality/users -maxdepth 1 -type f \( \
+  -name '<user>_*.json' -o \
+  -name '*_netcup.json' -o \
+  -name '*_lej.json' -o \
+  -name '*_legend.json' \
+\) -print
+
+# 2) 删除明确应重建的缓存；不要删 users/*.yml 源配置
+sudo find /opt/reality/users -maxdepth 1 -type f \( \
+  -name '<user>_*.json' -o \
+  -name '*_netcup.json' -o \
+  -name '*_lej.json' -o \
+  -name '*_legend.json' \
+\) -delete
+
+# 3) 重新部署受影响节点；会更新 Xray 配置、本地订阅 JSON，并推送 Gist
+./ansible-playbook deploy '<node1>:<node2>:<node3>' --tags users --check --diff -K
+./ansible-playbook deploy '<node1>:<node2>:<node3>' --tags users -K
+
+# 4) 验证目标用户只出现在预期节点
+find /opt/reality/users -maxdepth 1 -type f -name '<user>_*.json' -printf '%f\n' | sort
+
+# 5) 验证旧节点名缓存已清空
+find /opt/reality/users -maxdepth 1 -type f \( -name '*_netcup.json' -o -name '*_lej.json' -o -name '*_legend.json' \) -print
+```
+
+注意：
+- Ansible wrapper 的多主机目标使用 inventory pattern，例如 `'sg:ams:jp05'`；`./ansible-playbook deploy sg ams jp05 ...` 会被解析为多个 playbook 参数而报错。
+- `users/*.yml` 是源配置，`/opt/reality/users/*.json` 是订阅缓存。Gist 只聚合缓存文件，所以旧缓存会继续污染订阅，必须显式清掉或用对应节点的 `--tags users/local_file,gist` 重建。
+- 新用户文件必须纳入 git；未跟踪的 `users/*.yml` 也会被本机 Ansible 读取，但其他控制端/远端仓库不会有这份配置。
 
 ---
 
