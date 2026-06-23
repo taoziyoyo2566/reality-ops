@@ -43,14 +43,14 @@
 
 ### P0-3：inventory 主机名不一致，`DE` 和 `netcup` 被当成两个节点身份
 
-- 状态：已修复。canonical host name 统一为 `de`；`host_vars/netcup.yml` 改为 `host_vars/de.yml`；`[free]` 分组改为 `de`；连接暂通过 `ansible_host=netcup` 复用现有 SSH config。
+- 状态：已修复。canonical host name 统一为 `de`；`host_vars/netcup.yml` 改为 `host_vars/de.yml`；`[free]` 分组改为 `de`；连接使用 SSH config `Host de`。
 - 位置：`inventory.ini:4`、`inventory.ini:34-36`、`host_vars/de.yml:1-3`
 - 现象：`[reality_nodes]` 中是 `DE`，但 `[free]` 分组和 host_vars 使用 `netcup`。
 - 影响：
   - 部署目标是 `DE`，但 `host_vars/netcup.yml` 不会应用到 `DE`。
   - `DE` 不在 `[free]` 组，ACL 档位和用户下发会偏离预期。
   - wrapper 的 `host_in_reality_nodes` 判断也只认 `[reality_nodes]` 第一列，`./ansible-playbook deploy netcup` 与 `deploy DE` 语义不一致。
-- 建议：后续若本机 SSH config 已补 `Host de`，可去掉 `ansible_host=netcup`，让连接名也完全收敛到 `de`。
+- 后续处理：本机 SSH config 已补 `Host de`，`inventory.ini` 已去掉旧的 `netcup` 连接 override，连接名也收敛到 `de`。
 
 ### P1-1：DB 自动迁移遇到“旧库和新库同时存在”会静默跳过
 

@@ -21,7 +21,7 @@
 - [x] agent 已分批升级并验证：`jp10`、`dzire`、`sg`、`ams`、`jp05`、`dcc`、`hk-hn`、`hk-hn2`、`jpntt` 均已恢复 `stale=false`。
 - [x] `jpntt` 灰度暴露 access.log OOM 风险：旧 agent 会整文件 `cat` 后再截尾；已改为容器内 `tail -n 4000` 后再解析。
 - [x] warm-up 已改为 root 下 `sudo -n -u reality-monitor-agent -- ...`，避免 Ansible 对 nologin 用户创建 remote tmp 的 warning/延迟。
-- [x] `DE` / `netcup` inventory 身份不一致已处理：canonical host name 统一为 `de`，连接暂复用 SSH config `Host netcup`。
+- [x] `DE` / `netcup` inventory 身份不一致已处理：canonical host name 统一为 `de`，连接使用 SSH config `Host de`。
 
 ---
 

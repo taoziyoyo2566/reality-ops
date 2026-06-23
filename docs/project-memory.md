@@ -77,7 +77,7 @@ legend -> sg
 lej -> jp05
 ```
 
-Inventory currently keeps `de ansible_host=netcup` to reuse the existing SSH config host.
+Inventory now uses canonical host `de` directly; SSH connection resolves through local SSH config `Host de`.
 
 Old monitor history for `netcup`, `legend`, and `lej` was deleted from the monitor DB because historical data was not needed:
 
