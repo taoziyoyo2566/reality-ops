@@ -19,6 +19,19 @@ reality_mem_swappiness: 60
 reality_conn_limit_single: 24
 reality_conn_limit_multi: 6
 
+# --- 节点别名标签（客户端显示名） ---
+# node_tags 在 host_vars/<host>.yml 覆盖，如 node_tags: ["4837", "Unlimited"]
+# 空列表 -> 别名仅显示主机名，不带方括号
+node_tags: []
+node_alias: "{{ inventory_hostname }}{{ ' [' ~ (node_tags | join(' · ')) ~ ']' if node_tags | length > 0 else '' }}"
+
+# --- 连接地址（vless server 段） ---
+# 默认用域名形式；host_vars 设 use_local_ip: true 则改用部署时探测的公网 IPv4，
+# 探测不到再退回默认网卡 IP（本机IP）。node_address 直接钉死一个 IP（最高优先级）。
+node_address: ""
+use_local_ip: false
+node_endpoint: "{{ node_address if (node_address | default('') | length > 0) else (global_ipv4 if (use_local_ip | bool and (global_ipv4 | default('')) | length > 0) else (ansible_default_ipv4.address if (use_local_ip | bool and ansible_default_ipv4.address is defined) else inventory_hostname ~ server_hash_suffix ~ '.' ~ domain_suffix)) }}"
+
 # 可选：SOCKS5 落地（默认关闭；可在 host_vars/<host>.yml 覆盖）
 reality_socks5:
   enabled: false

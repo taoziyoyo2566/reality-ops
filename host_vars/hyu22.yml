@@ -5,3 +5,5 @@
 reality_mode: multi
 reality_node_users:
   - test
+# 客户端显示标签（自由列表）——待填，例: ["Optimized", "Native"]
+node_tags: ["test"]

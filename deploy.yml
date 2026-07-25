@@ -85,9 +85,48 @@
         - reality_node_users is defined
       tags: ['always']
 
+    - name: "[前置检查] 校验 Reality dest 与 serverNames 配套"
+      vars:
+        dest_raw: "{{ reality_dest | default('') }}"
+        dest_host: "{{ reality_dest | default('') | regex_replace(':[0-9]+$', '') }}"
+        dest_port: "{{ reality_dest | default('') | regex_search(':[0-9]+$') | default('', true) }}"
+        sni_list: "{{ reality_server_names if ((reality_server_names is defined) and (reality_server_names is sequence) and (reality_server_names is not string)) else [] }}"
+        # dest 为 IP 字面量时是回落到本机服务，不要求与 serverNames 同名
+        dest_is_literal_ip: "{{ (dest_host is match('^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')) or (dest_host is match('^\\[')) }}"
+        # www.example.com -> *.example.com，用于匹配 serverNames 里的单级通配符条目
+        dest_wildcard_form: "{{ dest_host | regex_replace('^[^.]+', '*') }}"
+        sni_covers_dest: "{{ (dest_is_literal_ip | bool) or (dest_host in sni_list) or (dest_wildcard_form in sni_list) }}"
+        # serverNames 里的每个名字都必须能被 dest 服务器的同一张证书覆盖。
+        # 无法在此真实校验 SAN，用「末两段相同」作近似：跨厂商混配（如 yahoo + microsoft）会被拦下。
+        sni_apex_set: "{{ sni_list | map('regex_replace', '^.*?([^.]+\\.[^.]+)$', '\\1') | unique | list }}"
+        sni_same_origin: "{{ (dest_is_literal_ip | bool) or (sni_apex_set | length <= 1) }}"
+      assert:
+        that:
+          - dest_raw | length > 0
+          - dest_port | length > 0
+          - sni_list | length > 0
+          - sni_covers_dest | bool
+          - sni_same_origin | bool
+        fail_msg: >-
+          节点 '{{ inventory_hostname }}' 的 Reality 回落配置无效：
+          reality_dest={{ dest_raw | default('(空)') }}，reality_server_names={{ reality_server_names | default('(未定义)') }}。
+          要求：reality_dest 形如 "www.example.com:443"（必须带端口）；
+          reality_server_names 必须是非空列表（不能是字符串）；
+          且 dest 的域名部分必须出现在 serverNames 中（"*.example.com" 这类单级通配条目也算覆盖）；
+          serverNames 内所有域名必须同源（能被 dest 服务器的同一张证书覆盖），
+          不能把不同厂商的域名（如 yahoo 与 microsoft）混在一起。
+          注意这两个变量要在 host_vars/{{ inventory_hostname }}.yml 里成对覆盖，
+          只改其中一个会导致部署成功但 Reality 握手失败、节点静默不可用。
+      tags: ['always']
+
     - name: "[前置检查] 识别全局 IPv6 地址"
       set_fact:
         global_ipv6: "{{ (ansible_facts['all_ipv6_addresses'] | default([]) | reject('match', '^fe80') | reject('match', '^::1') | reject('match', '^fd') | reject('match', '^fc') | list | first) | default('') }}"
+      tags: ['always']
+
+    - name: "[前置检查] 识别本机公网 IPv4 地址（node_endpoint 用）"
+      set_fact:
+        global_ipv4: "{{ (ansible_facts['all_ipv4_addresses'] | default([]) | reject('match', '^127\\.') | reject('match', '^10\\.') | reject('match', '^192\\.168\\.') | reject('match', '^169\\.254\\.') | reject('match', '^172\\.(1[6-9]|2[0-9]|3[01])\\.') | list | first) | default('') }}"
       tags: ['always']
 
     - name: "[核心路由] 节点本位认领：基于 ACL 矩阵的精准过滤"

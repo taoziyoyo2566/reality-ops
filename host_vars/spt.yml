@@ -1,3 +1,10 @@
 # 多实例部署（暂不启用监控）
 reality_mode: single
 monitor_enabled: true
+# 客户端显示标签（自由列表）
+node_tags: ["Unlimited","4837"]
+# Reality 回落：Walmart（美西西雅图节点；全美 CDN 覆盖，本地有边缘节点）。
+# 与 dcc 的 ebay、usca 的 costco 刻意错开，三台美国节点互不同 SNI。
+# dest 与 serverNames 必须成对覆盖，只改一个会导致握手失败；deploy.yml 前置检查会拦。
+reality_dest: "www.walmart.com:443"
+reality_server_names: ["www.walmart.com"]

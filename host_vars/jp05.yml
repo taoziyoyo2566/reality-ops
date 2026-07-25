@@ -1,3 +1,9 @@
 # 多实例部署（暂不启用监控）
 reality_mode: single
 monitor_enabled: true
+# 客户端显示标签（自由列表）——待填，例: ["Optimized", "Native"]
+node_tags: ["Optimized"]
+# Reality 回落：日本节点改用 Yahoo Japan（地理自洽，且大陆未阻断该 SNI）。
+# dest 与 serverNames 必须成对覆盖，只改一个会导致握手失败；deploy.yml 前置检查会拦。
+reality_dest: "www.yahoo.co.jp:443"
+reality_server_names: ["www.yahoo.co.jp"]

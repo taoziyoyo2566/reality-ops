@@ -10,3 +10,11 @@ reality_socks5:
   username: "{{ vault_dcc_socks5_username | default('') }}"
   password: "{{ vault_dcc_socks5_password | default('') }}"
   target_users: ["lin_isp"]   # 仅这些用户在当前节点走 socks5 出站
+
+# 客户端显示标签（自由列表）——待填，例: ["Triple-ISP"]
+node_tags: ["Premium"]
+# Reality 回落：eBay（美西节点；大陆用户海淘访问美国主站是常见行为，客户端侧画像最自然）。
+# 与 usca 的 costco 刻意错开，避免两台美西同 SNI 被横向关联。
+# dest 与 serverNames 必须成对覆盖，只改一个会导致握手失败；deploy.yml 前置检查会拦。
+reality_dest: "www.ebay.com:443"
+reality_server_names: ["www.ebay.com"]

@@ -1,0 +1,8 @@
+# de 节点监控配置
+reality_mode: single
+monitor_enabled: true
+# 客户端显示标签（自由列表）——待填，例: ["Optimized", "Native"]
+node_tags: ["CHINA"]
+# ali 域名绑定不可用：改用部署时探测的公网 IP（探测不到退回本机默认网卡 IP）
+use_local_ip: true
+# node_address: ""   # 如需钉死 IP，在此填（最高优先级）
