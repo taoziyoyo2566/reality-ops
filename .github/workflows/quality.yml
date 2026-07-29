@@ -1,0 +1,31 @@
+name: Repository quality checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - ops
+
+jobs:
+  whitespace:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check trailing whitespace
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          if [[ -n "${BASE_SHA}" ]]; then
+            git diff --check "${BASE_SHA}...${AFTER_SHA}"
+          elif [[ "${BEFORE_SHA}" == "0000000000000000000000000000000000000000" ]]; then
+            git diff --check "${AFTER_SHA}^" "${AFTER_SHA}"
+          else
+            git diff --check "${BEFORE_SHA}" "${AFTER_SHA}"
+          fi

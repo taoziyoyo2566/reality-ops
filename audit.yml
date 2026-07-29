@@ -8,7 +8,7 @@
       shell: |
         # 统一使用 /opt/reality 路径
         LOG_FILE="{{ reality_logs_dir }}/reality_core/access.log"
-        
+
         # 如果找到了，提取 用户名 和 IP
         if [ -f "$LOG_FILE" ]; then
             tail -n 2000 "$LOG_FILE" | grep "email:" | awk '{print $9, $4}'
@@ -37,9 +37,9 @@
         cat /tmp/global_reality_logs.txt \
         | awk '{
             # 1. 清洗数据：去掉后缀、去掉tcp前缀、去掉端口号
-            sub(/@.*/, "", $1); 
-            sub(/^tcp:/, "", $2); 
-            sub(/:[0-9]*$/, "", $2); 
+            sub(/@.*/, "", $1);
+            sub(/^tcp:/, "", $2);
+            sub(/:[0-9]*$/, "", $2);
             print $1, $2
           }' \
         | sort | uniq \
@@ -47,7 +47,7 @@
             # 2. 聚合统计
             count[$1]++;
             if(ips[$1]==""){ips[$1]=$2}else{ips[$1]=ips[$1]", "$2}
-          } 
+          }
           END {
             # 3. 格式化输出
             print "------------------------------------------------------------"

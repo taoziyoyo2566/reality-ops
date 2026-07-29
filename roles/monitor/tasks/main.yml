@@ -263,7 +263,7 @@
             mode: '0640'
           notify: 重启监控服务
           tags: ['monitor', 'monitor_server']
-        
+
         - name: 配置 Systemd 服务
           copy:
             dest: /etc/systemd/system/reality-monitor.service

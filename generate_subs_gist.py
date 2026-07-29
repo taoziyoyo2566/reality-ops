@@ -104,7 +104,7 @@ def generate_subscriptions():
                 continue
             if host in exclude_hosts:
                 continue
-            
+
             filepath = os.path.join(USERS_DIR, filename)
             with open(filepath, 'r') as f:
                 data = json.load(f)
@@ -117,12 +117,12 @@ def generate_subscriptions():
     # 2. 准备数据
     gist_files = {}
     output_lines = []
-    
+
     # 添加文件头
     header = f"Generate Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n" + "="*60
     output_lines.append(header)
     print(f"正在处理 {len(user_links)} 个用户的订阅...")
-    
+
     token_suffix = f"?token={SUBS_TOKEN}" if SUBS_TOKEN else ""
     for user, links in user_links.items():
         # 每个用户生成两份订阅：

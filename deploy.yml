@@ -2,7 +2,7 @@
 - hosts: reality_nodes
   gather_facts: true
   become: yes
-  
+
   pre_tasks:
     - name: 扫描用户配置文件
       find:
@@ -212,7 +212,7 @@
       when:
         - (vault_github_token | default('')) | length == 0
         - inventory_hostname == (ansible_play_hosts_all | first)
-      
+
     - name: 显示订阅链接信息
       debug:
         var: gist_result.stdout_lines
