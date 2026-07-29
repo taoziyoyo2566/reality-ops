@@ -1684,7 +1684,7 @@ def healthz():
 def receive_report(report: TrafficReport, token: str = Header(None)):  # 同步 def：自动入线程池，不阻塞事件循环
     if token != REPORT_TOKEN:
         raise HTTPException(status_code=403, detail="Invalid Token")
-    
+
     if report.up_delta > 0 or report.down_delta > 0:
         conn = get_conn()
         c = conn.cursor()

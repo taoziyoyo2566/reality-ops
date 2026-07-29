@@ -8,7 +8,7 @@
     reset_subs_only: false
     reset_require_confirm: true
     reset_confirm: ""
-  
+
   pre_tasks:
     # 1. 同样的逻辑：扫描并加载用户列表
     # (只有加载了用户，才能知道要删哪些容器)
@@ -482,7 +482,7 @@
       run_once: true
       when:
         - (vault_github_token | default('')) | length == 0
-      
+
     - name: 显示订阅更新输出
       debug:
         var: gist_result.stdout_lines

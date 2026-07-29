@@ -1,0 +1,3 @@
+# Preserve Markdown's two-space hard line breaks while checking other files.
+*.md whitespace=-trailing-space
+*.markdown whitespace=-trailing-space
