@@ -1,115 +1,345 @@
 ---
-- name: 安装 Docker 环境
+# ==============================================================================
+# 1. 基础系统优化与检查 (保留原逻辑)
+# ==============================================================================
+- name: 系统网络优化 (BBR + FastOpen + MTU Probing)
   block:
-    - name: 更新 apt 缓存
-      apt:
-        update_cache: yes
-        cache_valid_time: 3600
-    - name: 安装 Docker 及依赖
-      apt:
-        name: ["rsync", "curl", "wget", "tar"]
+    - name: 确保 tcp_bbr 模块已加载
+      community.general.modprobe:
+        name: tcp_bbr
         state: present
+      failed_when: false
+
+    - name: 写入 BBR 及优化配置文件
+      copy:
+        dest: /etc/sysctl.d/99-reality-optimizations.conf
+        content: |
+          net.core.default_qdisc = fq
+          net.ipv4.tcp_congestion_control = bbr
+          net.ipv4.tcp_fastopen = 3
+          net.ipv4.tcp_mtu_probing = 1
+          net.ipv4.tcp_syncookies = 1
+          net.ipv4.conf.all.rp_filter = 1
+          net.ipv4.conf.default.rp_filter = 1
+          net.ipv4.conf.all.accept_redirects = 0
+          net.ipv4.conf.default.accept_redirects = 0
+          net.ipv4.conf.all.send_redirects = 0
+          net.ipv4.conf.default.send_redirects = 0
+        mode: '0644'
+
+    - name: 应用 sysctl 配置
+      command: sysctl --system
+      register: sysctl_apply
+      failed_when: false          # 某些内核缺少 nf_conntrack 等模块时返回非零，忽略
+      changed_when: true
+
+    - name: 提示 sysctl 非致命警告
+      debug:
+        msg: "{{ sysctl_apply.stderr_lines | default([]) }}"
+      when: sysctl_apply.rc != 0
+
+    - name: 获取当前拥塞控制算法
+      command: sysctl -n net.ipv4.tcp_congestion_control
+      register: current_cc
+      changed_when: false
+
+    - name: 获取当前队列算法
+      command: sysctl -n net.core.default_qdisc
+      register: qdisc
+      changed_when: false
+
+    - name: 验证 BBR 是否成功开启
+      assert:
+        that:
+          - "'bbr' in current_cc.stdout"
+          - "'fq' in qdisc.stdout"
+        fail_msg: "BBR 开启失败！当前: {{ current_cc.stdout }} / {{ qdisc.stdout }}"
+      when: not ansible_check_mode
+  become: yes
+  tags: ['system', 'bbr']
+
+- name: 停止并删除单实例容器 reality_core（避免冲突）
+  community.docker.docker_container:
+    name: reality_core
+    state: absent
+  become: yes
+  tags: ['users']
+
+- name: 校验 SOCKS5 配置（启用且指定目标用户时必须完整）
+  vars:
+    socks5_cfg: "{{ reality_socks5 | default({}) }}"
+    socks5_enabled: "{{ socks5_cfg.enabled | default(false) | bool }}"
+    socks5_target_users: "{{ socks5_cfg.target_users | default([]) }}"
+    socks5_address: "{{ socks5_cfg.address | default('') }}"
+    socks5_port: "{{ socks5_cfg.port | default(0) | int }}"
+  assert:
+    that:
+      - socks5_address | length > 0
+      - socks5_port > 0
+      - socks5_port <= 65535
+    fail_msg: >-
+      SOCKS5 已启用且配置了 target_users，但 address/port 无效。
+      当前 address='{{ socks5_address }}', port='{{ socks5_cfg.port | default('') }}'。
+      请检查 host_vars/{{ inventory_hostname }}.yml 与 vault 变量。
+    success_msg: >-
+      SOCKS5 配置校验通过：address={{ socks5_address }}, port={{ socks5_port }}。
+  when:
+    - socks5_enabled
+    - (socks5_target_users | length) > 0
+  tags: ['users', 'config']
+
+- name: 安装基础软件包 (含 rsync)
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+    name: ["rsync", "curl", "docker-compose-plugin"] # 精简为当前角色所需
+    state: present
+  tags: ['system', 'docker']
+
+- name: 检查 Xray 镜像是否已存在
+  community.docker.docker_image_info:
+    name: "{{ xray_image }}"
+  register: xray_image_info
+  failed_when: false
+  changed_when: false
+  tags: ['system', 'docker']
+
+- name: 拉取 Xray 镜像（若本地不存在）
+  community.docker.docker_image:
+    name: "{{ xray_image }}"
+    source: pull
+  when: (xray_image_info.images | default([])) | length == 0
+  tags: ['system', 'docker']
 
 - name: 拉取 Xray Docker 镜像
   community.docker.docker_image:
     name: "{{ xray_image }}"
     source: pull
+  tags: ['system', 'docker', 'update_image']
 
-# 核心循环：为每个实例准备环境
-- name: 为每个用户创建配置目录
+# ==============================================================================
+# 2. [极致优化] 本地构建阶段 (Local Build)
+#    在控制端本机生成所有文件，不再去远程服务器循环
+# ==============================================================================
+- name: 确保本地构建根目录存在
+  delegate_to: localhost
+  become: false
+  when: inventory_hostname == (ansible_play_hosts_all | first)
   file:
-    path: "{{ playbook_dir }}/data/{{ item.name }}"
+    path: "/tmp/reality_build"
     state: directory
     mode: '0755'
-    recurse: yes
-  loop: "{{ reality_instances }}"
+  tags: ['users']
 
-- name: 生成每个用户的 config.json
+- name: 清理当前主机的本地构建目录
+  delegate_to: localhost
+  become: false
+  file:
+    path: "/tmp/reality_build/{{ inventory_hostname }}"
+    state: absent
+  tags: ['users']
+
+- name: 确保当前主机本地构建目录存在
+  delegate_to: localhost
+  become: false
+  file:
+    path: "/tmp/reality_build/{{ inventory_hostname }}/data"
+    state: directory
+    mode: '0755'
+  tags: ['users']
+
+- name: 创建本地构建目录结构
+  delegate_to: localhost
+  become: false
+  file:
+    path: "/tmp/reality_build/{{ inventory_hostname }}/data/{{ item.name }}"
+    state: directory
+    mode: '0755'
+  loop: "{{ reality_instances }}"
+  tags: ['users']
+
+- name: 本地生成用户配置文件 (config.json)
+  delegate_to: localhost
+  become: false
   template:
     src: config.json.j2
-    dest: "{{ playbook_dir }}/data/{{ item.name }}/config.json"
-    mode: '0644' # 【建议】配置文件的 owner 不需要改，0644 足够让容器里的用户读取
+    dest: "/tmp/reality_build/{{ inventory_hostname }}/data/{{ item.name }}/config.json"
+    mode: '0644'
   loop: "{{ reality_instances }}"
-  register: config_changed
+  tags: ['users', 'config']
 
-# 修正日志目录权限
-- name: 修正日志目录权限 (归属给 UID 10000)
-  become: yes
+- name: 本地生成 Docker Compose 文件
+  delegate_to: localhost
+  become: false
+  template:
+    src: docker-compose.yml.j2
+    dest: "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml"
+    mode: '0644'
+  tags: ['users', 'config']
+
+- name: 校验 Docker Compose 文件语法 (本地)
+  delegate_to: localhost
+  become: false
+  command: docker compose -f "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml" config
+  changed_when: false
+  tags: ['users', 'config']
+
+# ==============================================================================
+# 3. [极速同步] 批量部署 (Synchronize)
+#    一次性将所有配置推送到服务器
+# ==============================================================================
+- name: 确保远程基础目录存在
   file:
-    path: "{{ playbook_dir }}/data/{{ item.name }}/logs"
+    path: "{{ item }}"
     state: directory
-    # 【确认】这步非常关键，配合 Dockerfile 的 USER 10000
+    mode: '0755'
+  loop:
+    - "{{ reality_data_dir }}"
+    - "{{ reality_logs_dir }}"
+  tags: ['users']
+
+- name: 检查远端 rsync 是否已安装（users 快速路径）
+  command: which rsync
+  register: rsync_check
+  changed_when: false
+  failed_when: false
+  tags: ['users']
+
+- name: 提示安装 rsync 后再运行 --tags users
+  fail:
+    msg: "目标主机 {{ inventory_hostname }} 缺少 rsync。请先在该主机安装 rsync（如：sudo apt-get update && sudo apt-get install -y rsync），或先执行带 system/docker 标签的部署。"
+  when: rsync_check.rc != 0
+  tags: ['users']
+
+- name: 同步配置数据到服务器 (Local -> Remote)
+  synchronize:
+    src: "/tmp/reality_build/{{ inventory_hostname }}/data/"
+    dest: "{{ reality_data_dir }}/"
+    archive: yes
+    delete: no # 保持增量更新，不误删
+    recursive: yes
+  # 注意：这步会把 data/user/config.json 推过去
+  tags: ['users']
+
+- name: 同步 Docker Compose 文件
+  copy: # 单个文件用 copy 也很快，或者用 synchronize 也可以
+    src: "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml"
+    dest: "{{ reality_data_dir }}/docker-compose.yml"
+    mode: '0644'
+  tags: ['users']
+
+- name: 修正数据目录权限 (确保 UID 10000 可读)
+  file:
+    path: "{{ reality_data_dir }}"
     owner: "10000"
     group: "10000"
-    mode: '0755'
     recurse: yes
-  loop: "{{ reality_instances }}"
+    mode: '0755'
+  tags: ['users']
 
-# 核心循环：启动容器
-- name: 管理 Reality 多实例容器
-  community.docker.docker_container:
-    name: "reality_{{ item.name }}"
-    image: "{{ xray_image }}"
-    state: started
-    restart_policy: always
-    # 【新增】显式指定容器运行用户，双重保险 (配合 Dockerfile)
-    user: "10000:10000"
-    memory: "300m" 
-    cpus: "0.5"
-    ports:
-      # 【确认】非Root容器内部监听 8443，映射到宿主机的 item.port
-      - "{{ item.port }}:8443"
-    volumes:
-      - "{{ playbook_dir }}/data/{{ item.name }}/config.json:/config.json:ro"
-      - "{{ playbook_dir }}/data/{{ item.name }}/logs:/var/log/xray"
-    restart: "{{ item.name in config_changed.results | selectattr('changed') | map(attribute='item.name') | list }}"
-  loop: "{{ reality_instances }}"
+- name: 预创建日志目录并修正权限
+  shell: |
+    {% for u in reality_instances %}
+    mkdir -p {{ reality_logs_dir }}/{{ u.name }}
+    {% endfor %}
+    chown -R 10000:10000 {{ reality_logs_dir }}
+  args:
+    executable: /bin/bash
+  tags: ['users']
 
-# --- 输出部分 ---
+# ==============================================================================
+# 4. [容器编排] 统一启动 (Docker Compose)
+# ==============================================================================
+- name: 启动/更新所有 Reality 服务
+  community.docker.docker_compose_v2:
+    project_src: "{{ reality_data_dir }}"
+    state: present
+    pull: never
+    build: never  # 避免 compose 尝试 build，引发无服务可构建的警告
+    remove_orphans: true # 自动清理掉不再列表里的旧容器
+  register: compose_output
+  when: (reality_instances | length) > 0
+  tags: ['users', 'deploy']
 
-- name: 输出 IPv4 连接信息
+- name: 当前节点无授权用户时清理多实例容器
+  block:
+    - name: 获取当前 reality_* 容器列表
+      command: docker ps -a --format '{% raw %}{{.Names}}{% endraw %}'
+      register: reality_containers
+      changed_when: false
+      failed_when: false
+
+    - name: 删除多实例容器 (无授权用户)
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: absent
+      loop: "{{ reality_containers.stdout_lines | select('match', '^reality_') | list }}"
+      loop_control:
+        label: "{{ item }}"
+      when: reality_containers.stdout_lines | select('match', '^reality_') | list | length > 0
+  when: (reality_instances | length) == 0
+  tags: ['users', 'deploy']
+
+- name: 显示 Compose 运行结果
   debug:
-    msg: 
-      - "用户: {{ item.name }}"
-      - "VLESS(IPv4): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv4"
-  loop: "{{ reality_instances }}"
-  loop_control:
-    label: "{{ item.name }}"
+    msg: "服务已更新，受影响的服务: {{ compose_output.actions | default([]) }}"
+  when: compose_output is defined
+  tags: ['users']
 
-- name: 输出 IPv6 连接信息 (如果存在)
-  debug:
-    msg: 
-      - "用户: {{ item.name }}"
-      - "VLESS(IPv6): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
-  loop: "{{ reality_instances }}"
-  loop_control:
-    label: "{{ item.name }}"
-  when: ansible_default_ipv6.address is defined
+# ==============================================================================
+# 5. 后续处理 (本地 JSON 生成)
+# ==============================================================================
+- name: 检查本地订阅缓存目录是否可写
+  delegate_to: localhost
+  become: false
+  command: test -w /opt/reality/users
+  register: local_sub_cache_writable
+  changed_when: false
+  failed_when: false
+  tags: ['users', 'local_file']
 
-# --- 本地 JSON 生成部分 ---
+- name: 创建或修复本地订阅缓存目录
+  delegate_to: localhost
+  become: yes
+  file:
+    path: "/opt/reality/users"
+    state: directory
+    owner: "{{ lookup('env', 'USER') }}"
+    group: "{{ lookup('pipe', 'id -gn') }}"
+    mode: '0755'
+  when: local_sub_cache_writable.rc | default(1) != 0
+  tags: ['users', 'local_file']
+
+- name: 清理当前主机的旧订阅缓存文件 (防止权限回收后残留)
+  delegate_to: localhost
+  become: false
+  shell: "rm -f /opt/reality/users/*_{{ inventory_hostname }}.json"
+  failed_when: false
+  tags: ['users', 'local_file']
 
 - name: 生成用户节点 JSON 文件 (users/用户名_主机名.json)
   delegate_to: localhost
+  become: false
   copy:
-    # 【注意】我保留了 _{{ inventory_hostname }} 防止多服务器覆盖
-    # 如果你只有一台 VPS 或者确定要覆盖，可以改回 {{ item.name }}.json
-    dest: "{{ playbook_dir }}/users/{{ item.name }}_{{ inventory_hostname }}.json"
+    dest: "/opt/reality/users/{{ item.name }}_{{ inventory_hostname }}.json"
     mode: '0644'
     content: |
       [
         {
           "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
           "id": "{{ item.uuid }}",
-          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv4"
+          "subscription": "vless://{{ item.uuid }}@{{ node_endpoint }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ node_alias }}"
         }
-        {% if ansible_default_ipv6.address is defined %}
-        ,{
+        {% if global_ipv6 | length > 0 %}
+        ,
+        {
           "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
           "id": "{{ item.uuid }}",
-          "subscription": "vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}_ipv6"
+          "subscription": "vless://{{ item.uuid }}@[{{ global_ipv6 }}]:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=chrome&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ node_alias }}_IPv6"
         }
         {% endif %}
       ]
   loop: "{{ reality_instances }}"
   loop_control:
     label: "{{ item.name }}"
+  tags: ['users', 'local_file']

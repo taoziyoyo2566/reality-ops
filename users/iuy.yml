@@ -1,0 +1,12 @@
+{
+  "name": "iuy",
+  "uuid": "af1bfbdd-7703-4fd8-b02c-7b6a991d419f",
+  "port": 20824,
+  "short_id": "a9f4d286b1472f7d",
+  "private_key": "-IVrYPDVkAboFzB68GzHscyDbExkgUHr3WSgNYSTZ3M",
+  "public_key": "GV2QE8Y_muYrGA-GyFEMtNw0BKNMS2EWfY8y3wZ9Nwc",
+  "groups": [
+    "premium"
+  ],
+  "hosts": []
+}

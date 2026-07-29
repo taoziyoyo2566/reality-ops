@@ -1,0 +1,17 @@
+{
+  "name": "hui",
+  "uuid": "c0d2c253-63fe-4562-a093-6eb462562dca",
+  "port": 40771,
+  "short_id": "2b2ef2d5cd04e6b4",
+  "private_key": "OAcYOOcDOoFlsPI9JDv0UtbO4XGdadUKb58-OpBuR0M",
+  "public_key": "iQ19rcG1pdwjNAQeAJHpEPEzeRJSsOzvo7MHw-49diY",
+  "groups": [
+    "normal"
+  ],
+  "hosts": [
+    "ams",
+    "spt",
+    "jp10"
+  ],
+  "deny_hosts": []
+}

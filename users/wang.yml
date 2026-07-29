@@ -1,0 +1,17 @@
+{
+  "name": "wang",
+  "uuid": "1730c417-6545-4409-9e50-ac413d3a2c08",
+  "port": 47529,
+  "short_id": "fd0c124562d7e176",
+  "private_key": "cJmAQqloGC0Td8w5QchbMdZHmI5XfKvp68dH1It7LGU",
+  "public_key": "-eP0FzLj0MHjNR9pdU2eomEl_tf0YGV7nZH_Zz-daXc",
+  "groups": [
+    "premium"
+  ],
+  "hosts": [
+    "jp10"
+  ],
+  "deny_hosts": [
+    "dcc"
+  ]
+}

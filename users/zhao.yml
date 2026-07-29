@@ -1,0 +1,18 @@
+{
+  "name": "zhao",
+  "uuid": "a94410c5-92c8-4457-80ab-045f39951630",
+  "port": 49392,
+  "short_id": "623e033d054b4f5c",
+  "private_key": "0AHCmNuWSDOkrj3sQNQB1fhPLzLsxu2j8asoM7St7WA",
+  "public_key": "HU2SRNUzt1Aoks80Zvogfl7jp8afMXf9P2XGr7vcTks",
+  "groups": [
+    "premium"
+  ],
+  "hosts": [
+    "sg",
+    "spt"
+  ],
+  "deny_hosts": [
+    
+  ]
+}

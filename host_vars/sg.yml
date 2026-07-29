@@ -1,0 +1,10 @@
+# 多实例部署（暂不启用监控）
+reality_mode: single
+monitor_enabled: true
+# 客户端显示标签（自由列表）——待填，例: ["Optimized", "Native"]
+node_tags: ["Native", "CM"]
+# Reality 回落：Shopee 新加坡站（本土电商，地理自洽）。
+# 注意：实测无 OCSP Stapling，官方加分项失一项，最低标准全部满足。
+# dest 与 serverNames 必须成对覆盖，只改一个会导致握手失败；deploy.yml 前置检查会拦。
+reality_dest: "shopee.sg:443"
+reality_server_names: ["shopee.sg"]

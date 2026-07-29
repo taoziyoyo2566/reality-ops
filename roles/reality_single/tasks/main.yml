@@ -1,0 +1,373 @@
+---
+- name: 系统网络优化 (BBR + FastOpen + MTU Probing)
+  block:
+    # 1. 尝试加载 tcp_bbr 模块
+    - name: 确保 tcp_bbr 模块已加载
+      community.general.modprobe:
+        name: tcp_bbr
+        state: present
+      failed_when: false  # 兼容内核已内置 BBR 的情况
+
+    # 2. 写入配置文件
+    - name: 写入 BBR 及优化配置文件
+      copy:
+        dest: /etc/sysctl.d/99-reality-optimizations.conf
+        content: |
+          net.core.default_qdisc = fq
+          net.ipv4.tcp_congestion_control = bbr
+          net.ipv4.tcp_fastopen = 3
+          net.ipv4.tcp_mtu_probing = 1
+          net.ipv4.tcp_syncookies = 1
+          net.ipv4.conf.all.rp_filter = 1
+          net.ipv4.conf.default.rp_filter = 1
+          net.ipv4.conf.all.accept_redirects = 0
+          net.ipv4.conf.default.accept_redirects = 0
+          net.ipv4.conf.all.send_redirects = 0
+          net.ipv4.conf.default.send_redirects = 0
+        mode: '0644'
+
+    # 3. 应用系统配置
+    - name: 应用 sysctl 配置
+      command: sysctl --system
+      changed_when: true
+
+    # 4. 验证
+    - name: 获取当前拥塞控制算法
+      command: sysctl -n net.ipv4.tcp_congestion_control
+      register: current_cc
+      changed_when: false
+
+    - name: 获取当前队列算法
+      command: sysctl -n net.core.default_qdisc
+      register: qdisc
+      changed_when: false
+
+    - name: 验证 BBR 是否成功开启
+      assert:
+        that:
+          - "'bbr' in current_cc.stdout"
+          - "'fq' in qdisc.stdout"
+        fail_msg: |
+          BBR 开启失败！
+          当前算法: {{ current_cc.stdout }} (预期: bbr)
+          当前队列: {{ qdisc.stdout }} (预期: fq)
+          请检查内核版本是否 >= 4.9，或是否存在云服务商限制。
+      when: not ansible_check_mode
+  become: yes
+  tags: ['system', 'bbr']
+
+- name: 清理多实例残留（从 multi 切回 single 时）
+  tags: ['system', 'cleanup']
+  block:
+    - name: 获取当前 reality_* 容器列表
+      command: docker ps -a --format '{% raw %}{{.Names}}{% endraw %}'
+      register: reality_containers
+      changed_when: false
+      failed_when: false
+
+    - name: 删除多实例容器 (保留 reality_core)
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: absent
+      loop: "{{ reality_containers.stdout_lines | select('match', '^reality_') | reject('equalto', 'reality_core') | list }}"
+      loop_control:
+        label: "{{ item }}"
+      when: reality_containers.stdout_lines | select('match', '^reality_') | reject('equalto', 'reality_core') | list | length > 0
+
+    - name: 删除多实例 docker-compose 文件
+      file:
+        path: "{{ reality_data_dir }}/docker-compose.yml"
+        state: absent
+
+- name: 安装 Docker 环境
+  block:
+    - name: 更新 apt 缓存
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    - name: 安装 Docker 及依赖
+      apt:
+        name: ["rsync", "curl"]
+        state: present
+  tags: ['system', 'docker']
+
+- name: 配置 Docker daemon 启用 IPv6 支持
+  copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "ipv6": true,
+        "fixed-cidr-v6": "fd00::/80"
+      }
+    mode: '0644'
+  when: global_ipv6 | length > 0
+  register: docker_daemon_config
+  tags: ['system', 'docker']
+
+- name: 重启 Docker daemon (IPv6 配置变更)
+  systemd:
+    name: docker
+    state: restarted
+  when: docker_daemon_config is changed
+  tags: ['system', 'docker']
+
+- name: 检查 Xray 镜像是否已存在
+  community.docker.docker_image_info:
+    name: "{{ xray_image }}"
+  register: xray_image_info
+  failed_when: false
+  changed_when: false
+  tags: ['system', 'docker']
+
+- name: 拉取 Xray 镜像（若本地不存在）
+  community.docker.docker_image:
+    name: "{{ xray_image }}"
+    source: pull
+  when: (xray_image_info.images | default([])) | length == 0
+  tags: ['system', 'docker']
+
+- name: 拉取 Xray Docker 镜像
+  community.docker.docker_image:
+    name: "{{ xray_image }}"
+    source: pull
+  tags: ['system', 'docker', 'update_image']
+
+- name: 校验 SOCKS5 模块配置结构
+  vars:
+    socks5_module: "{{ socks5_egress | default({}) }}"
+    socks5_profiles: "{{ socks5_module.profiles | default({}) }}"
+  assert:
+    that:
+      - socks5_profiles is mapping
+    fail_msg: >-
+      socks5_egress.profiles 必须是字典，请检查 group_vars/all/socks5.yml。
+  when:
+    - socks5_module.enabled | default(false) | bool
+  tags: ['users', 'config']
+
+- name: 校验启用的 SOCKS5 profile
+  vars:
+    socks5_module: "{{ socks5_egress | default({}) }}"
+    socks5_profiles: "{{ socks5_module.profiles | default({}) }}"
+    reality_instance_names: "{{ reality_instances | map(attribute='name') | list }}"
+    all_user_names: "{{ all_raw_users | default([]) | map(attribute='name') | list }}"
+    profile: "{{ socks5_profiles[item] }}"
+    route: "{{ profile.route | default({}) }}"
+    route_hosts: "{{ route.hosts | default([]) }}"
+    route_users: "{{ route.users | default([]) }}"
+    route_domains: "{{ route.domains | default([]) }}"
+    route_ips: "{{ route.ips | default([]) }}"
+    route_protocols: "{{ route.protocols | default([]) }}"
+    route_network: "{{ route.network | default('') }}"
+    inventory_host_names: "{{ groups['all'] | default([]) }}"
+    host_matches: "{{ (route_hosts | length == 0) or (inventory_hostname in route_hosts) }}"
+    missing_global_users: "{{ route_users | difference(all_user_names) }}"
+    missing_current_node_users: "{{ route_users | difference(reality_instance_names) }}"
+  assert:
+    that:
+      - item is match('^[A-Za-z0-9_-]+$')
+      - profile.address | default('') | length > 0
+      - profile.port | default(0) | int > 0
+      - profile.port | default(0) | int <= 65535
+      - route_hosts is sequence
+      - route_hosts is not string
+      - route_users is sequence
+      - route_users is not string
+      - route_domains is sequence
+      - route_domains is not string
+      - route_ips is sequence
+      - route_ips is not string
+      - route_protocols is sequence
+      - route_protocols is not string
+      - route_network is string
+      - (route_hosts | difference(inventory_host_names) | length) == 0
+      - route_network in ['', 'tcp', 'udp', 'tcp,udp']
+      - missing_global_users | length == 0
+      - (not ((route_hosts | length == 0) or (inventory_hostname in route_hosts))) or (missing_current_node_users | length == 0)
+    fail_msg: >-
+      SOCKS5 profile '{{ item }}' 配置无效。
+      address='{{ profile.address | default('') }}', port='{{ profile.port | default('') }}',
+      route.hosts={{ route_hosts }}，inventory 节点={{ inventory_host_names }}，
+      route.users={{ route_users }}，route.domains={{ route_domains }}，
+      route.ips={{ route_ips }}，route.protocols={{ route_protocols }}，
+      route.network='{{ route_network }}'。
+      不存在的全局用户={{ missing_global_users }}；
+      route 已命中当前节点={{ host_matches }}；
+      当前节点未承载的 route.users={{ missing_current_node_users }}；
+      当前节点用户={{ reality_instance_names }}。
+      已停止执行，避免生成半生效 SOCKS5 路由。请先把缺失用户加入当前节点授权，或从该 profile 的 route.users 中移除，然后重新执行。
+    success_msg: >-
+      SOCKS5 profile '{{ item }}' 校验通过。
+  loop: "{{ socks5_profiles.keys() | list }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - socks5_module.enabled | default(false) | bool
+    - profile.enabled | default(false) | bool
+  tags: ['users', 'config']
+
+# 确保基础数据与日志目录存在
+- name: 创建数据根目录
+  file:
+    path: "{{ reality_data_dir }}"
+    state: directory
+    mode: '0755'
+  tags: ['users', 'system']
+
+- name: 创建日志根目录
+  file:
+    path: "{{ reality_logs_dir }}"
+    state: directory
+    mode: '0755'
+  tags: ['users', 'system']
+
+# --- 单实例核心配置开始 ---
+
+- name: 创建统一配置目录
+  file:
+    path: "{{ reality_data_dir }}/reality_core"
+    state: directory
+    mode: '0755'
+    recurse: yes
+  tags: ['users']
+
+- name: 生成聚合版 config.json
+  template:
+    src: config.json.j2
+    dest: "{{ reality_data_dir }}/reality_core/config.json"
+    mode: '0644'
+  diff: false
+  register: config_changed
+  tags: ['users', 'config']
+
+- name: 创建日志目录
+  become: yes
+  file:
+    path: "{{ reality_logs_dir }}/reality_core"
+    state: directory
+    owner: "10000"
+    group: "10000"
+    mode: '0755'
+    recurse: yes
+  tags: ['users']
+
+- name: 计算 Reality Core 端口绑定 (IPv4)
+  set_fact:
+    reality_core_ports_ipv4: "{{ reality_instances | map(attribute='port') | map('string') | map('regex_replace', '^(.*)$', '0.0.0.0:\\1:\\1') | list }}"
+  tags: ['users']
+
+- name: 计算 Reality Core 端口绑定 (IPv6，可选)
+  set_fact:
+    reality_core_ports_ipv6: "{{ (global_ipv6 | length > 0) | ternary(reality_instances | map(attribute='port') | map('string') | map('regex_replace', '^(.*)$', '[' ~ global_ipv6 ~ ']:\\1:\\1') | list, []) }}"
+  tags: ['users']
+
+- name: 汇总 Reality Core 端口绑定
+  set_fact:
+    reality_core_ports: "{{ reality_core_ports_ipv4 + reality_core_ports_ipv6 + ['127.0.0.1:10085:10085'] }}"
+  tags: ['users']
+
+- name: 启动 Reality 单实例容器 (管理所有用户)
+  community.docker.docker_container:
+    name: "reality_core"
+    image: "{{ xray_image }}"
+    state: started
+    restart_policy: always
+    network_mode: bridge
+    
+    # 显式指定用户
+    user: "10000:10000"
+    ports: "{{ reality_core_ports }}"
+    
+    # 挂载
+    volumes:
+      - "{{ reality_data_dir }}/reality_core/config.json:/config.json:ro"
+      - "{{ reality_logs_dir }}/reality_core:/var/log/xray"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+    cap_drop:
+      - ALL
+    security_opts:
+      - no-new-privileges:true
+    pids_limit: 256
+    memory: "{{ reality_memory_limit }}"
+    memory_reservation: "{{ reality_memory_reservation }}"
+    memory_swap: "{{ reality_memory_swap }}"
+    memory_swappiness: "{{ reality_mem_swappiness }}"
+    ulimits:
+      - "nofile:4096:8192"
+      - "nproc:512:1024"
+
+    # 只有当配置文件变动时才重启
+    restart: "{{ config_changed.changed }}"
+  tags: ['users', 'deploy']
+
+# --- 下面的任务依然需要 Loop，因为我们要输出每个用户的信息 ---
+
+# - name: 输出 IPv4 连接信息
+#   debug:
+#     msg: 
+#       - "用户: {{ item.name }}"
+#       - "VLESS(IPv4): vless://{{ item.uuid }}@{{ inventory_hostname }}{{ server_hash_suffix }}.{{ domain_suffix }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=firefox&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}"
+#   loop: "{{ reality_instances }}"
+#   loop_control:
+#     label: "{{ item.name }}"
+
+# (可选) 输出 IPv6 信息，逻辑同上，略...
+
+- name: 检查本地订阅缓存目录是否可写
+  delegate_to: localhost
+  become: false
+  command: test -w /opt/reality/users
+  register: local_sub_cache_writable
+  changed_when: false
+  failed_when: false
+  tags: ['users', 'local_file']
+
+- name: 创建或修复本地订阅缓存目录
+  delegate_to: localhost
+  become: yes
+  file:
+    path: "/opt/reality/users"
+    state: directory
+    owner: "{{ lookup('env', 'USER') }}"
+    group: "{{ lookup('pipe', 'id -gn') }}"
+    mode: '0755'
+  when: local_sub_cache_writable.rc | default(1) != 0
+  tags: ['users', 'local_file']
+
+- name: 清理当前主机的旧订阅缓存文件 (防止权限回收后残留)
+  delegate_to: localhost
+  become: false
+  shell: "rm -f /opt/reality/users/*_{{ inventory_hostname }}.json"
+  failed_when: false
+  tags: ['users', 'local_file']
+
+- name: 生成用户节点 JSON 文件
+  delegate_to: localhost
+  become: false
+  copy:
+    dest: "/opt/reality/users/{{ item.name }}_{{ inventory_hostname }}.json"
+    mode: '0644'
+    content: |
+      [
+        {
+          "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
+          "id": "{{ item.uuid }}",
+          "subscription": "vless://{{ item.uuid }}@{{ node_endpoint }}:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=firefox&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ node_alias }}"
+        }
+        {% if global_ipv6 | length > 0 %}
+        ,
+        {
+          "user": "{{ item.name }}.{{ inventory_hostname }}@{{ domain_suffix }}",
+          "id": "{{ item.uuid }}",
+          "subscription": "vless://{{ item.uuid }}@[{{ global_ipv6 }}]:{{ item.port }}?encryption=none&security=reality&type=tcp&sni={{ reality_server_names[0] }}&fp=firefox&pbk={{ item.public_key }}&sid={{ item.short_id }}&flow=xtls-rprx-vision#{{ item.name }}.{{ node_alias }}_IPv6"
+        }
+        {% endif %}
+      ]
+  loop: "{{ reality_instances }}"
+  loop_control:
+    label: "{{ item.name }}"
+  tags: ['users', 'local_file']
+# --- 单实例核心配置结束 ---

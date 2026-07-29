@@ -1,0 +1,88 @@
+# 统一的组变量（推荐通过该文件加载）
+
+xray_image: "taoziyoyo2566/xray_docker:latest"
+domain_suffix: "taoziyoyo.de"
+server_hash_suffix: "o9drrm5l1d7uopaguucnxohzc3ul2yazxrldzpuoduu"
+reality_server_names: ["www.apple.com", "images.apple.com"]
+reality_dest: "www.apple.com:443"
+reality_root_dir: "/opt/reality"      # 项目根目录
+reality_data_dir: "{{ reality_root_dir }}/data"
+reality_logs_dir: "{{ reality_root_dir }}/logs"
+monitor_root_dir: "{{ reality_root_dir }}/monitor"
+monitor_venv_dir: "{{ monitor_root_dir }}/.venv"
+# 容器资源参数（可按节点覆盖）
+reality_memory_limit: "300m"
+reality_memory_swap: "1g"
+reality_memory_reservation: "200m"
+reality_mem_swappiness: 60
+# 连接数限制（可按模式/节点覆盖）
+reality_conn_limit_single: 24
+reality_conn_limit_multi: 6
+
+# --- 节点别名标签（客户端显示名） ---
+# node_tags 在 host_vars/<host>.yml 覆盖，如 node_tags: ["4837", "Unlimited"]
+# 空列表 -> 别名仅显示主机名，不带方括号
+node_tags: []
+node_alias: "{{ inventory_hostname }}{{ ' [' ~ (node_tags | join(' · ')) ~ ']' if node_tags | length > 0 else '' }}"
+
+# --- 连接地址（vless server 段） ---
+# 默认用域名形式；host_vars 设 use_local_ip: true 则改用部署时探测的公网 IPv4，
+# 探测不到再退回默认网卡 IP（本机IP）。node_address 直接钉死一个 IP（最高优先级）。
+node_address: ""
+use_local_ip: false
+node_endpoint: "{{ node_address if (node_address | default('') | length > 0) else (global_ipv4 if (use_local_ip | bool and (global_ipv4 | default('')) | length > 0) else (ansible_default_ipv4.address if (use_local_ip | bool and ansible_default_ipv4.address is defined) else inventory_hostname ~ server_hash_suffix ~ '.' ~ domain_suffix)) }}"
+
+# 可选：SOCKS5 落地（默认关闭；可在 host_vars/<host>.yml 覆盖）
+reality_socks5:
+  enabled: false
+  address: ""
+  port: 1080
+  username: ""
+  password: ""
+  target_users: []   # 仅这些用户在当前节点走 socks5 出站
+
+# --- 监控系统配置 ---
+monitor:
+  server_host: "spt"           # 指定 Inventory 中哪台机器跑数据库
+  server_url: "https://monitor.taoziyoyo.com"   # 上报 / stats / docs
+  subs_base_url: "https://subs.taoziyoyo.com"   # 订阅代理
+  # 内部监听地址 (仅限本机)
+  internal_host: "127.0.0.1"
+  internal_port: 8000
+  port: 8000                   # 监控服务端口
+  retention_days: 90           # C1：records/subscription_logs 保留天数（server 端保留 cron 清理）
+  report_token: "{{ vault_monitor_report_token | default('CHANGEME-report-token') }}"   # 上报认证 Token（Vault）
+  admin_bearer_token: "{{ vault_monitor_admin_bearer_token | default('CHANGEME-admin-bearer') }}" # 管理员 Bearer，用于 stats/doc
+  stats_bearer_token: "{{ vault_monitor_stats_bearer_token | default('CHANGEME-stats-bearer') }}" # 普通 Bearer，用于只读 stats
+  ip_allowlist: [
+    "45.145.75.134",
+    "133.18.123.108",
+    "49.98.151.252",
+    "2604:9cc0:1cb1:0:91ae:5c39:e233:4081",
+    "160.191.29.7",
+    "2607:8700:5500:32ec::2",
+    "2a00:11c0:47:1c95:8868:d8ff:fed5:bc4d",
+    "160.248.69.81"
+  ]   # 运维真实 IP（D1-B：仅在带 CF 注入的 tunnel_secret 头时才放行；本机直连无 secret 头不生效，故移除 127.0.0.1）
+  trust_proxy_header: "CF-Connecting-IP"   # D1-B：从 CF 注入头取真实客户端 IP（白名单判定 + 审计日志）
+  tunnel_secret: "{{ vault_monitor_tunnel_secret | default('') }}"   # D1-B：CF Transform Rule 注入的 X-Monitor-Tunnel-Secret 校验值；未配=fail-closed（只认 Bearer）
+  subs_proxy:
+    enabled: true               # 是否启用订阅访问记录代理
+    gist_user: "{{ vault_monitor_gist_user | default('taoziyoyo2566') }}"
+    gist_id: "{{ vault_monitor_gist_id | default('0a7faae910b06151d643c7d5baa43818') }}"
+    require_token: true          # 访问订阅代理时是否需要 token
+    token: "{{ vault_monitor_subs_token | default('CHANGEME-subs-token') }}"
+
+# 全局节点访问控制矩阵 (ACL Matrix)
+acl_matrix:
+  # --- 层级规则 ---
+  free: ['free', 'cm', 'basic', 'normal', 'premium']
+  cm: ['cm', 'basic', 'normal', 'premium']
+  basic: ['basic', 'normal', 'premium']
+  normal: ['normal', 'premium']
+  premium: ['premium']
+
+  # --- 特性规则 ---
+  cmi: ['cmi']
+  netflix: ['netflix']
+  special: ['special']

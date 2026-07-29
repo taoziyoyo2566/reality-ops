@@ -1,0 +1,10 @@
+# 多实例部署
+reality_mode: multi
+monitor_enabled: true
+# 客户端显示标签（自由列表）
+node_tags: ["Optimized","NoAI"]
+# Reality 回落：iCloud（大陆访问高频，客户端侧画像自然；苹果香港有 CDN 节点）。
+# 与 hk-hn2 的 hktvmall 刻意错开，避免两台同 SNI 被横向关联。
+# dest 与 serverNames 必须成对覆盖，只改一个会导致握手失败；deploy.yml 前置检查会拦。
+reality_dest: "www.icloud.com:443"
+reality_server_names: ["www.icloud.com"]

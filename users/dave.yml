@@ -1,0 +1,15 @@
+{
+  "name": "dave",
+  "uuid": "2e2ebbf1-f989-46df-a320-701469cc9c49",
+  "port": 39492,
+  "short_id": "cc048520b21f4b06",
+  "private_key": "0FH7UwJY77kwSPr-YpfkYEr1Ro-E9kVqefYFSnJ5tlk",
+  "public_key": "t1K7zKG9ZgLRvPPP7ofNxo0PHSs6WeDv9_zFKtxsxCE",
+  "groups": [
+    "basic"
+  ],
+  "hosts": [
+    "hk-hn"
+  ],
+  "deny_hosts": []
+}

@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Reality Ops local wrapper.
+# Usage examples (from repo root):
+#   ./ansible-playbook reset sky
+#   ./ansible-playbook deploy premium --tags users
+#   ./ansible-playbook audit dcc
+#   ./ansible-playbook decommission saberu -e "dc_confirm=YES"
+#   ./ansible-playbook dc saberu -e "dc_confirm=YES"
+#   ./ansible-playbook -i inventory.ini reset.yml --syntax-check
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+inventory_default="${REALITY_OPS_INVENTORY:-${repo_root}/inventory.ini}"
+vault_default="${REALITY_OPS_VAULT_PASS_FILE:-$HOME/.vault_pass}"
+self_path="$(readlink -f "$0" 2>/dev/null || realpath "$0")"
+
+has_vault_flag() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --vault-password-file|--ask-vault-pass)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+host_in_reality_nodes() {
+  local host="$1"
+  awk -v target="$host" '
+    BEGIN { in_group=0 }
+    /^[[:space:]]*\[reality_nodes\][[:space:]]*$/ { in_group=1; next }
+    /^[[:space:]]*\[[^]]+\][[:space:]]*$/ { in_group=0; next }
+    !in_group { next }
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]*$/ { next }
+    {
+      split($0, a, /[[:space:]]+/)
+      if (a[1] == target) { print "yes"; exit 0 }
+    }
+  ' "$inventory_default" | grep -q '^yes$'
+}
+
+find_real_ansible_playbook() {
+  local cand cand_real
+  while IFS= read -r cand; do
+    [[ -z "$cand" ]] && continue
+    cand_real="$(readlink -f "$cand" 2>/dev/null || realpath "$cand")"
+    if [[ "$cand_real" != "$self_path" ]]; then
+      echo "$cand"
+      return 0
+    fi
+  done < <(which -a ansible-playbook 2>/dev/null || true)
+
+  if [[ -x /usr/bin/ansible-playbook ]]; then
+    echo /usr/bin/ansible-playbook
+    return 0
+  fi
+  if [[ -x "${repo_root}/monitor_venv/bin/ansible-playbook" ]]; then
+    echo "${repo_root}/monitor_venv/bin/ansible-playbook"
+    return 0
+  fi
+  return 1
+}
+
+real_ansible_playbook="$(find_real_ansible_playbook || true)"
+if [[ -z "$real_ansible_playbook" ]]; then
+  echo "未找到真实 ansible-playbook 可执行文件。" >&2
+  exit 1
+fi
+
+if [[ $# -eq 0 ]]; then
+  exec "$real_ansible_playbook"
+fi
+
+action="$1"
+shift
+
+case "$action" in
+  deploy|reset|audit|decommission|dc)
+    playbook_action="$action"
+    if [[ "$playbook_action" == "dc" ]]; then
+      playbook_action="decommission"
+    fi
+
+    playbook_file="${repo_root}/${playbook_action}.yml"
+    if [[ ! -f "$playbook_file" ]]; then
+      echo "未找到 playbook: $playbook_file" >&2
+      exit 1
+    fi
+
+    target=""
+    if [[ $# -gt 0 && "${1#-}" == "$1" ]]; then
+      target="$1"
+      shift
+    fi
+
+    if [[ "$playbook_action" == "decommission" && -z "$target" ]]; then
+      echo "decommission 必须指定目标节点: ./ansible-playbook dc <host>" >&2
+      exit 1
+    fi
+
+    cmd=("$real_ansible_playbook" -i "$inventory_default" "$playbook_file")
+
+    if [[ -n "$target" ]]; then
+      case "$playbook_action" in
+        deploy|audit)
+          cmd+=(--limit "$target")
+          ;;
+        reset)
+          cmd+=(-e "reset_target_hosts=${target}")
+          if host_in_reality_nodes "$target"; then
+            cmd+=(--limit "$target")
+          else
+            cmd+=(--limit spt -e "reset_subs_only=true")
+          fi
+          ;;
+        decommission)
+          cmd+=(-e "dc_target=${target}")
+          if host_in_reality_nodes "$target"; then
+            cmd+=(--limit "$target")
+          else
+            cmd+=(--limit spt)
+          fi
+          ;;
+      esac
+    fi
+
+    cmd+=("$@")
+
+    if ! has_vault_flag "${cmd[@]}" && [[ -f "$vault_default" ]]; then
+      cmd+=(--vault-password-file "$vault_default")
+    fi
+
+    exec "${cmd[@]}"
+    ;;
+  *)
+    # passthrough native ansible-playbook usage
+    exec "$real_ansible_playbook" "$action" "$@"
+    ;;
+esac

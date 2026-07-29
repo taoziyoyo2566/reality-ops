@@ -3,3 +3,22 @@ logs/
 data/**/logs
 data/logs/
 *.log
+SUBSCRIPTIONS.txt
+.env
+# Ansible cache/output
+.ansible/
+*.retry
+
+# Virtualenvs / build artifacts
+.venv/
+monitor_venv/
+
+# Local binaries/cache
+__pycache__/
+.python-version
+users/*.json
+.vault_pass
+.github
+scripts
+.understand-anything
+.claude

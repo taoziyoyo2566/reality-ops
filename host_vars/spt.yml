@@ -1,25 +1,10 @@
-# # host_vars/dzire.yml
-
-# # 服务器特定的域名后缀 (对应脚本中的 DOMAIN_SUFFIX)
-# domain_suffix: "taoziyoyo.com"
-
-# server_hash_suffix: "o9drrm5l1d7uopaguucnxohzc3ul2yazxrldzpuoduu"
-
-# # 多实例用户列表
-# reality_instances:
-#   # 对应原来的 yhbb.json
-#   - name: "reap"
-#     port: 30854
-#     uuid: "ed755510-526b-46c6-b0ba-6d14148b19ba" # 请生成一个新的 UUID
-#     # 下面这三项可以用 xray x25519 命令预先生成好填入
-#     private_key: "gGNaAbgLIr08E5sdA66HBTJTide5kH6bnixAghA4LEg"
-#     public_key: "przuw7n7plj858U12IiGWVq2ewmSEd6zBRUj--RLg0k" 
-#     short_id: "2734a458fd1412e9"
-    
-#   # 对应原来的 frank.json
-#   - name: "frank"
-#     port: 38470
-#     uuid: "952e2f2b-3d6a-421d-ae3f-cbadefb6e51b"
-#     private_key: "SJzZMVSt5AoFFKmphfGqrU2tfEWvPjsVIi9piw_peFE"
-#     public_key: "t5LKpz7eyvggAVGYN-au9JzTgAh1tFEn2lao9sesAx4"
-#     short_id: "8e260b01909f22f5"
+# 多实例部署（暂不启用监控）
+reality_mode: single
+monitor_enabled: true
+# 客户端显示标签（自由列表）
+node_tags: ["Unlimited","4837"]
+# Reality 回落：Walmart（美西西雅图节点；全美 CDN 覆盖，本地有边缘节点）。
+# 与 dcc 的 ebay、usca 的 costco 刻意错开，三台美国节点互不同 SNI。
+# dest 与 serverNames 必须成对覆盖，只改一个会导致握手失败；deploy.yml 前置检查会拦。
+reality_dest: "www.walmart.com:443"
+reality_server_names: ["www.walmart.com"]

@@ -1,0 +1,15 @@
+{
+  "name": "test",
+  "uuid": "651033ca-03a8-493a-8b4c-d81c4e6930cb",
+  "port": 22479,
+  "short_id": "39223c4b23fabed6",
+  "private_key": "-LY0RdNMctfZN0RE_MS-T1F8cOFuT8U-jy8a3Ucs9XI",
+  "public_key": "kQAKcXoy_fGsOql8svAHuPJF9bVecrvbIgOCW4jcVi8",
+  "groups": [
+    "test"
+  ],
+  "hosts": [
+    "jp05",
+    "jp10"
+  ]
+}

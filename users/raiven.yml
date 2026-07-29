@@ -1,0 +1,15 @@
+{
+  "name": "raiven",
+  "uuid": "cf896b58-5f2e-4fa9-87d8-c025de1ec694",
+  "port": 39413,
+  "short_id": "a700fe15a83e4809",
+  "private_key": "cC2izig0xDfYCkqBtxgHroP2aMnAt7JNKtNmJXiGG1g",
+  "public_key": "uHcFk44IOKKqAY0Sp5Cnqlfjvt7vnwcVr2YqUgP0xF8",
+  "groups": [
+    "basic"
+  ],
+  "hosts": [
+    "ams"
+  ],
+  "deny_hosts": []
+}

@@ -1,0 +1,10 @@
+# 多实例部署
+reality_mode: single
+monitor_enabled: true
+# 客户端显示标签（自由列表）——待填，例: ["Optimized", "Native"]
+node_tags: ["Unlimited"]
+# Reality 回落：Costco（美西节点；大陆有实体门店与会员体系，品牌关联度足够）。
+# 与 dcc 的 ebay 刻意错开，避免两台美西同 SNI 被横向关联。
+# dest 与 serverNames 必须成对覆盖，只改一个会导致握手失败；deploy.yml 前置检查会拦。
+reality_dest: "www.costco.com:443"
+reality_server_names: ["www.costco.com"]

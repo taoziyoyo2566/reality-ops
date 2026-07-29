@@ -1,0 +1,9 @@
+---
+# 测试节点（staging）。组级隔离配置见 group_vars/test_nodes.yml。
+# reality_node_users 故意留在 host_vars：层③ ACL 独占闸门，host_vars 优先级最高，
+# 即使漏加 [test_nodes] 组也能挡掉默认 'all' 用户误落本机。
+reality_mode: single
+reality_node_users:
+  - test
+# 客户端显示标签（自由列表）——待填，例: ["Optimized", "Native"]
+node_tags: ["test"]

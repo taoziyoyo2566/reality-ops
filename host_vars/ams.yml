@@ -1,0 +1,9 @@
+# 多实例部署（禁用监控）
+reality_mode: multi
+monitor_enabled: true
+# 客户端显示标签（自由列表）
+node_tags: ["Premium"]
+# Reality 回落：Booking.com（总部即在阿姆斯特丹，站点与本节点同城，"IP 接近"加分项拉满）。
+# dest 与 serverNames 必须成对覆盖，只改一个会导致握手失败；deploy.yml 前置检查会拦。
+reality_dest: "www.booking.com:443"
+reality_server_names: ["www.booking.com"]

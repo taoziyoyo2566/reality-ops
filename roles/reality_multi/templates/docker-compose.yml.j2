@@ -1,0 +1,41 @@
+{% if reality_instances | length == 0 %}
+services: {}
+{% else %}
+services:
+{% for item in reality_instances %}
+  reality_{{ item.name }}:
+    container_name: "reality_{{ item.name }}"
+    image: "{{ xray_image }}"
+    restart: always
+    user: "10000:10000"
+    network_mode: "bridge"
+    ports:
+      - "0.0.0.0:{{ item.port }}:8443"
+{% if global_ipv6 | length > 0 %}
+      - "[{{ global_ipv6 }}]:{{ item.port }}:8443"
+{% endif %}
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - "{{ reality_data_dir }}/{{ item.name }}/config.json:/config.json:ro"
+      - "{{ reality_logs_dir }}/{{ item.name }}:/var/log/xray"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: "{{ reality_memory_limit }}"
+    mem_reservation: "{{ reality_memory_reservation }}"
+    memswap_limit: "{{ reality_memory_swap }}"
+    mem_swappiness: {{ reality_mem_swappiness }}
+    ulimits:
+      nofile:
+        soft: 4096
+        hard: 8192
+      nproc: 512
+{% endfor %}
+{% endif %}

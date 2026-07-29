@@ -1,0 +1,2013 @@
+from fastapi import FastAPI, HTTPException, Header, Request, Depends, status
+from fastapi.responses import HTMLResponse, Response, JSONResponse, RedirectResponse
+from fastapi.openapi.docs import get_swagger_ui_html
+from pydantic import BaseModel
+import csv
+import io
+import sqlite3
+import time
+import os
+import hmac
+import logging
+from typing import Optional, List
+
+app = FastAPI(
+    title="Reality Monitor",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
+)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("reality-monitor")
+
+# 敏感 token 从 0600 env 文件读取（systemd EnvironmentFile=monitor.env），不再明文渲染进 server.py
+REPORT_TOKEN = os.environ.get("MONITOR_REPORT_TOKEN", "")
+ADMIN_BEARER_TOKEN = os.environ.get("MONITOR_ADMIN_BEARER_TOKEN", "")
+STATS_BEARER_TOKEN = os.environ.get("MONITOR_STATS_BEARER_TOKEN", "")
+IP_ALLOWLIST: List[str] = {{ monitor.ip_allowlist | default(['127.0.0.1']) | to_json }}
+TRUST_PROXY_HEADER = "{{ monitor.trust_proxy_header | default('CF-Connecting-IP') }}"
+TUNNEL_SECRET = os.environ.get("MONITOR_TUNNEL_SECRET", "")
+TUNNEL_SECRET_HEADER = "X-Monitor-Tunnel-Secret"
+
+SUBS_PROXY_ENABLED = {{ monitor.subs_proxy.enabled | default(false) | bool }}
+SUBS_GIST_USER = "{{ monitor.subs_proxy.gist_user | default('') }}"
+SUBS_GIST_ID = "{{ monitor.subs_proxy.gist_id | default('') }}"
+SUBS_TOKEN = os.environ.get("MONITOR_SUBS_TOKEN", "")
+SUBS_REQUIRE_TOKEN = {{ monitor.subs_proxy.require_token | default(true) | bool }}
+
+DB_PATH = "{{ monitor_root_dir }}/data/traffic_monitor.db"
+
+DASHBOARD_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Reality Traffic Monitor</title>
+  <style>
+    :root {
+      --bg: #f5efe6;
+      --bg-accent: #d7f0ef;
+      --ink: #12151f;
+      --muted: #5e6676;
+      --card: #ffffff;
+      --accent: #ff7a59;
+      --accent-2: #21a8a4;
+      --accent-3: #f2b94c;
+      --shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+      --radius: 20px;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Space Grotesk", "Noto Sans SC", "PingFang SC", "Microsoft Yahei", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at 20% 20%, var(--bg-accent), var(--bg));
+    }
+    .backdrop {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(0);
+      opacity: 0.6;
+      mix-blend-mode: multiply;
+    }
+    .orb-1 {
+      width: 320px;
+      height: 320px;
+      background: rgba(255, 122, 89, 0.3);
+      top: -80px;
+      left: -80px;
+    }
+    .orb-2 {
+      width: 420px;
+      height: 420px;
+      background: rgba(33, 168, 164, 0.25);
+      bottom: -180px;
+      right: -120px;
+    }
+    .orb-3 {
+      width: 240px;
+      height: 240px;
+      background: rgba(242, 185, 76, 0.25);
+      top: 20%;
+      right: 15%;
+    }
+    main {
+      position: relative;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 40px 20px 80px;
+      display: grid;
+      gap: 22px;
+    }
+    .hero {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: 0.24em;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    h1 {
+      margin: 8px 0;
+      font-size: clamp(28px, 4vw, 40px);
+    }
+    .sub {
+      margin: 0;
+      color: var(--muted);
+      max-width: 520px;
+    }
+    .hero-right {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .chip {
+      background: rgba(255, 255, 255, 0.8);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      box-shadow: var(--shadow);
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+    .controls label {
+      display: grid;
+      gap: 6px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .controls input,
+    .controls select {
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      background: #fff;
+      color: var(--ink);
+    }
+    .toggle {
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      text-transform: none;
+      letter-spacing: 0;
+      font-size: 14px;
+      color: var(--ink);
+    }
+    .toggle input {
+      width: 42px;
+      height: 24px;
+      appearance: none;
+      background: rgba(15, 23, 42, 0.15);
+      border-radius: 999px;
+      position: relative;
+      outline: none;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+    .toggle input::after {
+      content: "";
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      top: 3px;
+      left: 3px;
+      transition: transform 0.2s ease;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    }
+    .toggle input:checked {
+      background: linear-gradient(120deg, var(--accent), var(--accent-2));
+    }
+    .toggle input:checked::after {
+      transform: translateX(18px);
+    }
+    button {
+      border: none;
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #fff;
+      background: linear-gradient(120deg, var(--accent), var(--accent-3));
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 20px rgba(255, 122, 89, 0.3);
+    }
+    button.secondary {
+      background: linear-gradient(120deg, var(--accent-2), #2aa0ff);
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+    }
+    .metric h3 {
+      margin: 0;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      color: var(--muted);
+    }
+    .metric-value {
+      font-size: 28px;
+      font-weight: 600;
+      margin: 10px 0 6px;
+    }
+    .metric-sub {
+      font-size: 13px;
+      color: var(--muted);
+      margin: 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .charts-grid {
+      grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
+    }
+    .card-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .card-head h3 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .bar-list {
+      display: grid;
+      gap: 12px;
+    }
+    .bar-row {
+      display: grid;
+      gap: 8px;
+    }
+    .bar-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .bar-track {
+      position: relative;
+      height: 12px;
+      background: rgba(15, 23, 42, 0.08);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 0.6s ease;
+    }
+    .stack-row {
+      display: grid;
+      gap: 8px;
+    }
+    .stack-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .stack-track {
+      display: flex;
+      gap: 0;
+      height: 14px;
+      background: rgba(15, 23, 42, 0.08);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .stack-segment {
+      height: 100%;
+      min-width: 6px;
+      transition: width 0.4s ease;
+    }
+    .stack-segment:hover {
+      filter: brightness(0.95);
+    }
+    .chart-empty {
+      font-size: 13px;
+      color: var(--muted);
+      text-align: center;
+      padding: 12px 0;
+    }
+    .log-card {
+      padding: 18px 20px;
+    }
+    .log-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .log-list {
+      display: grid;
+      gap: 10px;
+      max-height: 240px;
+      overflow: auto;
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.04);
+      font-family: "IBM Plex Mono", "Fira Mono", ui-monospace, monospace;
+      font-size: 12px;
+    }
+    .log-item {
+      display: grid;
+      grid-template-columns: 120px 60px 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+    .stack-tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(15, 23, 42, 0.92);
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+      z-index: 9999;
+      display: none;
+      white-space: nowrap;
+    }
+    .log-time {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .log-level {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      align-self: start;
+      text-align: center;
+    }
+    .log-level.error {
+      background: rgba(240, 95, 113, 0.15);
+      color: #b91c1c;
+    }
+    .log-level.warn {
+      background: rgba(242, 185, 76, 0.2);
+      color: #a16207;
+    }
+    .log-level.info {
+      background: rgba(33, 168, 164, 0.15);
+      color: #0f766e;
+    }
+    .log-message {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .trend-card {
+      padding: 18px 20px 16px;
+    }
+    .trend-chart {
+      width: 100%;
+      height: 180px;
+      display: block;
+    }
+    .trend-axis {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+    .alert-list {
+      display: grid;
+      gap: 10px;
+    }
+    .alert-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: rgba(255, 122, 89, 0.08);
+      font-size: 13px;
+    }
+    .alert-meta {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .badge.ok {
+      background: rgba(33, 168, 164, 0.15);
+      color: #0f766e;
+    }
+    .badge.stale {
+      background: rgba(240, 95, 113, 0.15);
+      color: #b91c1c;
+    }
+    .health-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      min-width: 420px;
+    }
+    .health-wrap {
+      overflow-x: auto;
+    }
+    .health-table th {
+      text-align: left;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    }
+    .health-table td {
+      padding: 10px 0;
+      border-bottom: 1px dashed rgba(15, 23, 42, 0.08);
+    }
+    .health-table tr:last-child td {
+      border-bottom: none;
+    }
+    .table-card {
+      padding: 0;
+      overflow: hidden;
+    }
+    .table-card .card-head {
+      padding: 18px 20px 0;
+      margin-bottom: 10px;
+    }
+    .table-wrap {
+      padding: 0 20px 20px;
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+      min-width: 520px;
+    }
+    thead th {
+      text-align: left;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    }
+    tbody td {
+      padding: 12px 0;
+      border-bottom: 1px dashed rgba(15, 23, 42, 0.08);
+    }
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+    td.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .empty {
+      display: none;
+      padding: 18px 0;
+      text-align: center;
+      color: var(--muted);
+    }
+    .fade-in {
+      animation: fadeUp 0.6s ease both;
+    }
+    @keyframes fadeUp {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    @media (max-width: 720px) {
+      .controls {
+        grid-template-columns: 1fr;
+      }
+      .hero-right {
+        width: 100%;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="backdrop">
+    <span class="orb orb-1"></span>
+    <span class="orb orb-2"></span>
+    <span class="orb orb-3"></span>
+  </div>
+  <main>
+    <header class="hero">
+      <div>
+        <div class="eyebrow">Traffic Overview</div>
+        <h1>Reality Traffic Monitor</h1>
+        <p class="sub" id="status">Ready.</p>
+      </div>
+      <div class="hero-right">
+        <div class="chip">Window <span id="window-label">24h</span></div>
+        <div class="chip">Records <span id="record-count">0</span></div>
+        <div class="chip">Updated <span id="last-refresh">--</span></div>
+      </div>
+    </header>
+
+    <section class="controls card">
+      <label>
+        Window (hours)
+        <select id="hours-select">
+          <option value="6">6</option>
+          <option value="12">12</option>
+          <option value="24">24</option>
+          <option value="48">48</option>
+          <option value="72">72</option>
+          <option value="168">168</option>
+        </select>
+      </label>
+      <label class="toggle">
+        <input id="detail-toggle" type="checkbox" />
+        <span>Detail by node</span>
+      </label>
+      <label>
+        Node
+        <select id="node-select">
+          <option value="all">All</option>
+        </select>
+      </label>
+      <label>
+        User
+        <select id="user-select">
+          <option value="all">All</option>
+        </select>
+      </label>
+      <label>
+        Alert (MB)
+        <input id="alert-input" type="number" min="0" value="1000" />
+      </label>
+      <button id="refresh-btn" type="button">Refresh</button>
+      <button id="export-btn" class="secondary" type="button">Export CSV</button>
+    </section>
+
+    <section class="metrics">
+      <div class="metric card fade-in">
+        <h3>Total Traffic</h3>
+        <div class="metric-value" id="total-traffic">0 MB</div>
+        <p class="metric-sub">Up <span id="total-up">0</span> MB · Down <span id="total-down">0</span> MB</p>
+      </div>
+      <div class="metric card fade-in">
+        <h3>Users</h3>
+        <div class="metric-value" id="user-count">0</div>
+        <p class="metric-sub">Distinct users in window</p>
+      </div>
+      <div class="metric card fade-in">
+        <h3>Nodes</h3>
+        <div class="metric-value" id="node-count">0</div>
+        <p class="metric-sub" id="node-sub">Active nodes in window</p>
+      </div>
+      <div class="metric card fade-in">
+        <h3>Top User</h3>
+        <div class="metric-value" id="top-user">--</div>
+        <p class="metric-sub" id="top-user-traffic">0 MB</p>
+      </div>
+    </section>
+
+    <section class="grid charts-grid">
+      <div class="card">
+        <div class="card-head">
+          <h3>Top Users</h3>
+          <span class="hint">By total traffic</span>
+        </div>
+        <div id="user-chart" class="bar-list"></div>
+      </div>
+      <div class="card" id="node-card">
+        <div class="card-head">
+          <h3>Top Nodes</h3>
+          <span class="hint">By total traffic</span>
+        </div>
+        <div id="node-chart" class="bar-list"></div>
+      </div>
+    </section>
+
+    <section class="card trend-card">
+      <div class="card-head">
+        <h3>Traffic Trend</h3>
+        <span class="hint">Total MB per interval</span>
+      </div>
+      <svg id="trend-chart" class="trend-chart" viewBox="0 0 800 180" preserveAspectRatio="none"></svg>
+      <div class="trend-axis">
+        <span id="trend-start">--</span>
+        <span id="trend-end">--</span>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <div class="card-head">
+          <h3>Alerts</h3>
+          <span class="hint" id="alert-hint">Over threshold</span>
+        </div>
+        <div id="alert-list" class="alert-list"></div>
+        <div id="alert-empty" class="chart-empty">No alerts.</div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Node Health</h3>
+          <span class="hint">Last report</span>
+        </div>
+        <div class="health-wrap">
+          <table class="health-table">
+            <thead>
+              <tr>
+                <th>Node</th>
+                <th>Last Seen</th>
+                <th>Age</th>
+                <th class="num">Window (MB)</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="health-body"></tbody>
+          </table>
+          <div id="health-empty" class="chart-empty">No node data.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card table-card">
+      <div class="card-head">
+        <h3>Traffic Detail</h3>
+        <span class="hint" id="table-hint">Sorted by total</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Node</th>
+              <th class="num">Upload (MB)</th>
+              <th class="num">Download (MB)</th>
+              <th class="num">Total (MB)</th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+        <div id="empty-state" class="empty">No data for the selected window.</div>
+      </div>
+    </section>
+
+    <section class="card log-card">
+      <div class="card-head">
+        <h3>Client Logs</h3>
+        <div class="log-actions">
+          <button id="log-copy" class="secondary" type="button">Copy</button>
+          <button id="log-clear" type="button">Clear</button>
+        </div>
+      </div>
+      <div id="log-empty" class="chart-empty">No logs yet.</div>
+      <div id="log-list" class="log-list"></div>
+    </section>
+  </main>
+
+  <script data-cfasync="false">
+    window.__monitorEarlyErrors = [];
+    window.addEventListener("error", function (event) {
+      if (!window.__monitorEarlyErrors) return;
+      var location = event.filename ? event.filename + ":" + event.lineno + ":" + event.colno : "";
+      window.__monitorEarlyErrors.push({
+        level: "error",
+        message: event.message || "Script error",
+        detail: location
+      });
+    });
+    window.addEventListener("unhandledrejection", function (event) {
+      if (!window.__monitorEarlyErrors) return;
+      var reason = event.reason && event.reason.stack ? event.reason.stack : String(event.reason || "");
+      window.__monitorEarlyErrors.push({
+        level: "error",
+        message: "Unhandled promise rejection",
+        detail: reason
+      });
+    });
+  </script>
+  <script data-cfasync="false">
+    (() => {
+      const state = { hours: 24, detail: true, selectedNode: "all", selectedUser: "all" };
+      const fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+      const fmtInt = new Intl.NumberFormat("en-US");
+      const colorCache = new Map();
+      // 精选 16 组高区分度颜色（修正了重复色，最大化视觉差异）
+      // 暴力高对比配色：放弃美感，追求绝对的区分度
+      const basePalette = [
+        "#FF0000", // Red
+        "#0066FF", // Vivid Blue (避免与紫混淆)
+        "#00A651", // Green
+        "#FFC300", // Amber
+        "#9B59B6", // Purple (清晰紫)
+        "#FF7F0E", // Orange
+        "#00C0C7", // Cyan
+        "#E548AB", // Magenta (为需求截图中的 #E48BBB 提供清晰对位)
+        "#8B4513", // Brown
+        "#7FFF00", // Chartreuse
+        "#4B0082", // Indigo
+        "#008B8B", // Dark Cyan/Teal
+        "#D92027", // Crimson
+        "#A7A340", // Olive
+        "#3A6EA5", // Steel Blue
+        "#2F4F4F"  // Dark Slate Gray
+      ];
+
+      function hexToRgb(hex) {
+        const v = hex.replace("#", "");
+        return {
+          r: parseInt(v.slice(0, 2), 16),
+          g: parseInt(v.slice(2, 4), 16),
+          b: parseInt(v.slice(4, 6), 16)
+        };
+      }
+
+      function rgbToHsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        let h, s, l = (max + min) / 2;
+        if (max === min) { h = s = 0; }
+        else {
+          const d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+          }
+          h /= 6;
+        }
+        return { h: h * 360, s: s * 100, l: l * 100 };
+      }
+
+      function pastelize(hex, sat = 68, light = 70) {
+        const { r, g, b } = hexToRgb(hex);
+        const { h } = rgbToHsl(r, g, b);
+        return `hsl(${h.toFixed(1)}, ${sat}%, ${light}%)`;
+      }
+
+      const hoursSelect = document.getElementById("hours-select");
+      const detailToggle = document.getElementById("detail-toggle");
+      const nodeSelect = document.getElementById("node-select");
+      const userSelect = document.getElementById("user-select");
+      const refreshBtn = document.getElementById("refresh-btn");
+      const lastRefresh = document.getElementById("last-refresh");
+      const recordCount = document.getElementById("record-count");
+      const totalTraffic = document.getElementById("total-traffic");
+      const totalUp = document.getElementById("total-up");
+      const totalDown = document.getElementById("total-down");
+      const userCount = document.getElementById("user-count");
+      const nodeCount = document.getElementById("node-count");
+      const nodeSub = document.getElementById("node-sub");
+      const topUser = document.getElementById("top-user");
+      const topUserTraffic = document.getElementById("top-user-traffic");
+      const userChart = document.getElementById("user-chart");
+      const nodeChart = document.getElementById("node-chart");
+      const nodeCard = document.getElementById("node-card");
+      const tableBody = document.getElementById("table-body");
+      const emptyState = document.getElementById("empty-state");
+      const statusEl = document.getElementById("status");
+      const tableHint = document.getElementById("table-hint");
+      const windowLabel = document.getElementById("window-label");
+      const alertInput = document.getElementById("alert-input");
+      const exportBtn = document.getElementById("export-btn");
+      const alertList = document.getElementById("alert-list");
+      const alertEmpty = document.getElementById("alert-empty");
+      const alertHint = document.getElementById("alert-hint");
+      const trendChart = document.getElementById("trend-chart");
+      const trendStart = document.getElementById("trend-start");
+      const trendEnd = document.getElementById("trend-end");
+      const healthBody = document.getElementById("health-body");
+      const healthEmpty = document.getElementById("health-empty");
+      const logList = document.getElementById("log-list");
+      const logEmpty = document.getElementById("log-empty");
+      const logClear = document.getElementById("log-clear");
+      const logCopy = document.getElementById("log-copy");
+
+      let cachedRows = [];
+      let logs = [];
+      const LOG_KEY = "realityMonitorLogs";
+      const LOG_LIMIT = 200;
+
+      function readQuery() {
+        const params = new URLSearchParams(window.location.search);
+        const hoursParam = parseInt(params.get("hours"), 10);
+        if (!Number.isNaN(hoursParam)) {
+          state.hours = hoursParam;
+        }
+        const detailParam = params.get("detail");
+        if (detailParam !== null) {
+          state.detail = detailParam === "true";
+        }
+      }
+
+      function syncControls() {
+        hoursSelect.value = String(state.hours);
+        detailToggle.checked = state.detail;
+        nodeSelect.value = state.selectedNode || "all";
+        userSelect.value = state.selectedUser || "all";
+        windowLabel.textContent = state.hours + "h";
+      }
+
+      function updateQuery() {
+        const url = new URL(window.location.href);
+        url.searchParams.set("hours", String(state.hours));
+        url.searchParams.set("detail", state.detail ? "true" : "false");
+        window.history.replaceState(null, "", url);
+      }
+
+      function setStatus(message) {
+        statusEl.textContent = message;
+      }
+
+      function loadLogs() {
+        try {
+          const raw = localStorage.getItem(LOG_KEY);
+          const parsed = raw ? JSON.parse(raw) : [];
+          logs = Array.isArray(parsed) ? parsed : [];
+        } catch (error) {
+          logs = [];
+        }
+      }
+
+      function saveLogs() {
+        try {
+          localStorage.setItem(LOG_KEY, JSON.stringify(logs));
+        } catch (error) {
+          // ignore localStorage failures
+        }
+      }
+
+      function addLog(level, message, detail) {
+        const entry = {
+          ts: Date.now(),
+          level: level || "info",
+          message: String(message || ""),
+          detail: detail ? String(detail) : ""
+        };
+        logs.unshift(entry);
+        if (logs.length > LOG_LIMIT) {
+          logs = logs.slice(0, LOG_LIMIT);
+        }
+        saveLogs();
+        renderLogs();
+      }
+
+      function renderLogs() {
+        if (!logList || !logEmpty) return;
+        logList.innerHTML = "";
+        if (!logs.length) {
+          logEmpty.style.display = "block";
+          return;
+        }
+        logEmpty.style.display = "none";
+        const fragment = document.createDocumentFragment();
+        logs.forEach((entry) => {
+          const row = document.createElement("div");
+          row.className = "log-item";
+
+          const time = document.createElement("div");
+          time.className = "log-time";
+          time.textContent = new Date(entry.ts).toLocaleString();
+
+          const level = document.createElement("div");
+          level.className = "log-level " + entry.level;
+          level.textContent = entry.level;
+
+          const message = document.createElement("div");
+          message.className = "log-message";
+          message.textContent = entry.message + (entry.detail ? "\n" + entry.detail : "");
+
+          row.appendChild(time);
+          row.appendChild(level);
+          row.appendChild(message);
+          fragment.appendChild(row);
+        });
+        logList.appendChild(fragment);
+      }
+
+      function formatAge(seconds) {
+        if (!Number.isFinite(seconds) || seconds < 0) return "--";
+        if (seconds < 60) return Math.floor(seconds) + "s";
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return minutes + "m";
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return hours + "h";
+        const days = Math.floor(hours / 24);
+        return days + "d";
+      }
+
+      function pickInterval(hours) {
+        if (hours <= 24) return 3600;
+        if (hours <= 72) return 7200;
+        if (hours <= 168) return 21600;
+        return 86400;
+      }
+
+      function formatTick(ts) {
+        const date = new Date(ts * 1000);
+        if (state.hours > 36) {
+          return date.toLocaleDateString();
+        }
+        return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+
+      function aggregateBy(data, key) {
+        const map = new Map();
+        data.forEach((row) => {
+          const label = String(row[key] || "-");
+          const value = Number(row.total_mb || 0);
+          map.set(label, (map.get(label) || 0) + value);
+        });
+        return Array.from(map.entries()).map(([label, value]) => ({ label, value }));
+      }
+
+      function colorForLabel(label) {
+        if (colorCache.has(label)) return colorCache.get(label);
+        let hash = 0;
+        for (let i = 0; i < label.length; i++) {
+          hash = (hash << 5) - hash + label.charCodeAt(i);
+          hash |= 0; // keep 32-bit
+        }
+        const base = basePalette[Math.abs(hash) % basePalette.length];
+        const flat = pastelize(base, 62, 72); // 柔和浅色，保持高区分度
+        colorCache.set(label, flat);
+        return flat;
+      }
+
+      function buildStacked(rows) {
+        const nodeMap = new Map();
+        rows.forEach((row) => {
+          const node = row.node;
+          const user = row.user || "-";
+          const value = Number(row.total_mb || 0);
+          if (!node || node === "ALL" || value <= 0) return;
+          if (!nodeMap.has(node)) {
+            nodeMap.set(node, { label: node, total: 0, segments: new Map() });
+          }
+          const entry = nodeMap.get(node);
+          entry.total += value;
+          entry.segments.set(user, (entry.segments.get(user) || 0) + value);
+        });
+        const stacks = Array.from(nodeMap.values()).map((entry) => ({
+          label: entry.label,
+          total: entry.total,
+          segments: Array.from(entry.segments.entries()).map(([label, value]) => ({ label, value }))
+        }));
+        stacks.sort((a, b) => b.total - a.total);
+        return stacks;
+      }
+
+      function renderBars(container, items) {
+        container.innerHTML = "";
+        if (!items.length) {
+          const empty = document.createElement("div");
+          empty.className = "chart-empty";
+          empty.textContent = "No data";
+          container.appendChild(empty);
+          return;
+        }
+        const maxValue = Math.max(...items.map((item) => item.value), 1);
+        items.forEach((item, index) => {
+          const row = document.createElement("div");
+          row.className = "bar-row";
+          const label = document.createElement("div");
+          label.className = "bar-label";
+          const labelText = document.createElement("span");
+          labelText.textContent = item.label;
+          const valueText = document.createElement("span");
+          valueText.textContent = fmt.format(item.value) + " MB";
+          label.appendChild(labelText);
+          label.appendChild(valueText);
+          const track = document.createElement("div");
+          track.className = "bar-track";
+          const fill = document.createElement("div");
+          fill.className = "bar-fill";
+          const width = Math.max(6, (item.value / maxValue) * 100);
+          fill.style.width = width + "%";
+          fill.style.background = colorForLabel(item.label);
+          track.appendChild(fill);
+          row.appendChild(label);
+          row.appendChild(track);
+          container.appendChild(row);
+        });
+      }
+
+      const stackTooltip = document.createElement("div");
+      stackTooltip.className = "stack-tooltip";
+      document.body.appendChild(stackTooltip);
+
+      function showTooltip(text, event) {
+        stackTooltip.textContent = text;
+        stackTooltip.style.display = "block";
+        stackTooltip.style.left = event.pageX + 12 + "px";
+        stackTooltip.style.top = event.pageY + 12 + "px";
+      }
+      function hideTooltip() {
+        stackTooltip.style.display = "none";
+      }
+
+      function renderStackedBars(container, stacks) {
+        container.innerHTML = "";
+        if (!stacks.length) {
+          const empty = document.createElement("div");
+          empty.className = "chart-empty";
+          empty.textContent = "No data";
+          container.appendChild(empty);
+          return;
+        }
+        const maxTotal = Math.max(...stacks.map((item) => item.total), 1);
+        const fragment = document.createDocumentFragment();
+        stacks.forEach((stack) => {
+          const row = document.createElement("div");
+          row.className = "stack-row";
+          const label = document.createElement("div");
+          label.className = "stack-label";
+          const labelText = document.createElement("span");
+          labelText.textContent = stack.label;
+          const valueText = document.createElement("span");
+          valueText.textContent = fmt.format(stack.total) + " MB";
+          label.appendChild(labelText);
+          label.appendChild(valueText);
+
+          const track = document.createElement("div");
+          track.className = "stack-track";
+          const segs = stack.segments
+            .slice()
+            .sort((a, b) => b.value - a.value)
+            .slice(0, 12); // 防止过多分段
+          const remainder =
+            stack.segments.length > segs.length
+              ? stack.segments.slice(segs.length).reduce((sum, s) => sum + Number(s.value || 0), 0)
+              : 0;
+
+          segs.forEach((seg) => {
+            const part = document.createElement("div");
+            part.className = "stack-segment";
+            const width = Math.max(3, (seg.value / stack.total) * 100);
+            part.style.width = width + "%";
+            part.style.background = colorForLabel(seg.label);
+            part.addEventListener("mouseenter", (e) => {
+              showTooltip(`${stack.label} · ${seg.label}: ${fmt.format(seg.value)} MB`, e);
+            });
+            part.addEventListener("mousemove", (e) => showTooltip(`${stack.label} · ${seg.label}: ${fmt.format(seg.value)} MB`, e));
+            part.addEventListener("mouseleave", hideTooltip);
+            track.appendChild(part);
+          });
+
+          if (remainder > 0) {
+            const part = document.createElement("div");
+            part.className = "stack-segment";
+            part.style.width = Math.max(2, (remainder / stack.total) * 100) + "%";
+            part.style.background = "linear-gradient(90deg, #cbd5e1, #94a3b8)";
+            part.addEventListener("mouseenter", (e) => {
+              showTooltip(`${stack.label} · Other: ${fmt.format(remainder)} MB`, e);
+            });
+            part.addEventListener("mousemove", (e) => showTooltip(`${stack.label} · Other: ${fmt.format(remainder)} MB`, e));
+            part.addEventListener("mouseleave", hideTooltip);
+            track.appendChild(part);
+          }
+
+          row.appendChild(label);
+          row.appendChild(track);
+          fragment.appendChild(row);
+        });
+        container.appendChild(fragment);
+      }
+
+      function renderTrend(payload) {
+        if (!trendChart) return;
+        const series = payload && Array.isArray(payload.series) ? payload.series : [];
+        const interval = payload && payload.interval ? payload.interval : 3600;
+        const start = payload && payload.start ? payload.start : null;
+        const end = payload && payload.end ? payload.end : null;
+        if (!series.length || !start || !end) {
+          trendChart.innerHTML = "<text x=\"16\" y=\"24\" fill=\"#5e6676\">No data</text>";
+          if (trendStart) trendStart.textContent = "--";
+          if (trendEnd) trendEnd.textContent = "--";
+          return;
+        }
+
+        const startBucket = Math.floor(start / interval) * interval;
+        const endBucket = Math.floor(end / interval) * interval;
+        const map = new Map(series.map((item) => [item.bucket, item]));
+        const filled = [];
+        for (let t = startBucket; t <= endBucket; t += interval) {
+          const item = map.get(t) || { bucket: t, total_mb: 0 };
+          filled.push(item);
+        }
+
+        const maxValue = Math.max(...filled.map((item) => Number(item.total_mb || 0)), 1);
+        const width = 800;
+        const height = 180;
+        const padding = 18;
+        const span = Math.max(filled.length - 1, 1);
+        const points = filled.map((item, index) => {
+          const x = padding + ((width - padding * 2) * index) / span;
+          const y =
+            height - padding - ((height - padding * 2) * Number(item.total_mb || 0)) / maxValue;
+          return { x, y };
+        });
+        const line = points
+          .map((point, index) => (index === 0 ? "M" : "L") + point.x + "," + point.y)
+          .join(" ");
+        const area =
+          line +
+          " L" +
+          (padding + (width - padding * 2)) +
+          "," +
+          (height - padding) +
+          " L" +
+          padding +
+          "," +
+          (height - padding) +
+          " Z";
+
+        trendChart.setAttribute("viewBox", "0 0 " + width + " " + height);
+        trendChart.innerHTML =
+          "<defs>" +
+          "<linearGradient id=\"trendFill\" x1=\"0\" x2=\"0\" y1=\"0\" y2=\"1\">" +
+          "<stop offset=\"0%\" stop-color=\"#ff7a59\" stop-opacity=\"0.35\" />" +
+          "<stop offset=\"100%\" stop-color=\"#ff7a59\" stop-opacity=\"0\" />" +
+          "</linearGradient>" +
+          "</defs>" +
+          "<path d=\"" +
+          area +
+          "\" fill=\"url(#trendFill)\" />" +
+          "<path d=\"" +
+          line +
+          "\" fill=\"none\" stroke=\"#ff7a59\" stroke-width=\"3\" stroke-linecap=\"round\" />" +
+          "<circle cx=\"" +
+          points[points.length - 1].x +
+          "\" cy=\"" +
+          points[points.length - 1].y +
+          "\" r=\"4\" fill=\"#ff7a59\" />";
+
+        if (trendStart) trendStart.textContent = formatTick(startBucket);
+        if (trendEnd) trendEnd.textContent = formatTick(endBucket);
+      }
+
+      function renderAlerts(rows) {
+        if (!alertList || !alertEmpty || !alertInput) return;
+        const threshold = parseFloat(alertInput.value);
+        const limit = 8;
+        const minValue = Number.isFinite(threshold) ? threshold : 0;
+        if (alertHint) alertHint.textContent = "Over " + fmt.format(minValue) + " MB";
+
+        const alerts = [];
+        const userAgg = aggregateBy(rows, "user");
+        userAgg.forEach((item) => {
+          if (item.value >= minValue) {
+            alerts.push({ type: "User", label: item.label, value: item.value });
+          }
+        });
+        if (state.detail) {
+          const nodeAgg = aggregateBy(
+            rows.filter((row) => row.node && row.node !== "ALL"),
+            "node"
+          );
+          nodeAgg.forEach((item) => {
+            if (item.value >= minValue) {
+              alerts.push({ type: "Node", label: item.label, value: item.value });
+            }
+          });
+        }
+        alerts.sort((a, b) => b.value - a.value);
+        alertList.innerHTML = "";
+        if (!alerts.length) {
+          alertEmpty.style.display = "block";
+          return;
+        }
+        alertEmpty.style.display = "none";
+        const fragment = document.createDocumentFragment();
+        alerts.slice(0, limit).forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "alert-item";
+          const label = document.createElement("div");
+          label.textContent = item.type + ": " + item.label;
+          const value = document.createElement("div");
+          value.className = "alert-meta";
+          value.textContent = fmt.format(item.value) + " MB";
+          row.appendChild(label);
+          row.appendChild(value);
+          fragment.appendChild(row);
+        });
+        alertList.appendChild(fragment);
+      }
+
+      function renderHealth(rows) {
+        if (!healthBody || !healthEmpty) return;
+        healthBody.innerHTML = "";
+        if (!rows.length) {
+          healthEmpty.style.display = "block";
+          return;
+        }
+        healthEmpty.style.display = "none";
+        const fragment = document.createDocumentFragment();
+        rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          const tdNode = document.createElement("td");
+          tdNode.textContent = row.node || "-";
+          const tdLast = document.createElement("td");
+          tdLast.textContent = row.last_seen ? new Date(row.last_seen * 1000).toLocaleString() : "--";
+          const tdAge = document.createElement("td");
+          tdAge.textContent = formatAge(row.last_seen_ago_sec);
+          const tdTotal = document.createElement("td");
+          tdTotal.className = "num";
+          tdTotal.textContent = fmt.format(row.total_mb || 0);
+          const tdStatus = document.createElement("td");
+          const badge = document.createElement("span");
+          badge.className = "badge " + (row.stale ? "stale" : "ok");
+          badge.textContent = row.stale ? "Stale" : "Ok";
+          tdStatus.appendChild(badge);
+          tr.appendChild(tdNode);
+          tr.appendChild(tdLast);
+          tr.appendChild(tdAge);
+          tr.appendChild(tdTotal);
+          tr.appendChild(tdStatus);
+          fragment.appendChild(tr);
+        });
+        healthBody.appendChild(fragment);
+      }
+
+      function renderTable(rows) {
+        tableBody.innerHTML = "";
+        const filtered = rows;
+        filtered.sort((a, b) => Number(b.total_mb || 0) - Number(a.total_mb || 0));
+        tableHint.textContent = "Showing " + filtered.length + " of " + rows.length;
+
+        if (!filtered.length) {
+          emptyState.style.display = "block";
+          return;
+        }
+        emptyState.style.display = "none";
+        const fragment = document.createDocumentFragment();
+        filtered.forEach((row) => {
+          const tr = document.createElement("tr");
+          const tdUser = document.createElement("td");
+          tdUser.textContent = row.user || "-";
+          const tdNode = document.createElement("td");
+          tdNode.textContent = row.node === "ALL" ? "All" : row.node || "-";
+          const tdUp = document.createElement("td");
+          tdUp.className = "num";
+          tdUp.textContent = fmt.format(row.upload_mb || 0);
+          const tdDown = document.createElement("td");
+          tdDown.className = "num";
+          tdDown.textContent = fmt.format(row.download_mb || 0);
+          const tdTotal = document.createElement("td");
+          tdTotal.className = "num";
+          tdTotal.textContent = fmt.format(row.total_mb || 0);
+          tr.appendChild(tdUser);
+          tr.appendChild(tdNode);
+          tr.appendChild(tdUp);
+          tr.appendChild(tdDown);
+          tr.appendChild(tdTotal);
+          fragment.appendChild(tr);
+        });
+        tableBody.appendChild(fragment);
+      }
+
+      function render(data) {
+        // 基于全量数据填充下拉
+        const nodeOptions = ["all"].concat(
+          Array.from(new Set(cachedRows.map((row) => row.node).filter((n) => n && n !== "ALL"))).sort()
+        );
+        const userOptions = ["all"].concat(
+          Array.from(new Set(cachedRows.map((row) => row.user).filter(Boolean))).sort()
+        );
+        if (nodeSelect) {
+          const prev = nodeSelect.value;
+          nodeSelect.innerHTML = "";
+          nodeOptions.forEach((opt) => {
+            const option = document.createElement("option");
+            option.value = opt;
+            option.textContent = opt === "all" ? "All" : opt;
+            nodeSelect.appendChild(option);
+          });
+          nodeSelect.value = prev && nodeOptions.includes(prev) ? prev : "all";
+          state.selectedNode = nodeSelect.value;
+        }
+        if (userSelect) {
+          const prev = userSelect.value;
+          userSelect.innerHTML = "";
+          userOptions.forEach((opt) => {
+            const option = document.createElement("option");
+            option.value = opt;
+            option.textContent = opt === "all" ? "All" : opt;
+            userSelect.appendChild(option);
+          });
+          userSelect.value = prev && userOptions.includes(prev) ? prev : "all";
+          state.selectedUser = userSelect.value;
+        }
+
+        // 应用过滤
+        const filtered = data.filter((row) => {
+          const byNode =
+            state.selectedNode === "all" ||
+            (row.node && row.node !== "ALL" && row.node === state.selectedNode);
+          const byUser = state.selectedUser === "all" || row.user === state.selectedUser;
+          return byNode && byUser;
+        });
+
+        const totalUpValue = filtered.reduce((sum, row) => sum + Number(row.upload_mb || 0), 0);
+        const totalDownValue = filtered.reduce((sum, row) => sum + Number(row.download_mb || 0), 0);
+        const totalValue = filtered.reduce((sum, row) => sum + Number(row.total_mb || 0), 0);
+        const users = new Set(filtered.map((row) => row.user).filter(Boolean));
+        const nodes = new Set(
+          filtered.map((row) => row.node).filter((node) => node && node !== "ALL")
+        );
+
+        totalTraffic.textContent = fmt.format(totalValue) + " MB";
+        totalUp.textContent = fmt.format(totalUpValue);
+        totalDown.textContent = fmt.format(totalDownValue);
+        userCount.textContent = fmtInt.format(users.size);
+        if (state.detail) {
+          nodeCount.textContent = fmtInt.format(nodes.size);
+          nodeSub.textContent = "Active nodes in window";
+          nodeCard.style.display = "block";
+        } else {
+          nodeCount.textContent = "--";
+          nodeSub.textContent = "Detail mode off";
+          nodeCard.style.display = "none";
+        }
+
+        const userAgg = aggregateBy(filtered, "user").sort((a, b) => b.value - a.value);
+        const nodeStacks = state.detail ? buildStacked(filtered) : [];
+
+        const topUserItem = userAgg[0];
+        topUser.textContent = topUserItem ? topUserItem.label : "--";
+        topUserTraffic.textContent = topUserItem ? fmt.format(topUserItem.value) + " MB" : "0 MB";
+
+        renderBars(userChart, userAgg.slice(0, 8));
+        if (state.detail) {
+          renderStackedBars(nodeChart, nodeStacks.slice(0, 6));
+        }
+        renderTable(data);
+        renderAlerts(data);
+      }
+
+      async function loadTrend() {
+        const interval = pickInterval(state.hours);
+        try {
+          const response = await fetch(
+            `/stats/timeseries?hours=${state.hours}&interval=${interval}`,
+            { cache: "no-store" }
+          );
+          if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+          }
+          const payload = await response.json();
+          renderTrend(payload);
+        } catch (error) {
+          renderTrend(null);
+          addLog("error", "Failed to load /stats/timeseries", error.message || String(error));
+        }
+      }
+
+      async function loadHealth() {
+        try {
+          const response = await fetch(`/stats/health?hours=${state.hours}`, { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+          }
+          const data = await response.json();
+          renderHealth(Array.isArray(data) ? data : []);
+        } catch (error) {
+          renderHealth([]);
+          addLog("error", "Failed to load /stats/health", error.message || String(error));
+        }
+      }
+
+      async function loadData() {
+        setStatus("Fetching data...");
+        updateQuery();
+        syncControls();
+        try {
+          const params = new URLSearchParams({
+            hours: state.hours,
+            detail: state.detail,
+          });
+          const response = await fetch(`/stats/daily?${params.toString()}`, { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+          }
+          const data = await response.json();
+          const rows = Array.isArray(data) ? data : [];
+          cachedRows = rows;
+          recordCount.textContent = fmtInt.format(rows.length);
+          lastRefresh.textContent = new Date().toLocaleTimeString();
+          setStatus("Live data for the last " + state.hours + " hours");
+          render(rows);
+        } catch (error) {
+          recordCount.textContent = "0";
+          setStatus("Failed to load data");
+          cachedRows = [];
+          render([]);
+          addLog("error", "Failed to load /stats/daily", error.message || String(error));
+        }
+        await Promise.all([loadTrend(), loadHealth()]);
+      }
+
+      hoursSelect.addEventListener("change", () => {
+        state.hours = parseInt(hoursSelect.value, 10);
+        loadData();
+      });
+      detailToggle.addEventListener("change", () => {
+        state.detail = detailToggle.checked;
+        loadData();
+      });
+      nodeSelect.addEventListener("change", () => {
+        state.selectedNode = nodeSelect.value;
+        loadData();
+      });
+      userSelect.addEventListener("change", () => {
+        state.selectedUser = userSelect.value;
+        loadData();
+      });
+      alertInput.addEventListener("input", () => {
+        renderAlerts(cachedRows);
+      });
+      refreshBtn.addEventListener("click", loadData);
+      exportBtn.addEventListener("click", () => {
+        const url = `/stats/export?hours=${state.hours}&detail=${state.detail}&format=csv`;
+        window.open(url, "_blank");
+      });
+      logClear.addEventListener("click", () => {
+        logs = [];
+        saveLogs();
+        renderLogs();
+      });
+      logCopy.addEventListener("click", () => {
+        const text = logs
+          .map((entry) => {
+            const time = new Date(entry.ts).toLocaleString();
+            const detail = entry.detail ? " | " + entry.detail.replace(/\n/g, " ") : "";
+            return "[" + time + "] " + entry.level.toUpperCase() + " " + entry.message + detail;
+          })
+          .join("\n");
+        const blob = new Blob([text || "No logs"], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "monitor_logs.txt";
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+
+      window.addEventListener("error", (event) => {
+        const location = event.filename ? event.filename + ":" + event.lineno + ":" + event.colno : "";
+        addLog("error", event.message || "Script error", location);
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        const reason = event.reason && event.reason.stack ? event.reason.stack : String(event.reason || "");
+        addLog("error", "Unhandled promise rejection", reason);
+      });
+
+      const earlyErrors = window.__monitorEarlyErrors || [];
+      if (Array.isArray(earlyErrors)) {
+        earlyErrors.forEach((entry) => {
+          addLog(entry.level || "error", entry.message || "Script error", entry.detail || "");
+        });
+        window.__monitorEarlyErrors = null;
+      }
+
+      loadLogs();
+      renderLogs();
+      readQuery();
+      syncControls();
+      loadData();
+    })();
+  </script>
+</body>
+</html>
+"""
+
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+def get_conn():
+    # 统一连接：busy_timeout 让 SQLite 自身在锁冲突时等待重试（整点惊群缓解），优于应用层手动循环
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
+    conn.execute("PRAGMA busy_timeout=5000;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    return conn
+
+def init_db():
+    conn = get_conn()
+    conn.execute("PRAGMA journal_mode=WAL;")   # 持久化（DB 级）：读写并发不互锁，根治整点 database is locked
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS records
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  node TEXT, user TEXT, up INTEGER, down INTEGER, timestamp INTEGER)''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_records_timestamp ON records (timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_records_user ON records (user)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_records_node ON records (node)")
+    c.execute('''CREATE TABLE IF NOT EXISTS user_ip_hits
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user TEXT,
+                  node TEXT,
+                  ip TEXT,
+                  first_seen INTEGER,
+                  last_seen INTEGER,
+                  hit_count INTEGER DEFAULT 1,
+                  UNIQUE(user, node, ip))''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_user_ip_hits_user ON user_ip_hits (user)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_user_ip_hits_node ON user_ip_hits (node)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_user_ip_hits_last_seen ON user_ip_hits (last_seen)")
+    c.execute('''CREATE TABLE IF NOT EXISTS subscription_logs
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  sub_id TEXT,
+                  ip TEXT,
+                  forwarded_for TEXT,
+                  user_agent TEXT,
+                  query TEXT,
+                  timestamp INTEGER)''')
+    c.execute("CREATE INDEX IF NOT EXISTS idx_subscription_logs_sub_id ON subscription_logs (sub_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_subscription_logs_ts ON subscription_logs (timestamp)")
+    conn.commit()
+    conn.close()
+
+init_db()
+
+class TrafficReport(BaseModel):
+    node: str
+    user: str
+    up_delta: int
+    down_delta: int
+
+class IPReportEntry(BaseModel):
+    user: str
+    ips: list[str]
+
+class IPReport(BaseModel):
+    node: str
+    entries: list[IPReportEntry]
+
+def get_client_ip(request: Request) -> str:
+    if TRUST_PROXY_HEADER:
+        header_val = request.headers.get(TRUST_PROXY_HEADER)
+        if header_val:
+            return header_val.split(",")[0].strip()
+    # 无可信代理头：不 fallback 到直连对端（避免塌缩为 cloudflared 的 127.0.0.1）
+    return ""
+
+def is_ip_allowed(ip: str) -> bool:
+    return bool(ip) and ip in IP_ALLOWLIST
+
+def tunnel_verified(request: Request) -> bool:
+    # D1-B：仅当配置了 TUNNEL_SECRET 且请求带 CF Transform Rule 注入的匹配头，
+    # 才认定"确经 CF 边缘"。未配 secret 时 fail-closed（禁用白名单放行，只认 Bearer）。
+    if not TUNNEL_SECRET:
+        return False
+    return hmac.compare_digest(request.headers.get(TUNNEL_SECRET_HEADER, ""), TUNNEL_SECRET)
+
+def extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return None
+
+async def auth_guard(request: Request, authorization: Optional[str] = Header(None)):
+    # D1-B：放行 = 确经 CF 边缘(secret 头) 且 客户端 IP ∈ 运维白名单；否则要 Bearer。
+    if tunnel_verified(request) and is_ip_allowed(get_client_ip(request)):
+        return
+    token = extract_bearer_token(authorization)
+    if token and token in (ADMIN_BEARER_TOKEN, STATS_BEARER_TOKEN):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Unauthorized",
+        headers={"WWW-Authenticate": "Bearer"}
+    )
+
+async def admin_guard(request: Request, authorization: Optional[str] = Header(None)):
+    if tunnel_verified(request) and is_ip_allowed(get_client_ip(request)):
+        return
+    token = extract_bearer_token(authorization)
+    if token and hmac.compare_digest(token, ADMIN_BEARER_TOKEN):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Admin authorization required",
+        headers={"WWW-Authenticate": "Bearer"}
+    )
+
+@app.get("/debug/whoami", dependencies=[Depends(auth_guard)])
+async def debug_whoami(request: Request):
+    # 带 Bearer 或白名单访问，用于排查真实 IP 识别
+    return {
+        "client_ip": get_client_ip(request),
+        "raw_client": request.client.host if request.client else None,
+        "trusted_header": TRUST_PROXY_HEADER,
+        "x_forwarded_for": request.headers.get("X-Forwarded-For", ""),
+        "cf_connecting_ip": request.headers.get("CF-Connecting-IP", ""),
+        "tunnel_verified": tunnel_verified(request),
+    }
+
+@app.get("/healthz")
+def healthz():
+    # 无鉴权探活：服务存活 + DB 可连 + journal 模式（供 systemd/外部监控）
+    db_ok = False
+    journal = None
+    try:
+        conn = get_conn()
+        journal = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        conn.execute("SELECT 1")
+        conn.close()
+        db_ok = True
+    except Exception as e:
+        logger.warning("healthz db check failed: %s", e)
+    return JSONResponse(
+        {"status": "ok" if db_ok else "degraded", "db_ok": db_ok, "journal_mode": journal},
+        status_code=200 if db_ok else 503,
+    )
+
+@app.post("/report")
+def receive_report(report: TrafficReport, token: str = Header(None)):  # 同步 def：自动入线程池，不阻塞事件循环
+    if token != REPORT_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid Token")
+    
+    if report.up_delta > 0 or report.down_delta > 0:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute("INSERT INTO records (node, user, up, down, timestamp) VALUES (?, ?, ?, ?, ?)",
+                  (report.node, report.user, report.up_delta, report.down_delta, int(time.time())))
+        conn.commit()
+        conn.close()
+    return {"status": "ok"}
+
+@app.post("/stats/ip_report")  # B4：去掉 auth_guard，与 /report 一致仅校验 REPORT_TOKEN（agent 上报不再被 401）
+def receive_ip_report(payload: IPReport, token: str = Header(None)):  # 同步 def：入线程池
+    if token != REPORT_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid Token")
+    now = int(time.time())
+    conn = get_conn()
+    c = conn.cursor()
+    for entry in payload.entries:
+        user = entry.user.strip()
+        for ip in entry.ips:
+            ip_val = ip.strip()
+            if not ip_val or not user:
+                continue
+            try:
+                c.execute(
+                    "INSERT INTO user_ip_hits (user, node, ip, first_seen, last_seen, hit_count) VALUES (?, ?, ?, ?, ?, 1) "
+                    "ON CONFLICT(user, node, ip) DO UPDATE SET last_seen = excluded.last_seen, hit_count = user_ip_hits.hit_count + 1",
+                    (user, payload.node, ip_val, now, now)
+                )
+            except Exception as e:
+                logger.debug("ip_hit insert skipped (%s/%s): %s", user, ip_val, e)
+                continue
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "count": len(payload.entries)}
+
+@app.get("/stats/ip_matrix", dependencies=[Depends(auth_guard)])
+def get_ip_matrix(hours: int = 72, user: Optional[str] = None, node: Optional[str] = None):
+    hours = max(1, hours)
+    cutoff = int(time.time()) - hours * 3600
+    conn = get_conn()
+    c = conn.cursor()
+    query = "SELECT user, node, ip, first_seen, last_seen, hit_count FROM user_ip_hits WHERE last_seen >= ?"
+    params = [cutoff]
+    if user:
+        query += " AND user = ?"
+        params.append(user)
+    if node:
+        query += " AND node = ?"
+        params.append(node)
+    c.execute(query, params)
+    rows = c.fetchall()
+    conn.close()
+    return [
+        {
+            "user": r[0],
+            "node": r[1],
+            "ip": r[2],
+            "first_seen": r[3],
+            "last_seen": r[4],
+            "hit_count": r[5],
+        }
+        for r in rows
+    ]
+
+def fetch_daily_stats(hours: int, detail: bool, user: Optional[str] = None, node: Optional[str] = None):
+    hours = max(1, hours)
+    start_time = int(time.time()) - (hours * 3600)
+    conn = get_conn()
+    c = conn.cursor()
+
+    if detail:
+        query = '''SELECT user, node, SUM(up), SUM(down) FROM records WHERE timestamp > ?'''
+        params = [start_time]
+        if user:
+            query += " AND user = ?"
+            params.append(user)
+        if node:
+            query += " AND node = ?"
+            params.append(node)
+        query += " GROUP BY user, node ORDER BY user, SUM(down) DESC"
+        c.execute(query, params)
+        rows = c.fetchall()
+        result = [
+            {
+                "user": r[0],
+                "node": r[1],
+                "upload_mb": round(r[2] / 1024 / 1024, 2),
+                "download_mb": round(r[3] / 1024 / 1024, 2),
+                "total_mb": round((r[2] + r[3]) / 1024 / 1024, 2)
+            }
+            for r in rows
+        ]
+    else:
+        query = '''SELECT user, SUM(up), SUM(down) FROM records WHERE timestamp > ?'''
+        params = [start_time]
+        if user:
+            query += " AND user = ?"
+            params.append(user)
+        if node:
+            query += " AND node = ?"
+            params.append(node)
+        query += " GROUP BY user ORDER BY SUM(down) DESC"
+        c.execute(query, params)
+        rows = c.fetchall()
+        result = [
+            {
+                "user": r[0],
+                "node": "ALL",
+                "upload_mb": round(r[1] / 1024 / 1024, 2),
+                "download_mb": round(r[2] / 1024 / 1024, 2),
+                "total_mb": round((r[1] + r[2]) / 1024 / 1024, 2)
+            }
+            for r in rows
+        ]
+
+    conn.close()
+    return result
+
+def log_subscription_hit(sub_id: str, request: Request):
+    if not SUBS_PROXY_ENABLED:
+        return
+    try:
+        client_ip = get_client_ip(request)
+        forwarded_for = request.headers.get("X-Forwarded-For", "")
+        user_agent = request.headers.get("User-Agent", "")
+        query = request.url.query or ""
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO subscription_logs (sub_id, ip, forwarded_for, user_agent, query, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+            (sub_id, client_ip, forwarded_for, user_agent, query, int(time.time()))
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning("log_subscription_hit failed: %s", e)
+
+@app.get("/openapi.json", include_in_schema=False, dependencies=[Depends(auth_guard)])
+async def custom_openapi():
+    return JSONResponse(app.openapi())
+
+@app.get("/docs", include_in_schema=False, dependencies=[Depends(auth_guard)])
+async def custom_docs():
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="Reality Monitor Docs")
+
+@app.get("/stats/ui", response_class=HTMLResponse, include_in_schema=False, dependencies=[Depends(auth_guard)])
+async def stats_ui():
+    return HTMLResponse(DASHBOARD_HTML)
+
+# --- 【核心修改】 ---
+@app.get("/stats/daily", dependencies=[Depends(auth_guard)])
+def get_daily_stats(hours: int = 24, detail: bool = True, user: Optional[str] = None, node: Optional[str] = None):
+    """
+    获取流量报表
+    - detail=True (默认): 按 [用户 + 节点] 分组，显示每个用户在每个节点的用量
+    - detail=False: 仅按 [用户] 分组，显示总账
+    """
+    return fetch_daily_stats(hours, detail, user=user, node=node)
+
+@app.get("/stats/timeseries", dependencies=[Depends(auth_guard)])
+def get_timeseries(hours: int = 24, interval: int = 3600, user: str = None, node: str = None):
+    hours = max(1, hours)
+    interval = max(300, min(interval, 86400))
+    now = int(time.time())
+    start_time = now - (hours * 3600)
+    conn = get_conn()
+    c = conn.cursor()
+
+    query = '''SELECT (timestamp - (timestamp % ?)) as bucket, SUM(up), SUM(down)
+               FROM records WHERE timestamp > ?'''
+    params = [interval, start_time]
+    if user:
+        query += " AND user = ?"
+        params.append(user)
+    if node:
+        query += " AND node = ?"
+        params.append(node)
+    query += " GROUP BY bucket ORDER BY bucket"
+
+    c.execute(query, params)
+    rows = c.fetchall()
+    conn.close()
+
+    series = [
+        {
+            "bucket": r[0],
+            "upload_mb": round((r[1] or 0) / 1024 / 1024, 2),
+            "download_mb": round((r[2] or 0) / 1024 / 1024, 2),
+            "total_mb": round(((r[1] or 0) + (r[2] or 0)) / 1024 / 1024, 2)
+        }
+        for r in rows
+    ]
+    return {"start": start_time, "end": now, "interval": interval, "series": series}
+
+@app.get("/stats/health", dependencies=[Depends(auth_guard)])
+def get_health(hours: int = 24, stale_minutes: int = 10):
+    hours = max(1, hours)
+    now = int(time.time())
+    stale_seconds = max(60, stale_minutes * 60)
+    conn = get_conn()
+    c = conn.cursor()
+
+    # C1：限定回看窗口（≥7天），避免对百万行全表扫描；超窗未上报的节点视为离线、不再展示
+    lookback = now - max(hours, 24 * 7) * 3600
+    c.execute("SELECT node, MAX(timestamp) FROM records WHERE timestamp > ? GROUP BY node", (lookback,))
+    last_seen_rows = c.fetchall()
+    last_seen = {r[0]: r[1] for r in last_seen_rows}
+
+    c.execute('''SELECT node, SUM(up), SUM(down), COUNT(*) FROM records WHERE timestamp > ?
+                 GROUP BY node''', (now - (hours * 3600),))
+    window_rows = c.fetchall()
+    window_map = {r[0]: {"up": r[1] or 0, "down": r[2] or 0, "count": r[3] or 0} for r in window_rows}
+    conn.close()
+
+    result = []
+    for node_name, seen_at in last_seen.items():
+        window = window_map.get(node_name, {"up": 0, "down": 0, "count": 0})
+        age = now - seen_at if seen_at else None
+        total_mb = round((window["up"] + window["down"]) / 1024 / 1024, 2)
+        result.append({
+            "node": node_name,
+            "last_seen": seen_at,
+            "last_seen_ago_sec": age,
+            "upload_mb": round(window["up"] / 1024 / 1024, 2),
+            "download_mb": round(window["down"] / 1024 / 1024, 2),
+            "total_mb": total_mb,
+            "report_count": window["count"],
+            "stale": age is None or age > stale_seconds
+        })
+
+    result.sort(key=lambda item: (item["stale"], item["last_seen"] or 0), reverse=True)
+    return result
+
+@app.get("/stats/export", dependencies=[Depends(auth_guard)])
+def export_stats(hours: int = 24, detail: bool = True, format: str = "csv"):
+    data = fetch_daily_stats(hours, detail)
+    if format.lower() == "json":
+        return data
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["user", "node", "upload_mb", "download_mb", "total_mb"])
+    for row in data:
+        writer.writerow([
+            row.get("user", ""),
+            row.get("node", ""),
+            row.get("upload_mb", 0),
+            row.get("download_mb", 0),
+            row.get("total_mb", 0)
+        ])
+
+    filename = f"traffic_{hours}h_{'detail' if detail else 'summary'}.csv"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=buffer.getvalue(), media_type="text/csv", headers=headers)
+
+@app.post("/stats/cleanup", dependencies=[Depends(admin_guard)])
+def cleanup_stats(days: int = 90):
+    days = max(1, days)
+    cutoff = int(time.time()) - (days * 86400)
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("DELETE FROM records WHERE timestamp < ?", (cutoff,))
+    deleted_records = c.rowcount
+    c.execute("DELETE FROM subscription_logs WHERE timestamp < ?", (cutoff,))
+    deleted_subscription_logs = c.rowcount
+    c.execute("DELETE FROM user_ip_hits WHERE last_seen < ?", (cutoff,))
+    deleted_user_ip_hits = c.rowcount
+    conn.commit()
+    conn.close()
+    return {
+        "deleted_records": deleted_records,
+        "deleted_subscription_logs": deleted_subscription_logs,
+        "deleted_user_ip_hits": deleted_user_ip_hits,
+        "cutoff": cutoff,
+    }
+
+@app.get("/subs/logs", dependencies=[Depends(auth_guard)])
+def get_subscription_logs(limit: int = 200, sub_id: Optional[str] = None):
+    if not SUBS_PROXY_ENABLED:
+        return []
+    limit = max(1, min(limit, 1000))
+    conn = get_conn()
+    c = conn.cursor()
+    if sub_id:
+        c.execute(
+            "SELECT sub_id, ip, forwarded_for, user_agent, query, timestamp FROM subscription_logs WHERE sub_id = ? ORDER BY timestamp DESC LIMIT ?",
+            (sub_id, limit),
+        )
+    else:
+        c.execute(
+            "SELECT sub_id, ip, forwarded_for, user_agent, query, timestamp FROM subscription_logs ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        )
+    rows = c.fetchall()
+    conn.close()
+    return [
+        {
+            "sub_id": r[0],
+            "ip": r[1],
+            "forwarded_for": r[2],
+            "user_agent": r[3],
+            "query": r[4],
+            "timestamp": r[5],
+        }
+        for r in rows
+    ]
+
+def proxy_subscription_internal(sub_id: str, request: Request, token: Optional[str] = None):
+    if not SUBS_PROXY_ENABLED or not SUBS_GIST_USER or not SUBS_GIST_ID:
+        raise HTTPException(status_code=404, detail="Not configured")
+    if SUBS_REQUIRE_TOKEN and SUBS_TOKEN and token != SUBS_TOKEN:
+        raise HTTPException(status_code=403, detail="Invalid Token")
+    log_subscription_hit(sub_id, request)
+    target_url = f"https://gist.githubusercontent.com/{SUBS_GIST_USER}/{SUBS_GIST_ID}/raw/{sub_id}"
+    return RedirectResponse(url=target_url, status_code=307)
+
+@app.get("/{sub_id}")
+async def proxy_subscription_alias(sub_id: str, request: Request, token: Optional[str] = None):
+    reserved = {"stats", "docs", "openapi.json", "subs", "debug", "report"}
+    if sub_id in reserved:
+        raise HTTPException(status_code=404, detail="Not configured")
+    return proxy_subscription_internal(sub_id, request, token)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="{{ monitor.internal_host }}", port={{ monitor.internal_port }}, proxy_headers=True, forwarded_allow_ips="127.0.0.1")

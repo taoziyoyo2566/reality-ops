@@ -1,0 +1,14 @@
+{
+  "name": "lin_isp",
+  "uuid": "cc553bf7-cc52-4318-9f84-191459513309",
+  "port": 46633,
+  "short_id": "3a2db6fa04772332",
+  "private_key": "aBA7-RYocnMAbUsKlzNi6x3-Jbu7hNvnZb3V8aHTQkY",
+  "public_key": "6buJciONpCt8Vdu2TpuqKCBSHY4xugSY2a-QL2DIT1g",
+  "groups": [
+    "socks5_only"
+  ],
+  "hosts": [
+    "dcc"
+  ]
+}

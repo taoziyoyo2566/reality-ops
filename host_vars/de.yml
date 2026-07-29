@@ -1,0 +1,11 @@
+# de 节点监控配置
+reality_mode: single
+monitor_enabled: true
+# 客户端显示标签（自由列表）
+node_tags: ["Unlimited", "NoAI"]
+# Reality 回落：eBay 德国站（德国候选里唯一同时满足 TLS1.3+H2+OCSP Stapling+200 无跳转的站点，
+# 且德国用户使用 ebay.de 是主流行为，地理自洽）。注意与 dcc 的 ebay.com 同属 eBay，
+# SNI 字符串已不同；若要彻底避开同一品牌，备选是 heise.de / otto.de（各失 OCSP 加分项）。
+# dest 与 serverNames 必须成对覆盖，只改一个会导致握手失败；deploy.yml 前置检查会拦。
+reality_dest: "www.ebay.de:443"
+reality_server_names: ["www.ebay.de"]

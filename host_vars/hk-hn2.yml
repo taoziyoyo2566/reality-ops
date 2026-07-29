@@ -1,0 +1,15 @@
+# 多实例部署
+reality_mode: multi
+monitor_enabled: true
+# 客户端显示标签（自由列表）——待填，例: ["Optimized"]
+node_tags: ["Optimized","NoAI"]
+# Reality 回落：国泰航空（香港本土站，但全球访客都会访问，任何客户端地理位置连它都自然）。
+# 与 hk-hn 的 icloud 刻意错开，避免两台同 SNI 被横向关联。
+# 勿改回 www.hktvmall.com：实测只支持 P-384，不支持 X25519（连 P-256 都不支持），
+# Reality 客户端发 X25519 key share 会收到 HelloRetryRequest，握手必失败。
+# 该故障极隐蔽——openssl 探测会协商到 P-384 并正常返回真证书，回落路径看起来完全健康，
+# 只有真实客户端连不上（表现为客户端延迟测试 -1）。同样不可用的还有 openrice /
+# hongkongairport / watsons.com.hk；已实测可用的备选：www.mtr.com.hk、www.hsbc.com.hk。
+# dest 与 serverNames 必须成对覆盖，只改一个会导致握手失败；deploy.yml 前置检查会拦。
+reality_dest: "www.cathaypacific.com:443"
+reality_server_names: ["www.cathaypacific.com"]

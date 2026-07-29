@@ -1,33 +1,223 @@
 ---
 - hosts: reality_nodes
+  gather_facts: true
   become: yes
   
   pre_tasks:
-    # 1. 查找 users 目录下所有的 .yml 或 .yaml 文件
     - name: 扫描用户配置文件
       find:
         paths: "{{ playbook_dir }}/users"
         patterns: '*.yml,*.yaml'
       register: user_config_files
+      delegate_to: localhost
+      become: false
+      tags: ['always']
 
-    # 2. 循环读取每个文件的内容，追加到 reality_instances 列表中
-    - name: 加载所有用户配置
+    - name: 加载所有用户原始配置
       set_fact:
-        # 核心逻辑：
-        # 1. default([]): 初始化为空列表
-        # 2. lookup('file', item.path): 读取文件文本内容
-        # 3. from_yaml: 把文本解析为 YAML/JSON 对象
-        # 4. + [...]: 把解析出的对象追加到列表末尾
-        reality_instances: "{{ reality_instances | default([]) + [ lookup('file', item.path) | from_yaml ] }}"
+        all_raw_users: "{{ all_raw_users | default([]) + [ lookup('file', item.path) | from_yaml ] }}"
       loop: "{{ user_config_files.files }}"
       loop_control:
-        label: "{{ item.path | basename }}" # 让输出日志只显示文件名，简洁一点
+        label: "{{ item.path | basename }}"
+      tags: ['always']
 
-    # 3. 调试：确认加载结果 (确保是一个列表，且包含 name 属性)
-    - name: DEBUG - 验证加载结果
-      debug:
-        msg: "成功加载 {{ reality_instances | length }} 个用户。第一个用户是: {{ reality_instances[0].name }} (UUID: {{ reality_instances[0].uuid }})"
-      run_once: true
+    - name: "[前置检查] 校验用户 hosts 列表格式"
+      vars:
+        user_hosts: "{{ item.hosts | default([], true) }}"
+        hosts_with_comma: "{{ (item.hosts if ((item.hosts is sequence) and (item.hosts is not string)) else []) | select('search', ',') | list }}"
+      assert:
+        that:
+          - user_hosts is sequence
+          - user_hosts is not string
+          - hosts_with_comma | length == 0
+        fail_msg: >-
+          用户 '{{ item.name | default('unknown') }}' 的 hosts 配置无效：
+          hosts 必须是节点名列表，不能把多个节点写进同一个字符串。
+          当前 hosts={{ user_hosts }}，含逗号的条目={{ hosts_with_comma }}。
+          请写成 ["jp05", "jp10"]，不要写成 ["jp05,jp10"]。
+      loop: "{{ all_raw_users | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('unknown') }}"
+      when:
+        - item.hosts is defined
+      tags: ['always']
+
+    - name: "[前置检查] 校验用户 deny_hosts 列表格式"
+      vars:
+        user_deny_hosts: "{{ item.deny_hosts | default([], true) }}"
+        deny_with_comma: "{{ (item.deny_hosts if ((item.deny_hosts is sequence) and (item.deny_hosts is not string)) else []) | select('search', ',') | list }}"
+      assert:
+        that:
+          - user_deny_hosts is sequence
+          - user_deny_hosts is not string
+          - deny_with_comma | length == 0
+        fail_msg: >-
+          用户 '{{ item.name | default('unknown') }}' 的 deny_hosts 配置无效：
+          deny_hosts 必须是节点名列表，不能把多个节点写进同一个字符串。
+          当前 deny_hosts={{ user_deny_hosts }}，含逗号的条目={{ deny_with_comma }}。
+          请写成 ["jp10", "ams"]，不要写成 ["jp10,ams"]。
+      loop: "{{ all_raw_users | default([]) }}"
+      loop_control:
+        label: "{{ item.name | default('unknown') }}"
+      when:
+        - item.deny_hosts is defined
+      tags: ['always']
+
+    - name: "[前置检查] 校验节点独占用户列表"
+      vars:
+        exclusive_users: "{{ reality_node_users | default([]) }}"
+        users_with_comma: "{{ (exclusive_users if ((exclusive_users is sequence) and (exclusive_users is not string)) else []) | select('search', ',') | list }}"
+        all_user_names: "{{ all_raw_users | default([]) | map(attribute='name') | list }}"
+        missing_users: "{{ exclusive_users | difference(all_user_names) if ((exclusive_users is sequence) and (exclusive_users is not string)) else [] }}"
+      assert:
+        that:
+          - exclusive_users is sequence
+          - exclusive_users is not string
+          - users_with_comma | length == 0
+          - missing_users | length == 0
+        fail_msg: >-
+          节点 '{{ inventory_hostname }}' 的 reality_node_users 配置无效：
+          reality_node_users 必须是用户 name 列表，不能是字符串，也不能把多个用户写进同一个字符串。
+          当前 reality_node_users={{ exclusive_users }}，含逗号的条目={{ users_with_comma }}，
+          不存在的用户={{ missing_users }}。
+          请写成 ["alice", "bob"]，不要写成 "alice,bob" 或 ["alice,bob"]。
+      when:
+        - reality_node_users is defined
+      tags: ['always']
+
+    - name: "[前置检查] 校验 Reality dest 与 serverNames 配套"
+      vars:
+        dest_raw: "{{ reality_dest | default('') }}"
+        dest_host: "{{ reality_dest | default('') | regex_replace(':[0-9]+$', '') }}"
+        dest_port: "{{ reality_dest | default('') | regex_search(':[0-9]+$') | default('', true) }}"
+        sni_list: "{{ reality_server_names if ((reality_server_names is defined) and (reality_server_names is sequence) and (reality_server_names is not string)) else [] }}"
+        # dest 为 IP 字面量时是回落到本机服务，不要求与 serverNames 同名
+        dest_is_literal_ip: "{{ (dest_host is match('^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$')) or (dest_host is match('^\\[')) }}"
+        # www.example.com -> *.example.com，用于匹配 serverNames 里的单级通配符条目
+        dest_wildcard_form: "{{ dest_host | regex_replace('^[^.]+', '*') }}"
+        sni_covers_dest: "{{ (dest_is_literal_ip | bool) or (dest_host in sni_list) or (dest_wildcard_form in sni_list) }}"
+        # serverNames 里的每个名字都必须能被 dest 服务器的同一张证书覆盖。
+        # 无法在此真实校验 SAN，用「末两段相同」作近似：跨厂商混配（如 yahoo + microsoft）会被拦下。
+        sni_apex_set: "{{ sni_list | map('regex_replace', '^.*?([^.]+\\.[^.]+)$', '\\1') | unique | list }}"
+        sni_same_origin: "{{ (dest_is_literal_ip | bool) or (sni_apex_set | length <= 1) }}"
+      assert:
+        that:
+          - dest_raw | length > 0
+          - dest_port | length > 0
+          - sni_list | length > 0
+          - sni_covers_dest | bool
+          - sni_same_origin | bool
+        fail_msg: >-
+          节点 '{{ inventory_hostname }}' 的 Reality 回落配置无效：
+          reality_dest={{ dest_raw | default('(空)') }}，reality_server_names={{ reality_server_names | default('(未定义)') }}。
+          要求：reality_dest 形如 "www.example.com:443"（必须带端口）；
+          reality_server_names 必须是非空列表（不能是字符串）；
+          且 dest 的域名部分必须出现在 serverNames 中（"*.example.com" 这类单级通配条目也算覆盖）；
+          serverNames 内所有域名必须同源（能被 dest 服务器的同一张证书覆盖），
+          不能把不同厂商的域名（如 yahoo 与 microsoft）混在一起。
+          注意这两个变量要在 host_vars/{{ inventory_hostname }}.yml 里成对覆盖，
+          只改其中一个会导致部署成功但 Reality 握手失败、节点静默不可用。
+      tags: ['always']
+
+    - name: "[前置检查] 识别全局 IPv6 地址"
+      set_fact:
+        global_ipv6: "{{ (ansible_facts['all_ipv6_addresses'] | default([]) | reject('match', '^fe80') | reject('match', '^::1') | reject('match', '^fd') | reject('match', '^fc') | list | first) | default('') }}"
+      tags: ['always']
+
+    - name: "[前置检查] 识别本机公网 IPv4 地址（node_endpoint 用）"
+      set_fact:
+        global_ipv4: "{{ (ansible_facts['all_ipv4_addresses'] | default([]) | reject('match', '^127\\.') | reject('match', '^10\\.') | reject('match', '^192\\.168\\.') | reject('match', '^169\\.254\\.') | reject('match', '^172\\.(1[6-9]|2[0-9]|3[01])\\.') | list | first) | default('') }}"
+      tags: ['always']
+
+    - name: "[核心路由] 节点本位认领：基于 ACL 矩阵的精准过滤"
+      set_fact:
+        reality_instances: >-
+          {%- set valid_users = [] -%}
+
+          {%- if reality_node_users is defined -%}
+            {# 节点声明独占用户时，完全由 host_vars/group_vars 控制用户归属。 #}
+            {%- for u in all_raw_users | default([]) -%}
+              {%- if u.get('name') in reality_node_users -%}
+                {%- set _ = valid_users.append(u) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- else -%}
+            {# 1) 合并当前节点所属组在 ACL 矩阵中的放行标签 #}
+            {%- set node_allowed_groups = [] -%}
+            {%- for g in group_names -%}
+              {%- if g in (acl_matrix | default({})) -%}
+                {%- set _ = node_allowed_groups.extend(acl_matrix[g]) -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- set node_allowed_groups = node_allowed_groups | unique -%}
+
+            {# 2) 遍历用户，按组交集或主机直连匹配 #}
+            {%- for u in all_raw_users | default([]) -%}
+              {%- set u_groups = u.get('groups', ['all']) -%}
+              {%- set u_hosts = u.get('hosts', []) -%}
+
+              {%- set match_group = ('all' in u_groups) or (u_groups | intersect(node_allowed_groups) | length > 0) -%}
+              {%- set match_host = (inventory_hostname in u_hosts) -%}
+
+              {%- if match_group or match_host -%}
+                {%- set _ = valid_users.append(u) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
+          {#- 减法闸门：用户自带 deny_hosts 命中当前节点则剔除（优先级最高，覆盖 group/host/独占白名单）。 -#}
+          {%- set final_users = [] -%}
+          {%- for u in valid_users -%}
+            {%- if inventory_hostname not in (u.get('deny_hosts', []) | default([], true)) -%}
+              {%- set _ = final_users.append(u) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ final_users }}
+      tags: ['always']
 
   roles:
-    - reality_multi
+    # reality_mode: 单实例/多实例切换；默认 single
+    - role: reality_single
+      when: reality_mode | default('single') == 'single'
+
+    - role: reality_multi
+      when: reality_mode | default('single') == 'multi'
+
+    # 监控可通过 monitor_enabled 关闭（多实例时默认建议关闭）
+    - role: monitor
+
+  # =========================================================
+  # 🟢 核心修改：使用 post_tasks 代替独立的 localhost play
+  # =========================================================
+  post_tasks:
+    - name: 执行脚本更新 GitHub Gist
+      command: python3 {{ playbook_dir }}/generate_subs_gist.py
+      delegate_to: localhost  # 强制在本机执行
+      become: false
+      tags: ['users', 'gist'] # <--- 加上 tag
+      register: gist_result
+      changed_when: "'Gist 更新成功' in gist_result.stdout"
+      environment:
+        GITHUB_TOKEN: "{{ vault_github_token | default('') }}"
+        GIST_ID: "{{ vault_monitor_gist_id | default('0a7faae910b06151d643c7d5baa43818') }}"
+        GITHUB_USER: "{{ vault_monitor_gist_user | default('') }}"
+        SUBS_BASE_URL: "{{ monitor.subs_base_url | default(monitor.server_url) }}"
+        SUBS_TOKEN: "{{ vault_monitor_subs_token | default('') }}"
+      when:
+        - (vault_github_token | default('')) | length > 0
+        - inventory_hostname == (ansible_play_hosts_all | first)
+
+    - name: 跳过 Gist 更新（未配置 GITHUB_TOKEN）
+      debug:
+        msg: "未设置 vault_github_token，已跳过 Gist 更新。"
+      when:
+        - (vault_github_token | default('')) | length == 0
+        - inventory_hostname == (ansible_play_hosts_all | first)
+      
+    - name: 显示订阅链接信息
+      debug:
+        var: gist_result.stdout_lines
+      when:
+        - gist_result is defined
+        - inventory_hostname == (ansible_play_hosts_all | first)
+
+# 🔴 注意：文件末尾不要再有 - hosts: localhost 的段落了

@@ -1,3 +1,9 @@
+{% set socks5_cfg = reality_socks5 | default({}) %}
+{% set socks5_enabled = socks5_cfg.enabled | default(false) %}
+{% set socks5_target_users = socks5_cfg.target_users | default([]) %}
+{% set socks5_selected = item.name in socks5_target_users %}
+{% set socks5_has_endpoint = (socks5_cfg.address | default('') | length > 0) and ((socks5_cfg.port | default(0) | int) > 0) %}
+{% set use_socks5_egress = socks5_enabled and socks5_selected and socks5_has_endpoint %}
 {
   "log": {
     "loglevel": "warning",
@@ -18,7 +24,7 @@
         "uplinkOnly": 0,
         "downlinkOnly": 0,
         "bufferSize": 0,
-        "connLimit": 6
+        "connLimit": {{ reality_conn_limit_multi | default(6) }}
       }
     },
     "system": {
@@ -30,11 +36,17 @@
   },
   "stats": {},
   "routing": {
+    "domainStrategy": "IPIfNonMatch",
     "rules": [
       {
         "type": "field",
         "inboundTag": ["api"],
         "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "protocol": ["bittorrent"],
+        "outboundTag": "blocked"
       }
     ]
   },
@@ -79,6 +91,29 @@
     }
   ],
   "outbounds": [
+    {% if use_socks5_egress %}
+    {
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+            "address": "{{ socks5_cfg.address }}",
+            "port": {{ socks5_cfg.port | int }}
+            {% if (socks5_cfg.username | default('') | length > 0) or (socks5_cfg.password | default('') | length > 0) %}
+            ,
+            "users": [
+              {
+                "user": "{{ socks5_cfg.username | default('') }}",
+                "pass": "{{ socks5_cfg.password | default('') }}"
+              }
+            ]
+            {% endif %}
+          }
+        ]
+      },
+      "tag": "socks5-egress"
+    },
+    {% endif %}
     {
       "protocol": "freedom",
       "settings": {},
