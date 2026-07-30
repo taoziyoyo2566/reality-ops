@@ -2,7 +2,7 @@
 reality_mode: single
 monitor_enabled: true
 # 客户端显示标签（自由列表）
-node_tags: ["Unlimited","CM"]
+node_tags: ["Unlimited","CM","Native"]
 # Reality 回落：Yahoo Japan（与 jp05/jp10 一致；日本 IP 访问日本第一门户，地理自洽，
 # 且 Yahoo Japan 对非日本 IP 有地域限制，本节点为日本 IP 不受影响）。
 # dest 与 serverNames 必须成对覆盖，只改一个会导致握手失败；deploy.yml 前置检查会拦。
