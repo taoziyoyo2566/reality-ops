@@ -7,6 +7,19 @@ on:
       - ops
 
 jobs:
+  xray-image-inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+
+      - name: Validate pinned Xray image inputs
+        run: |
+          bash docker-build/check-inputs.sh
+          bash docker-build/check-inputs.sh \
+            docker-build/XRAY_PRERELEASE_VERSION \
+            docker-build/XRAY_PRERELEASE_SHA256SUMS
+
   whitespace:
     runs-on: ubuntu-latest
     steps:

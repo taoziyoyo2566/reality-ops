@@ -1,11 +1,10 @@
-name: Build and Push Xray Docker Image
+name: Build and Push Xray Images
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - main
-    # 只有当 Docker 相关文件变动时才触发，避免改个 README 也重新构建
+      - ops
     paths:
       - 'docker-build/**'
       - '.github/workflows/build-image.yml'
@@ -13,51 +12,143 @@ on:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - channel: stable
+            version_file: docker-build/XRAY_VERSION
+            checksums_file: docker-build/XRAY_SHA256SUMS
+            expected_prerelease: 'false'
+          - channel: prerelease
+            version_file: docker-build/XRAY_PRERELEASE_VERSION
+            checksums_file: docker-build/XRAY_PRERELEASE_SHA256SUMS
+            expected_prerelease: 'true'
+    env:
+      IMAGE_NAME: taoziyoyo2566/xray_docker
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v4
 
-      # 1. 配置 QEMU (支持 ARM64/AMD64 多架构构建)
+      - name: Validate pinned release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_FILE: ${{ matrix.version_file }}
+          CHECKSUMS_FILE: ${{ matrix.checksums_file }}
+          EXPECTED_PRERELEASE: ${{ matrix.expected_prerelease }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash docker-build/check-inputs.sh "${VERSION_FILE}" "${CHECKSUMS_FILE}"
+          version="$(tr -d '[:space:]' < "${VERSION_FILE}")"
+          release_json="$(curl --fail --silent --show-error --location \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "https://api.github.com/repos/XTLS/Xray-core/releases/tags/${version}")"
+
+          actual_prerelease="$(jq -r '.prerelease' <<< "${release_json}")"
+          if [[ "${actual_prerelease}" != "${EXPECTED_PRERELEASE}" ]]; then
+            echo "::error::${version} prerelease=${actual_prerelease}, expected ${EXPECTED_PRERELEASE}"
+            exit 1
+          fi
+
+          for asset in Xray-linux-64.zip Xray-linux-arm64-v8a.zip; do
+            api_sha="$(jq -r --arg asset "${asset}" '.assets[] | select(.name == $asset) | .digest' <<< "${release_json}")"
+            file_sha="$(awk -v asset="${asset}" '$2 == asset { print "sha256:" $1 }' "${CHECKSUMS_FILE}")"
+            if [[ -z "${api_sha}" || "${api_sha}" != "${file_sha}" ]]; then
+              echo "::error::${asset} digest differs from the official release"
+              exit 1
+            fi
+          done
+
+          if [[ "${EXPECTED_PRERELEASE}" == 'false' ]]; then
+            latest_version="$(curl --fail --silent --show-error --location \
+              -H 'Accept: application/vnd.github+json' \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              'https://api.github.com/repos/XTLS/Xray-core/releases/latest' | jq -r '.tag_name')"
+            if [[ "${version}" != "${latest_version}" ]]; then
+              echo "::error::stable pin ${version} is not upstream latest ${latest_version}"
+              exit 1
+            fi
+          fi
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # 2. 配置 Buildx (构建核心)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3. 登录 Docker Hub
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 4. 自动生成镜像元数据 (Tags & Labels)
-      # 这会自动生成 latest 标签，以及基于 commit sha 的标签 (如 :sha-1234567)
-      - name: Extract Docker metadata
+      - name: Generate image metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: taoziyoyo2566/xray_docker
+          images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
-            type=sha,prefix=,format=long
+            type=raw,value=${{ steps.release.outputs.version }},priority=900
+            type=raw,value=build-${{ github.sha }}-xray-${{ steps.release.outputs.version }},priority=800
+            type=raw,value=stable,enable=${{ matrix.channel == 'stable' }},priority=700
+            type=raw,value=latest,enable=${{ matrix.channel == 'stable' }},priority=600
+            type=raw,value=prerelease,enable=${{ matrix.channel == 'prerelease' }},priority=700
+          labels: |
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            io.taoziyoyo.xray.version=${{ steps.release.outputs.version }}
+            io.taoziyoyo.xray.channel=${{ matrix.channel }}
 
-      # 5. 构建并推送 (核心步骤)
-      - name: Build and push Docker image
+      - name: Build and push image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ./docker-build
-          file: ./docker-build/Dockerfile
+          file: ./docker-build/dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          # 引用上面生成的 tags 和 labels
+          build-args: |
+            XRAY_VERSION=${{ steps.release.outputs.version }}
+            XRAY_SHA256_AMD64=${{ steps.release.outputs.amd64_sha }}
+            XRAY_SHA256_ARM64=${{ steps.release.outputs.arm64_sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # 【关键】开启 GitHub Actions 缓存，第二次构建秒级完成
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=xray-${{ matrix.channel }}
+          cache-to: type=gha,mode=max,scope=xray-${{ matrix.channel }}
+
+      - name: Report image identity
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## Xray ${CHANNEL} image"
+            echo
+            echo "- Version: \`${VERSION}\`"
+            echo "- Digest: \`${DIGEST}\`"
+            echo "- Tags:"
+            echo '```text'
+            echo "${TAGS}"
+            echo '```'
+            if [[ "${CHANNEL}" == 'stable' ]]; then
+              echo
+              echo '```yaml'
+              echo "xray_image_version: \"${VERSION}\""
+              echo "xray_image: \"${IMAGE_NAME}@${DIGEST}\""
+              echo '```'
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"

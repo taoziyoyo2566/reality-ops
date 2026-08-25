@@ -1,32 +1,59 @@
 # Project Memory
 
-Last updated: 2026-06-23 JST
+Last updated: 2026-08-26 JST
 
 ## Current Branch State
 
-- Active branch: `fix/monitor-integrity`
-- Local state at the time this file was written: branch was ahead of `origin/fix/monitor-integrity` by local documentation commit(s).
-- Latest relevant commits:
-  - `7bca90d Document monitor rollout and subscription cleanup`
-  - `c583214 Add dave user`
-  - `24b5ff2 Canonicalize de inventory host`
-  - `8c92cc0 Harden monitor agent rollout checks`
-  - `c5dcce4 Fix monitor agent stats parsing`
-  - `cf9179d Harden monitor deployment and auth`
+- Active branch: `feat/xray-modernization`.
+- Branch base verified on 2026-08-26:
+  `origin/ops@68ce3e0574d3f30f871060e8e52b06e5b0bf5607`.
+- Initial isolated worktree:
+  `/home/saberu/workspace/projects/reality-ops-xray-modernization`. Recheck
+  `git worktree list --porcelain` for its current checkout path.
+- The branch was created additively. Any handoff to the primary
+  `/home/saberu/workspace/projects/reality-ops` workspace must preserve that
+  workspace's pre-existing tracked and untracked state in a visible recovery
+  commit before switching branches.
+- The first scoped implementation unit consists only of the phase-1 Xray image
+  release implementation, its branch contract/roadmap, evidence, and this
+  memory update. Check current publication state with Git; no upstream was
+  configured and no remote publication had occurred at this review point.
 
-Before considering the branch fully closed, run:
+Before publishing or considering the phase closed, run:
 
 ```bash
 git status --short --branch
 ```
 
-Target clean state:
+Review the complete diff against `origin/ops`; do not infer that uncommitted
+phase work is published or integrated.
 
-```text
-## fix/monitor-integrity...origin/fix/monitor-integrity
-```
+## Xray Image Release State
 
-No `ahead`, no `M`, no `??`.
+Last verified: 2026-08-26 JST.
+
+- Official Xray latest stable is `v26.3.27`; `v26.7.28` is a prerelease.
+- `docker-build/XRAY_VERSION` and
+  `docker-build/XRAY_PRERELEASE_VERSION` pin those channels independently.
+- Official amd64 and arm64 asset digests matched all four repository SHA256
+  entries. Python `zipfile` integrity tests passed for all four archives.
+- The downloaded amd64 binaries reported Xray `26.3.27` (`d2758a0`) and
+  `26.7.28` (`5ca6f4b`).
+- The Dockerfile base pin matches Docker Hub's current top-level digest for
+  `alpine:3.24`:
+  `sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b`.
+- Docker Hub repository `taoziyoyo2566/xray_docker` still has only `latest`
+  and four Git-SHA tags. No `v26.3.27`, `v26.7.28`, `stable`, or `prerelease`
+  tag has been published.
+- Local input validation, negative input cases, workflow YAML parsing, embedded
+  shell syntax, and `git diff --check` passed.
+- Docker image builds, manifest architecture/version inspection, registry
+  publication, stable/latest promotion, deployment digest selection, and
+  rollback validation remain gaps. No registry, node, DNS, Gist, or deployment
+  write ran in this task.
+
+Detailed evidence:
+[`docs/reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md`](reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md).
 
 ## Production State
 

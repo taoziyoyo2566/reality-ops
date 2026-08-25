@@ -1,0 +1,89 @@
+name: Promote Stable Xray Image
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * *'
+
+concurrency:
+  group: promote-stable-xray-image
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: taoziyoyo2566/xray_docker
+    permissions:
+      contents: read
+
+    steps:
+      - name: Resolve upstream stable and registry digests
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(curl --fail --silent --show-error --location \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            'https://api.github.com/repos/XTLS/Xray-core/releases/latest' | jq -r '.tag_name')"
+          version_digest="$(curl --fail --silent --show-error --location \
+            "https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags/${version}" | jq -r '.digest')"
+          latest_digest="$(curl --silent --show-error --location \
+            "https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags/latest" | jq -r '.digest // empty')"
+          stable_digest="$(curl --silent --show-error --location \
+            "https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags/stable" | jq -r '.digest // empty')"
+
+          if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || ! "${version_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Upstream stable ${version} does not have a valid image tag"
+            exit 1
+          fi
+
+          promote=false
+          if [[ "${version_digest}" != "${latest_digest}" || "${version_digest}" != "${stable_digest}" ]]; then
+            promote=true
+          fi
+
+          {
+            echo "version=${version}"
+            echo "digest=${version_digest}"
+            echo "promote=${promote}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        if: steps.release.outputs.promote == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: steps.release.outputs.promote == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Promote stable and latest aliases
+        if: steps.release.outputs.promote == 'true'
+        env:
+          DIGEST: ${{ steps.release.outputs.digest }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:stable" \
+            --tag "${IMAGE_NAME}:latest" \
+            "${IMAGE_NAME}@${DIGEST}"
+
+      - name: Report promotion
+        env:
+          DIGEST: ${{ steps.release.outputs.digest }}
+          PROMOTED: ${{ steps.release.outputs.promote }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          {
+            echo '## Stable Xray promotion'
+            echo
+            echo "- Version: \`${VERSION}\`"
+            echo "- Digest: \`${DIGEST}\`"
+            echo "- Aliases changed: \`${PROMOTED}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
