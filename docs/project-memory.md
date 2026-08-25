@@ -1,32 +1,79 @@
 # Project Memory
 
-Last updated: 2026-06-23 JST
+Last updated: 2026-08-26 JST
 
 ## Current Branch State
 
-- Active branch: `fix/monitor-integrity`
-- Local state at the time this file was written: branch was ahead of `origin/fix/monitor-integrity` by local documentation commit(s).
-- Latest relevant commits:
-  - `7bca90d Document monitor rollout and subscription cleanup`
-  - `c583214 Add dave user`
-  - `24b5ff2 Canonicalize de inventory host`
-  - `8c92cc0 Harden monitor agent rollout checks`
-  - `c5dcce4 Fix monitor agent stats parsing`
-  - `cf9179d Harden monitor deployment and auth`
+- Active branch: `feat/xray-modernization`.
+- Current committed HEAD verified on 2026-08-26:
+  `dbf34413fa09dda136b140c589360cedf154f2c2` (`P1: establish Xray image
+  release channels`).
+- Branch base verified on 2026-08-26:
+  `origin/ops@68ce3e0574d3f30f871060e8e52b06e5b0bf5607`.
+- `git worktree list --porcelain` reports one worktree, the primary workspace
+  `/home/saberu/workspace/projects/reality-ops`, checked out on this branch.
+  The temporary isolated worktree has been removed.
+- The pre-modernization workspace is preserved locally on
+  `feat/roadmap-2026-08@d9240fca12e680c99b3c9754f6c09e8ed04e7b99`.
+- The current uncommitted phase-1 completion work is limited to the image build
+  and promotion workflows, the repository quality workflow, the image verifier
+  and its focused tests, the roadmap, image-release runbook, evidence, and this
+  memory update.
+- No upstream is configured for `feat/xray-modernization`; no staging, commit,
+  push, PR, or integration was performed for these completion changes.
 
-Before considering the branch fully closed, run:
+Before publishing or considering the phase closed, run:
 
 ```bash
 git status --short --branch
 ```
 
-Target clean state:
+Review the complete diff against `origin/ops`; do not infer that uncommitted
+phase work is published or integrated.
 
-```text
-## fix/monitor-integrity...origin/fix/monitor-integrity
-```
+## Xray Image Release State
 
-No `ahead`, no `M`, no `??`.
+Last verified: 2026-08-26 JST.
+
+- Official Xray latest stable is `v26.3.27`; `v26.7.28` is a prerelease.
+- `docker-build/XRAY_VERSION` and
+  `docker-build/XRAY_PRERELEASE_VERSION` pin those channels independently.
+- Official amd64 and arm64 asset digests matched all four repository SHA256
+  entries. Python `zipfile` integrity tests passed for all four archives.
+- The downloaded amd64 binaries reported Xray `26.3.27` (`d2758a0`) and
+  `26.7.28` (`5ca6f4b`).
+- The Dockerfile base pin matches Docker Hub's current top-level digest for
+  `alpine:3.24`:
+  `sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b`.
+- Docker Hub repository `taoziyoyo2566/xray_docker` still has only `latest`
+  and four Git-SHA tags. No `v26.3.27`, `v26.7.28`, `stable`, or `prerelease`
+  tag has been published.
+- The existing `latest` digest is
+  `sha256:433d7302cddb336cb3b4d06f543798a850991a662cd136b5a6b7fa43274599a3`.
+  Read-only Docker Hub and Buildx inspection reported `linux/amd64` and
+  `linux/arm64` plus two `unknown/unknown` provenance manifests.
+- The build and scheduled-promotion workflows now require digest-pinned target
+  runtime verification before moving aliases. Stable updates also require the
+  current `latest` digest to pass as a rollback candidate. Both workflows use
+  the shared `xray-image-alias-update` concurrency group.
+- Local input validation, verifier positive/negative behavior, GitHub output
+  generation, workflow YAML parsing, embedded shell syntax, and
+  `git diff --check` passed.
+- Actual stable/prerelease builds, new digest/runtime inspection, registry
+  publication, alias promotion, and deployment selection remain gaps. The
+  current rollback binary was not executed because this user cannot access the
+  Docker socket. GitHub CLI authentication is invalid for both configured
+  accounts, so `gh`-based PR/workflow actions are unavailable; Git push
+  authentication was not tested. The guidance-required
+  `scripts/check-project-memory.sh` is absent from the current repository and
+  could not run; this memory was updated manually. No registry, node, DNS,
+  Gist, or deployment write ran in this task.
+
+Detailed evidence:
+[`docs/reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md`](reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md).
+
+Operator runbook:
+[`docs/runbooks/xray-image-release.md`](runbooks/xray-image-release.md).
 
 ## Production State
 
