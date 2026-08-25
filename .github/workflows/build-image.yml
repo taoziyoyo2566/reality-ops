@@ -9,6 +9,10 @@ on:
       - 'docker-build/**'
       - '.github/workflows/build-image.yml'
 
+concurrency:
+  group: xray-image-alias-update
+  cancel-in-progress: false
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -78,6 +82,22 @@ jobs:
             fi
           fi
 
+      - name: Resolve rollback candidate
+        if: matrix.channel == 'stable'
+        id: rollback
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(curl --fail --silent --show-error --location \
+            "https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags/latest" | jq -r '.digest')"
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Current latest tag does not provide a rollback digest"
+            exit 1
+          fi
+          echo "image_ref=${IMAGE_NAME}@${digest}" >> "${GITHUB_OUTPUT}"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -98,9 +118,6 @@ jobs:
           tags: |
             type=raw,value=${{ steps.release.outputs.version }},priority=900
             type=raw,value=build-${{ github.sha }}-xray-${{ steps.release.outputs.version }},priority=800
-            type=raw,value=stable,enable=${{ matrix.channel == 'stable' }},priority=700
-            type=raw,value=latest,enable=${{ matrix.channel == 'stable' }},priority=600
-            type=raw,value=prerelease,enable=${{ matrix.channel == 'prerelease' }},priority=700
           labels: |
             org.opencontainers.image.version=${{ steps.release.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -125,6 +142,40 @@ jobs:
           cache-from: type=gha,scope=xray-${{ matrix.channel }}
           cache-to: type=gha,mode=max,scope=xray-${{ matrix.channel }}
 
+      - name: Verify pushed multi-platform image
+        id: verify
+        env:
+          IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: bash docker-build/verify-image.sh "${IMAGE_REF}" "${VERSION}"
+
+      - name: Verify rollback image
+        if: matrix.channel == 'stable'
+        id: rollback_verify
+        env:
+          IMAGE_REF: ${{ steps.rollback.outputs.image_ref }}
+        shell: bash
+        run: bash docker-build/verify-image.sh "${IMAGE_REF}"
+
+      - name: Promote verified channel aliases
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${CHANNEL}" == 'stable' ]]; then
+            docker buildx imagetools create \
+              --tag "${IMAGE_NAME}:stable" \
+              --tag "${IMAGE_NAME}:latest" \
+              "${IMAGE_REF}"
+          else
+            docker buildx imagetools create \
+              --tag "${IMAGE_NAME}:prerelease" \
+              "${IMAGE_REF}"
+          fi
+
       - name: Report image identity
         env:
           CHANNEL: ${{ matrix.channel }}
@@ -132,6 +183,8 @@ jobs:
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
           TAGS: ${{ steps.meta.outputs.tags }}
           VERSION: ${{ steps.release.outputs.version }}
+          ROLLBACK_REF: ${{ steps.rollback.outputs.image_ref }}
+          ROLLBACK_VERSION: ${{ steps.rollback_verify.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
@@ -145,6 +198,8 @@ jobs:
             echo "${TAGS}"
             echo '```'
             if [[ "${CHANNEL}" == 'stable' ]]; then
+              echo
+              echo "- Verified rollback: \`${ROLLBACK_REF}\` (\`${ROLLBACK_VERSION}\`)"
               echo
               echo '```yaml'
               echo "xray_image_version: \"${VERSION}\""

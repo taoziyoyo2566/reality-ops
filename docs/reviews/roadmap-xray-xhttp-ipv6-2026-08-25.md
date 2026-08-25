@@ -24,15 +24,15 @@ Last reviewed: 2026-08-26 JST
   `ops`; head is `feat/xray-modernization`.
 - **Integration/closeout:** Integrate only a verified phase. Record remaining
   gaps and the next phase owner before continuing.
-- **Retirement:** Retain the branch/worktree until all accepted phases are
-  integrated or cancelled. Removal of either local or remote state requires a
-  separate reviewed action.
+- **Retirement:** Retain the branch until all accepted phases are integrated or
+  cancelled. Removal of local or remote branch state requires a separate
+  reviewed action.
 - **Branch action:** Created additively from
   `origin/ops@68ce3e0574d3f30f871060e8e52b06e5b0bf5607` as
-  `feat/xray-modernization`. Its initial isolated checkout was
-  `/home/saberu/workspace/projects/reality-ops-xray-modernization`; any later
-  handoff to the primary workspace must first preserve the original dirty state
-  in a visible recovery commit.
+  `feat/xray-modernization`. It is now checked out directly in
+  `/home/saberu/workspace/projects/reality-ops`; the temporary isolated
+  worktree has been removed, and the pre-modernization workspace remains
+  preserved on `feat/roadmap-2026-08`.
 
 ## Confirmed direction
 
@@ -61,17 +61,28 @@ Implementation checklist:
 - [x] Configure `linux/amd64` and `linux/arm64` builds with version, build
   channel, source, and project-revision labels. Actual image builds remain a
   separate verification gap.
-- [x] Configure immutable version and build-revision tags while retaining old
-  version tags. Registry publication has not run.
+- [x] Configure version and build-revision tags while retaining old version
+  tags. Registry publication has not run; deployment and verification use the
+  resulting immutable digest rather than trusting a mutable tag.
 - [x] Configure `stable` and `latest` promotion from an already-built official
   latest-stable version digest; never rebuild during promotion. Registry
   promotion has not run.
+- [x] Gate `stable`, `latest`, and `prerelease` alias movement on a
+  digest-pinned manifest/runtime verifier. Stable updates also require the
+  current `latest` digest to pass the same verifier as a rollback candidate.
+- [x] Serialize build-driven and scheduled alias updates through one GitHub
+  Actions concurrency group so they cannot race each other.
 - [x] Reject a prerelease presented as stable, a stale stable pin, missing
   checksums, unsupported architectures, and malformed versions.
-- [ ] Verify the built manifest architectures, contained Xray version, and
-  top-level digest before any deployment reference changes.
-- [ ] Preserve the current production deployment reference until a target and
-  rollback digest have both been verified.
+- [x] Cover verifier success, missing/extra Linux architectures, cross-platform
+  version mismatch, mutable references, and GitHub output generation with
+  focused local tests.
+- [ ] Run the verifier against newly built stable and prerelease digests and
+  retain the resulting manifest architectures, contained Xray versions, and
+  top-level digests as registry evidence.
+- [ ] Keep the production deployment reference unchanged until the new target
+  and its verified rollback digest have passed the actual registry/runtime
+  gate.
 
 Required local checks:
 
@@ -86,6 +97,9 @@ changing Docker Hub tags, and deploying nodes are separate authorized actions.
 
 Local verification evidence:
 [`phase1-image-release-2026-08-26.md`](roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md).
+
+Operator procedure:
+[`xray-image-release.md`](../runbooks/xray-image-release.md).
 
 ## Phase 2 — XHTTP + REALITY
 

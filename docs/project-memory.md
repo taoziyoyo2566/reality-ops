@@ -5,19 +5,22 @@ Last updated: 2026-08-26 JST
 ## Current Branch State
 
 - Active branch: `feat/xray-modernization`.
+- Current committed HEAD verified on 2026-08-26:
+  `dbf34413fa09dda136b140c589360cedf154f2c2` (`P1: establish Xray image
+  release channels`).
 - Branch base verified on 2026-08-26:
   `origin/ops@68ce3e0574d3f30f871060e8e52b06e5b0bf5607`.
-- Initial isolated worktree:
-  `/home/saberu/workspace/projects/reality-ops-xray-modernization`. Recheck
-  `git worktree list --porcelain` for its current checkout path.
-- The branch was created additively. Any handoff to the primary
-  `/home/saberu/workspace/projects/reality-ops` workspace must preserve that
-  workspace's pre-existing tracked and untracked state in a visible recovery
-  commit before switching branches.
-- The first scoped implementation unit consists only of the phase-1 Xray image
-  release implementation, its branch contract/roadmap, evidence, and this
-  memory update. Check current publication state with Git; no upstream was
-  configured and no remote publication had occurred at this review point.
+- `git worktree list --porcelain` reports one worktree, the primary workspace
+  `/home/saberu/workspace/projects/reality-ops`, checked out on this branch.
+  The temporary isolated worktree has been removed.
+- The pre-modernization workspace is preserved locally on
+  `feat/roadmap-2026-08@d9240fca12e680c99b3c9754f6c09e8ed04e7b99`.
+- The current uncommitted phase-1 completion work is limited to the image build
+  and promotion workflows, the repository quality workflow, the image verifier
+  and its focused tests, the roadmap, image-release runbook, evidence, and this
+  memory update.
+- No upstream is configured for `feat/xray-modernization`; no staging, commit,
+  push, PR, or integration was performed for these completion changes.
 
 Before publishing or considering the phase closed, run:
 
@@ -45,15 +48,32 @@ Last verified: 2026-08-26 JST.
 - Docker Hub repository `taoziyoyo2566/xray_docker` still has only `latest`
   and four Git-SHA tags. No `v26.3.27`, `v26.7.28`, `stable`, or `prerelease`
   tag has been published.
-- Local input validation, negative input cases, workflow YAML parsing, embedded
-  shell syntax, and `git diff --check` passed.
-- Docker image builds, manifest architecture/version inspection, registry
-  publication, stable/latest promotion, deployment digest selection, and
-  rollback validation remain gaps. No registry, node, DNS, Gist, or deployment
-  write ran in this task.
+- The existing `latest` digest is
+  `sha256:433d7302cddb336cb3b4d06f543798a850991a662cd136b5a6b7fa43274599a3`.
+  Read-only Docker Hub and Buildx inspection reported `linux/amd64` and
+  `linux/arm64` plus two `unknown/unknown` provenance manifests.
+- The build and scheduled-promotion workflows now require digest-pinned target
+  runtime verification before moving aliases. Stable updates also require the
+  current `latest` digest to pass as a rollback candidate. Both workflows use
+  the shared `xray-image-alias-update` concurrency group.
+- Local input validation, verifier positive/negative behavior, GitHub output
+  generation, workflow YAML parsing, embedded shell syntax, and
+  `git diff --check` passed.
+- Actual stable/prerelease builds, new digest/runtime inspection, registry
+  publication, alias promotion, and deployment selection remain gaps. The
+  current rollback binary was not executed because this user cannot access the
+  Docker socket. GitHub CLI authentication is invalid for both configured
+  accounts, so `gh`-based PR/workflow actions are unavailable; Git push
+  authentication was not tested. The guidance-required
+  `scripts/check-project-memory.sh` is absent from the current repository and
+  could not run; this memory was updated manually. No registry, node, DNS,
+  Gist, or deployment write ran in this task.
 
 Detailed evidence:
 [`docs/reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md`](reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md).
+
+Operator runbook:
+[`docs/runbooks/xray-image-release.md`](runbooks/xray-image-release.md).
 
 ## Production State
 
