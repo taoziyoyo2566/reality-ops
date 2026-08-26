@@ -72,7 +72,8 @@
   结果与定时运行遵循同一发现和发布路径；
 - 合并不会立刻触发 registry 写入，但合入默认分支后，下一次每日 cron 会按上述范围
   自动创建缺失标签并在必要时移动 `latest`；
-- 同一 concurrency group 不取消进行中的 run，后启动的 registry writer 排队等待；
+- 同步和审计共享同一 concurrency group 且不取消进行中的 run，审计不会插入正在进行的
+  发布，后启动的任务排队等待；
 - API、网络、digest 或验证失败都会使本次 run 失败；已成功创建的不可变标签保留，下一次
   只补仍缺失的标签，失败 run 不移动 `latest`；
 - 当前没有 Slack、邮件 webhook 或 PagerDuty 等仓库自建告警；可观察信号是 GitHub Actions
@@ -155,6 +156,12 @@ v26.3.27
 
 该数据是带日期的快照。实际执行前必须重新 dry-run；结果漂移时以新官方 API 和
 Docker Hub 只读证据为准，并重新评审写入范围。
+
+首次动态同步于 2026-08-27 JST 通过
+[Actions run 32986819040](https://github.com/taoziyoyo2566/reality-ops/actions/runs/32986819040)
+成功完成，以上 11 个 beta 标签均已创建。同步尚未结束时人工启动的审计曾看到瞬时
+`missing=1`；同步和审计因此共享 `xray-image-registry-state` concurrency group，避免后续
+审计读取发布中的中间状态。此处记录的是事件证据，不替代每次操作前的实时 dry-run。
 
 ## 7. 首次或批量同步
 
@@ -267,8 +274,9 @@ curl --fail --silent --show-error --location \
 - `build-*` 和 40 位 Git SHA tag：清理候选；
 - 活动窗口版本或 `latest` 缺失：审计失败。
 
-审计不会删除标签。清理前重新查询引用和 digest，明确列出删除集合，并单独取得 Docker
-Hub 删除授权。不可把首次同步和旧标签清理合并成一次模糊操作。
+人工判断和清理候选只产生 warning，不使 workflow 失败；只有必需标签缺失才失败。审计
+不会删除标签。清理前重新查询引用和 digest，明确列出删除集合，并单独取得 Docker Hub
+删除授权。不可把首次同步和旧标签清理合并成一次模糊操作。
 
 ## 14. Docker Hub Overview 与凭据
 

@@ -6,7 +6,7 @@ on:
     - cron: '41 4 * * *'
 
 concurrency:
-  group: xray-image-alias-update
+  group: xray-image-registry-state
   cancel-in-progress: false
 
 jobs:

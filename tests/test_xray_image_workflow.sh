@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workflow="${repo_root}/.github/workflows/build-image.yml"
+audit_workflow="${repo_root}/.github/workflows/audit-xray-image-tags.yml"
 
 grep -F 'name: Sync Xray Release Images' "${workflow}" >/dev/null
 grep -F 'bash docker-build/discover-release-window.sh' "${workflow}" >/dev/null
@@ -10,6 +11,16 @@ grep -F 'matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}' "${workflow}" >
 grep -F 'max-parallel: 2' "${workflow}" >/dev/null
 grep -F 'schedule:' "${workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${workflow}" >/dev/null
+grep -F 'group: xray-image-registry-state' "${workflow}" >/dev/null
+grep -F 'group: xray-image-registry-state' "${audit_workflow}" >/dev/null
+grep -F -- '- name: Report legacy tag debt' "${audit_workflow}" >/dev/null
+grep -F -- '- name: Fail on missing required tags' "${audit_workflow}" >/dev/null
+grep -F "if: steps.audit.outputs.missing_count != '0'" "${audit_workflow}" >/dev/null
+
+if grep -F -- '- name: Fail on tag drift' "${audit_workflow}" >/dev/null; then
+  echo 'audit workflow still fails on legacy tag debt' >&2
+  exit 1
+fi
 
 if grep -F 'push:' "${workflow}" >/dev/null; then
   echo 'merging workflow changes triggers an implicit registry synchronization' >&2
