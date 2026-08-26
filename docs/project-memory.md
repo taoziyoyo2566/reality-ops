@@ -2,33 +2,6 @@
 
 Last updated: 2026-08-26 JST
 
-## Current Branch State
-
-- Active branch: `fix/xray-image-verifier`.
-- Current committed HEAD verified on 2026-08-26:
-  `46c97f65a6e1755c4fa71bd92757931876418bda` (`Merge pull request #1 from
-  taoziyoyo2566/feat/xray-modernization`).
-- Branch base verified on 2026-08-26:
-  `origin/ops@46c97f65a6e1755c4fa71bd92757931876418bda`.
-- `git worktree list --porcelain` reports one worktree, the primary workspace
-  `/home/saberu/workspace/projects/reality-ops`, checked out on this branch.
-  The temporary isolated worktree has been removed.
-- Pull request #1 merged the initial phase-1 image-release implementation into
-  `ops`. The current branch tracks `origin/ops` and contains an uncommitted,
-  focused remediation for the pushed-image verifier plus its tests, roadmap,
-  runbook, evidence, and this memory update.
-- No staging, commit, push, pull request, workflow rerun, registry write, or
-  deployment was performed for the current remediation.
-
-Before publishing or considering the phase closed, run:
-
-```bash
-git status --short --branch
-```
-
-Review the complete diff against `origin/ops`; do not infer that the verifier
-remediation is published, integrated, or active in GitHub Actions.
-
 ## Xray Image Release State
 
 Last verified: 2026-08-26 JST.
@@ -43,45 +16,59 @@ Last verified: 2026-08-26 JST.
 - The Dockerfile base pin matches Docker Hub's current top-level digest for
   `alpine:3.24`:
   `sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b`.
-- GitHub Actions run
-  [`32911966721`](https://github.com/taoziyoyo2566/reality-ops/actions/runs/32911966721)
-  built and pushed both candidates before both jobs failed in
-  `Verify pushed multi-platform image` with
-  `docker: cannot overwrite digest sha256:...`.
-- Docker Hub now has candidate tags for both channels, resolving to these
-  immutable top-level digests:
-  - `v26.3.27` and
-    `build-46c97f65a6e1755c4fa71bd92757931876418bda-xray-v26.3.27` resolve to
-    `sha256:168290fdc51724f35b60f2b60d4b043816145bf7ac572af538d79897b3cf7a7d`;
-  - `v26.7.28` and
-    `build-46c97f65a6e1755c4fa71bd92757931876418bda-xray-v26.7.28` resolve to
-    `sha256:f4220a4d33e935574cb1f892677885805acc35d84b596d2b23177b0507c7f095`.
-- Neither `stable` nor `prerelease` was promoted. The existing `latest` tag
-  remains unchanged at
-  `sha256:433d7302cddb336cb3b4d06f543798a850991a662cd136b5a6b7fa43274599a3`.
-  Read-only Docker Hub and Buildx inspection reported `linux/amd64` and
-  `linux/arm64` plus two `unknown/unknown` provenance manifests.
-- The build and scheduled-promotion workflows require digest-pinned target
-  runtime verification before moving aliases. Stable updates also require the
-  current `latest` digest to pass as a rollback candidate. Both workflows use
-  the shared `xray-image-alias-update` concurrency group.
-- Root cause: the verifier reused the top-level multi-platform index digest for
-  sequential `linux/amd64` and `linux/arm64` runs. Docker's local image store
-  retained the first platform under that digest and refused to overwrite it
-  with the second platform. The remediation resolves and validates each child
-  manifest digest from the index, then runs each platform by its own immutable
-  digest.
-- Focused verifier tests now reproduce the old local-store collision, assert
-  exact per-platform child references, and reject malformed child digests.
-  Shell syntax checks, the focused test suite, and `git diff --check` passed
-  locally.
-- A fresh GitHub Actions run with the remediation, real amd64/arm64 runtime
-  checks, alias promotion, and deployment selection remain gaps. This user
-  still cannot access the local Docker socket, so a real local container test
-  cannot run. GitHub CLI authentication is valid for read-only investigation;
-  publication and workflow reruns were not authorized. The guidance-required
-  `scripts/check-project-memory.sh` is absent from the repository, so this
-  memory was updated manually.
+- Pull request #2 merged as
+  `890b16f23c9979edfd53eea97b701c2bdca674da`. Its
+  [`Build and Push Xray Images` run](https://github.com/taoziyoyo2566/reality-ops/actions/runs/32914861142)
+  completed successfully for both channels.
+- Stable runtime verification reported `v26.3.27` on `linux/amd64` and
+  `linux/arm64`. At completion of that run, `v26.3.27`, `stable`, and `latest`
+  resolved to
+  `sha256:5b905e8ff49804690109f74e305611869513a803d5bacf9d1f24d5fa4b1e40ce`.
+- Before stable promotion, the previous `latest` digest
+  `sha256:433d7302cddb336cb3b4d06f543798a850991a662cd136b5a6b7fa43274599a3`
+  passed both architectures and reported Xray `v25.12.8`.
+- Prerelease runtime verification reported `v26.7.28` on both architectures.
+  `v26.7.28` and `prerelease` still resolve to
+  `sha256:53cb9d8730738744a2dbe8c73502e5cd1d8667b14012fbd38a4a38e13495c3f8`.
+- The build and repair workflows require digest-pinned target runtime
+  verification before moving aliases. Stable updates also require an ordered
+  rollback candidate to pass runtime verification. Registry writers use the
+  shared `xray-image-alias-update` concurrency group; the scheduled upstream
+  stable check is read-only.
+- The first release attempt failed because it reused the top-level digest for
+  sequential platform runs. The integrated verifier now resolves each child
+  manifest digest; regression tests model the original local-store collision.
+- The integrated baseline published public `build-*` tags before runtime
+  verification. The pending hardening changes push an untagged candidate by
+  digest, verify it, and only then create the version and channel tags.
+  Prerelease versions use `vX.Y.Z-prerelease`; a pin that is no longer an
+  upstream prerelease is rejected instead of renamed or silently reused.
+- Final stable releases are always rebuilt from the final official assets. The
+  former scheduled alias-only promotion is replaced by a read-only version and
+  asset-drift check; it cannot log in to or write Docker Hub.
+- The expanded local lifecycle work adds selected-channel rebuilds, no-build
+  tag repair, `stable-previous`, ordered rollback fallback, and a read-only
+  weekly tag audit. The disposable Docker Hub login-test workflow is removed.
+- The separate legacy `taoziyoyo2566/dockerhub-test:test` image still exists;
+  it has no remaining workflow owner and is a separately reviewed cleanup
+  target.
+- That hardening remains local until its Git publication, merge-triggered
+  checks, manual stable-only rebuild, and Docker Hub result are separately
+  completed and verified. Workflow/tooling changes no longer trigger a build
+  merely by being merged.
+- Current Docker Hub state has only `v26.7.28`, `prerelease`, and the verified
+  `276dbac...` rollback tag. `v26.3.27/stable/latest` are absent and the old
+  stable digest is no longer readable. The next registry action must rebuild
+  only stable after the lifecycle changes are integrated; prerelease remains
+  valid and must not be rebuilt for this recovery. After stable recovery, a
+  separate no-build prerelease repair must add `v26.7.28-prerelease`; the old
+  ambiguous `v26.7.28` tag then requires separately reviewed cleanup.
+- The current deployment default remains
+  `taoziyoyo2566/xray_docker:latest`; no deployment reference changed and no
+  VPS rollout ran. Release evidence and runtime verification use immutable
+  digests, but deployment is not yet digest-pinned. Because `latest` is
+  currently absent, do not provision a new node or force an image pull until
+  the stable-only recovery has completed.
 
 Detailed evidence:
 [`docs/reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md`](reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md).
