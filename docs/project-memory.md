@@ -1,16 +1,17 @@
 # Project Memory
 
-Last updated: 2026-08-26 JST
+Last updated: 2026-08-27 JST
 
 ## Xray Image Release State
 
-Last verified: 2026-08-26 JST.
+Last verified: 2026-08-27 JST.
 
 - Official Xray latest stable is `v26.3.27`; `v26.7.28` is a prerelease.
-- `docker-build/XRAY_VERSION` and
-  `docker-build/XRAY_PRERELEASE_VERSION` pin those channels independently.
-- Official amd64 and arm64 asset digests matched all four repository SHA256
-  entries. Python `zipfile` integrity tests passed for all four archives.
+- The local unpublished sync design no longer pins two releases in repository
+  files. `discover-release-window.sh` reads official GitHub Releases, selects
+  the newest stable plus every newer non-draft prerelease, validates both
+  architecture asset digests, and compares the resulting immutable tags with
+  Docker Hub.
 - The downloaded amd64 binaries reported Xray `26.3.27` (`d2758a0`) and
   `26.7.28` (`5ca6f4b`).
 - The Dockerfile base pin matches Docker Hub's current top-level digest for
@@ -30,45 +31,61 @@ Last verified: 2026-08-26 JST.
 - Prerelease runtime verification reported `v26.7.28` on both architectures.
   `v26.7.28` and `prerelease` still resolve to
   `sha256:53cb9d8730738744a2dbe8c73502e5cd1d8667b14012fbd38a4a38e13495c3f8`.
-- The build and repair workflows require digest-pinned target runtime
-  verification before moving aliases. Stable updates also require an ordered
-  rollback candidate to pass runtime verification. Registry writers use the
-  shared `xray-image-alias-update` concurrency group; the scheduled upstream
-  stable check is read-only.
+- The local unpublished tag contract makes every versioned tag
+  immutable. Stable `vX.Y.Z` and beta `vX.Y.Z-beta` imply image revision `r0`;
+  later image-only changes use `-rN`. `latest` is the only moving tag and never
+  points to beta content. Per-release overrides live in
+  `docker-build/XRAY_IMAGE_REVISIONS.json`; unlisted releases use `r0`.
+- Build publication refuses an existing version tag. The scheduled/manual sync
+  builds only missing tags, verifies every candidate by platform child digest,
+  and reconciles `latest` only after the entire missing matrix succeeds.
 - The first release attempt failed because it reused the top-level digest for
   sequential platform runs. The integrated verifier now resolves each child
   manifest digest; regression tests model the original local-store collision.
-- The integrated baseline published public `build-*` tags before runtime
+- The prior integrated baseline published public `build-*` tags before runtime
   verification. The pending hardening changes push an untagged candidate by
-  digest, verify it, and only then create the version and channel tags.
-  Prerelease versions use `vX.Y.Z-prerelease`; a pin that is no longer an
-  upstream prerelease is rejected instead of renamed or silently reused.
-- Final stable releases are always rebuilt from the final official assets. The
-  former scheduled alias-only promotion is replaced by a read-only version and
-  asset-drift check; it cannot log in to or write Docker Hub.
-- The expanded local lifecycle work adds selected-channel rebuilds, no-build
-  tag repair, `stable-previous`, ordered rollback fallback, and a read-only
-  weekly tag audit. The disposable Docker Hub login-test workflow is removed.
+  digest, verify it, and only then create the immutable version tag. GitHub
+  prereleases use `vX.Y.Z-beta[-rN]` according to current upstream state.
+- Final stable releases are always built from final official assets. A beta
+  with the same upstream tag is never relabeled as stable.
+- The expanded local lifecycle work adds GitHub release discovery, a dynamic
+  missing-release matrix, immutable-tag availability checks, a revision ledger,
+  daily synchronization, and a read-only weekly tag audit. The former fixed
+  pins, repair workflow, stable checker, channel aliases, and rollback resolver
+  are removed. Docker Hub Overview source is `docker-build/README.md`.
 - The separate legacy `taoziyoyo2566/dockerhub-test:test` image still exists;
   it has no remaining workflow owner and is a separately reviewed cleanup
   target.
-- That hardening remains local until its Git publication, merge-triggered
-  checks, manual stable-only rebuild, and Docker Hub result are separately
-  completed and verified. Workflow/tooling changes no longer trigger a build
-  merely by being merged.
-- Current Docker Hub state has only `v26.7.28`, `prerelease`, and the verified
-  `276dbac...` rollback tag. `v26.3.27/stable/latest` are absent and the old
-  stable digest is no longer readable. The next registry action must rebuild
-  only stable after the lifecycle changes are integrated; prerelease remains
-  valid and must not be rebuilt for this recovery. After stable recovery, a
-  separate no-build prerelease repair must add `v26.7.28-prerelease`; the old
-  ambiguous `v26.7.28` tag then requires separately reviewed cleanup.
+- That hardening remains local until Git publication, CI, a separately approved
+  first manual sync, and Docker Hub verification complete. Merge itself does
+  not trigger registry writes; manual and daily scheduled syncs do.
+- Automatic discovery reads the live GitHub Releases API and Docker Hub tags
+  API on every run; no checked-in file pins the current upstream version. The
+  daily cron is `04:41 UTC` and the weekly read-only audit is Monday
+  `05:29 UTC`. Scheduled workflows execute from the repository default branch,
+  currently `ops`. GitHub cron is best-effort: runs may be delayed or dropped,
+  and GitHub disables scheduled workflows in inactive public repositories
+  after 60 days.
+- API, asset-digest, build, or verification failure stops the run before
+  `latest` reconciliation. Successfully published immutable tags remain and a
+  later run only retries missing tags. There is currently no repository-owned
+  external paging integration; GitHub Actions run state and notification
+  settings are the operational alert path.
+- A read-only Docker Hub audit on 2026-08-27 JST confirmed `latest` and
+  `v26.3.27` at
+  `sha256:a5c6e5de23ce9b5f9d1ccbe5562b82557968ec1b3696c31b9d4ea352cfe73098`;
+  old `v26.7.28` and `prerelease` at
+  `sha256:53cb9d8730738744a2dbe8c73502e5cd1d8667b14012fbd38a4a38e13495c3f8`;
+  and every required `-beta` tag missing. The official dry-run window contains
+  `v26.3.27` plus eleven prereleases from `v26.4.13` through `v26.7.28`; the
+  first sync therefore plans eleven multi-platform builds. Old aliases and SHA
+  tags require separately reviewed cleanup; this working-tree change has not
+  mutated Docker Hub.
 - The current deployment default remains
   `taoziyoyo2566/xray_docker:latest`; no deployment reference changed and no
   VPS rollout ran. Release evidence and runtime verification use immutable
-  digests, but deployment is not yet digest-pinned. Because `latest` is
-  currently absent, do not provision a new node or force an image pull until
-  the stable-only recovery has completed.
+  digests, but deployment is not yet digest-pinned. Under the new contract it
+  follows the sole moving tag `latest`.
 
 Detailed evidence:
 [`docs/reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md`](reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md).

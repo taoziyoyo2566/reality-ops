@@ -2,6 +2,12 @@
 
 Date: 2026-08-26 JST
 
+> Historical evidence snapshot. On 2026-08-27 the fixed stable/prerelease pin
+> model was superseded by an official GitHub Release window sync: newest stable
+> plus every newer non-draft prerelease, built only when its immutable Docker
+> tag is missing. Current procedure lives in
+> `docs/runbooks/xray-image-release.md`.
+
 ## Scope
 
 - Repository: `reality-ops`
@@ -31,9 +37,9 @@ Date: 2026-08-26 JST
   child manifest digest, runs the contained Xray binary through those distinct
   child references, and requires their versions to agree with each other and
   the expected version when supplied.
-- Build jobs move `stable`, `latest`, or `prerelease` only after the pushed
-  digest passes that verifier. A stable build additionally resolves and
-  verifies the pre-update `latest` digest as its rollback candidate.
+- The pending contract creates an immutable `vX.Y.Z[-rN]` or
+  `vX.Y.Z-beta[-rN]` tag only after the pushed digest passes that verifier.
+  Stable publication also moves `latest`, the sole floating tag.
 - The integrated baseline serialized build-driven and scheduled promotions
   through `xray-image-alias-update`. That scheduled alias-only promotion is now
   treated as an invalid prerelease-to-final assumption and is being removed.
@@ -54,9 +60,10 @@ The Docker Hub audit found that the integrated workflow creates version and
 from run `32911966721` publicly visible. The current local hardening changes:
 
 - push the candidate manifest by digest without a public tag;
-- create the version and channel tags only after target and rollback gates pass;
+- create the immutable version tag only after the target gate passes and move
+  `latest` only for stable;
 - stop creating public `build-*` tags;
-- publish prerelease versions as `vX.Y.Z-prerelease` and reject a pin that is
+- publish prerelease versions as `vX.Y.Z-beta[-rN]` and reject a pin that is
   no longer an upstream prerelease;
 - require every final stable release to use its final official assets and a
   fresh stable build, even when the upstream version number is unchanged;
@@ -66,9 +73,10 @@ The expanded local lifecycle hardening also:
 
 - selects only the manually requested or input-file-changed channel;
 - keeps workflow/tooling changes from implicitly triggering a registry build;
-- repairs tags from an existing verified digest without rebuilding;
-- preserves the displaced stable digest as `stable-previous` and resolves
-  rollback candidates through an explicit ordered policy;
+- repairs a missing immutable tag or `latest` from an existing verified digest
+  without rebuilding, but never moves an existing version tag;
+- removes `stable`, `prerelease`, and `stable-previous`; rollback moves only
+  `latest` to a verified immutable version or recorded digest;
 - audits every Docker Hub tag page read-only and reports missing required tags;
 - removes the disposable registry-writing login-test workflow.
 
@@ -233,15 +241,13 @@ A later read-only Docker Hub API query returned only three tags:
 
 The cleanup candidates are gone, but `v26.3.27`, `stable`, and `latest` were
 also removed. The previously verified stable digest now returns `not found`,
-so it cannot be repaired by re-tagging. The ordered rollback resolver selects
-the retained `276d...` tag successfully. After the hardening is integrated,
-recovery therefore requires a manual stable-only rebuild; prerelease must not
-be rebuilt. The hardened tag contract uses `v26.7.28-prerelease`, so a separate
-no-build prerelease repair must validate the existing digest and add that tag.
-The old unsuffixed `v26.7.28` is then an explicit manual-review cleanup target,
-not a final-release image. Because deployment still defaults to `latest`,
-new-node or forced pull operations must stop until recovery completes. No
-registry write was performed as part of this read-only audit.
+so it could not be repaired by re-tagging at that snapshot. The then-current
+ordered rollback resolver selected the retained `276d...` tag successfully.
+This recovery proposal was superseded on 2026-08-27 by the immutable revision
+contract: `vX.Y.Z`/`vX.Y.Z-beta` imply `r0`, later image changes use `-rN`, and
+only `latest` moves. The old unsuffixed prerelease `v26.7.28` remains an
+explicit manual-review migration target. No registry write was performed as
+part of this read-only audit or the later local contract change.
 
 No deployment reference changed.
 

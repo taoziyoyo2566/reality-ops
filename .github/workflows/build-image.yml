@@ -1,181 +1,99 @@
-name: Build and Push Xray Images
+name: Sync Xray Release Images
 
 on:
   workflow_dispatch:
-    inputs:
-      channel:
-        description: Image channel to rebuild
-        required: true
-        type: choice
-        default: stable
-        options:
-          - stable
-          - prerelease
-          - all
-  push:
-    branches:
-      - ops
-    paths:
-      - 'docker-build/dockerfile'
-      - 'docker-build/XRAY_VERSION'
-      - 'docker-build/XRAY_SHA256SUMS'
-      - 'docker-build/XRAY_PRERELEASE_VERSION'
-      - 'docker-build/XRAY_PRERELEASE_SHA256SUMS'
+  schedule:
+    - cron: '41 4 * * *'
 
 concurrency:
   group: xray-image-alias-update
   cancel-in-progress: false
 
 jobs:
-  prepare:
+  discover:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
-      stable: ${{ steps.select.outputs.stable }}
-      prerelease: ${{ steps.select.outputs.prerelease }}
+      matrix: ${{ steps.releases.outputs.matrix }}
+      missing_count: ${{ steps.releases.outputs.missing_count }}
+      stable_tag: ${{ steps.releases.outputs.stable_tag }}
+      stable_version: ${{ steps.releases.outputs.stable_version }}
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Select channels
-        id: select
+      - name: Discover release window and missing tags
+        id: releases
         env:
-          BEFORE_SHA: ${{ github.event.before }}
-          REQUESTED_CHANNEL: ${{ inputs.channel }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: bash docker-build/discover-release-window.sh taoziyoyo2566/xray_docker
+
+      - name: Report synchronization plan
+        env:
+          MISSING_COUNT: ${{ steps.releases.outputs.missing_count }}
+          STABLE_TAG: ${{ steps.releases.outputs.stable_tag }}
         shell: bash
         run: |
-          set -euo pipefail
-          if [[ "${{ github.event_name }}" == 'workflow_dispatch' ]]; then
-            bash docker-build/select-image-channels.sh workflow_dispatch "${REQUESTED_CHANNEL}"
-          elif [[ "${BEFORE_SHA}" == '0000000000000000000000000000000000000000' ]]; then
-            printf '%s\n' docker-build/dockerfile \
-              | bash docker-build/select-image-channels.sh push
-          else
-            git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}" \
-              | bash docker-build/select-image-channels.sh push
-          fi
+          {
+            echo '## Xray release synchronization plan'
+            echo
+            echo "- Stable tag: \`${STABLE_TAG}\`"
+            echo "- Missing immutable tags: \`${MISSING_COUNT}\`"
+            echo
+            echo 'The window contains the newest non-draft stable release and every newer non-draft prerelease.'
+          } >> "${GITHUB_STEP_SUMMARY}"
 
-  build-and-push:
-    needs: prepare
+  build-missing:
+    needs: discover
+    if: needs.discover.outputs.missing_count != '0'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - channel: stable
-            version_file: docker-build/XRAY_VERSION
-            checksums_file: docker-build/XRAY_SHA256SUMS
-          - channel: prerelease
-            version_file: docker-build/XRAY_PRERELEASE_VERSION
-            checksums_file: docker-build/XRAY_PRERELEASE_SHA256SUMS
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
     env:
       IMAGE_NAME: taoziyoyo2566/xray_docker
     permissions:
       contents: read
-
     steps:
-      - name: Select requested channel
-        id: select
-        env:
-          PRERELEASE_SELECTED: ${{ needs.prepare.outputs.prerelease }}
-          STABLE_SELECTED: ${{ needs.prepare.outputs.stable }}
-        shell: bash
-        run: |
-          selected=false
-          case '${{ matrix.channel }}' in
-            stable) selected="${STABLE_SELECTED}" ;;
-            prerelease) selected="${PRERELEASE_SELECTED}" ;;
-          esac
-          echo "selected=${selected}" >> "${GITHUB_OUTPUT}"
-
       - name: Checkout codebase
-        if: steps.select.outputs.selected == 'true'
         uses: actions/checkout@v4
 
-      - name: Validate pinned release
-        if: steps.select.outputs.selected == 'true'
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CHANNEL: ${{ matrix.channel }}
-          VERSION_FILE: ${{ matrix.version_file }}
-          CHECKSUMS_FILE: ${{ matrix.checksums_file }}
+      - name: Protect immutable version tag
         shell: bash
-        run: |
-          set -euo pipefail
-          bash docker-build/check-inputs.sh "${VERSION_FILE}" "${CHECKSUMS_FILE}"
-          version="$(tr -d '[:space:]' < "${VERSION_FILE}")"
-          release_json="$(curl --fail --silent --show-error --location \
-            -H 'Accept: application/vnd.github+json' \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "https://api.github.com/repos/XTLS/Xray-core/releases/tags/${version}")"
-
-          actual_prerelease="$(jq -r '.prerelease' <<< "${release_json}")"
-          actual_draft="$(jq -r '.draft' <<< "${release_json}")"
-
-          for asset in Xray-linux-64.zip Xray-linux-arm64-v8a.zip; do
-            api_sha="$(jq -r --arg asset "${asset}" '.assets[] | select(.name == $asset) | .digest' <<< "${release_json}")"
-            file_sha="$(awk -v asset="${asset}" '$2 == asset { print "sha256:" $1 }' "${CHECKSUMS_FILE}")"
-            if [[ -z "${api_sha}" || "${api_sha}" != "${file_sha}" ]]; then
-              echo "::error::${asset} digest differs from the official release"
-              exit 1
-            fi
-          done
-
-          latest_version=''
-          if [[ "${CHANNEL}" == 'stable' ]]; then
-            latest_version="$(curl --fail --silent --show-error --location \
-              -H 'Accept: application/vnd.github+json' \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H 'X-GitHub-Api-Version: 2026-03-10' \
-              'https://api.github.com/repos/XTLS/Xray-core/releases/latest' | jq -r '.tag_name')"
-          fi
-
-          bash docker-build/check-release-state.sh \
-            "${CHANNEL}" "${version}" "${actual_prerelease}" \
-            "${actual_draft}" "${latest_version}"
-
-      - name: Resolve rollback candidate
-        if: >-
-          steps.select.outputs.selected == 'true' &&
-          matrix.channel == 'stable' &&
-          steps.release.outputs.publish == 'true'
-        id: rollback
-        shell: bash
-        run: bash docker-build/resolve-rollback-image.sh "${IMAGE_NAME}"
+        run: >-
+          bash docker-build/check-image-tag-available.sh
+          "${IMAGE_NAME}" "${{ matrix.image_tag }}"
 
       - name: Set up QEMU
-        if: steps.select.outputs.selected == 'true' && steps.release.outputs.publish == 'true'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        if: steps.select.outputs.selected == 'true' && steps.release.outputs.publish == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
-        if: steps.select.outputs.selected == 'true' && steps.release.outputs.publish == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Generate image metadata
-        if: steps.select.outputs.selected == 'true' && steps.release.outputs.publish == 'true'
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
           labels: |
-            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            org.opencontainers.image.version=${{ matrix.version }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            io.taoziyoyo.xray.version=${{ steps.release.outputs.version }}
+            io.taoziyoyo.xray.version=${{ matrix.version }}
+            io.taoziyoyo.xray.image-tag=${{ matrix.image_tag }}
+            io.taoziyoyo.xray.image-revision=${{ matrix.revision }}
             io.taoziyoyo.xray.channel=${{ matrix.channel }}
 
-      - name: Build and push image
-        if: steps.select.outputs.selected == 'true' && steps.release.outputs.publish == 'true'
+      - name: Build and push image candidate
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -183,97 +101,129 @@ jobs:
           file: ./docker-build/dockerfile
           platforms: linux/amd64,linux/arm64
           build-args: |
-            XRAY_VERSION=${{ steps.release.outputs.version }}
-            XRAY_SHA256_AMD64=${{ steps.release.outputs.amd64_sha }}
-            XRAY_SHA256_ARM64=${{ steps.release.outputs.arm64_sha }}
+            XRAY_VERSION=${{ matrix.version }}
+            XRAY_SHA256_AMD64=${{ matrix.amd64_sha }}
+            XRAY_SHA256_ARM64=${{ matrix.arm64_sha }}
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=xray-${{ matrix.channel }}
-          cache-to: type=gha,mode=max,scope=xray-${{ matrix.channel }}
+          cache-from: type=gha,scope=xray-${{ matrix.image_tag }}
+          cache-to: type=gha,mode=max,scope=xray-${{ matrix.image_tag }}
 
       - name: Verify pushed multi-platform image
-        if: steps.select.outputs.selected == 'true' && steps.release.outputs.publish == 'true'
-        id: verify
         env:
           IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
-          VERSION: ${{ steps.release.outputs.version }}
+          VERSION: ${{ matrix.version }}
         shell: bash
         run: bash docker-build/verify-image.sh "${IMAGE_REF}" "${VERSION}"
 
-      - name: Verify rollback image
-        if: >-
-          steps.select.outputs.selected == 'true' &&
-          matrix.channel == 'stable' &&
-          steps.release.outputs.publish == 'true'
-        id: rollback_verify
-        env:
-          IMAGE_REF: ${{ steps.rollback.outputs.image_ref }}
+      - name: Recheck immutable version tag
         shell: bash
-        run: bash docker-build/verify-image.sh "${IMAGE_REF}"
+        run: >-
+          bash docker-build/check-image-tag-available.sh
+          "${IMAGE_NAME}" "${{ matrix.image_tag }}"
 
-      - name: Preserve rollback and publish verified tags
-        if: steps.select.outputs.selected == 'true' && steps.release.outputs.publish == 'true'
+      - name: Publish immutable version tag
         env:
-          CHANNEL: ${{ matrix.channel }}
           IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
-          ROLLBACK_REF: ${{ steps.rollback.outputs.image_ref }}
-          VERSION: ${{ steps.release.outputs.version }}
+          IMAGE_TAG: ${{ matrix.image_tag }}
         shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "${CHANNEL}" == 'stable' ]]; then
-            if [[ "${ROLLBACK_REF}" != "${IMAGE_REF}" ]]; then
-              docker buildx imagetools create \
-                --tag "${IMAGE_NAME}:stable-previous" \
-                "${ROLLBACK_REF}"
-            fi
-            docker buildx imagetools create \
-              --tag "${IMAGE_NAME}:${VERSION}" \
-              --tag "${IMAGE_NAME}:stable" \
-              --tag "${IMAGE_NAME}:latest" \
-              "${IMAGE_REF}"
-          else
-            docker buildx imagetools create \
-              --tag "${IMAGE_NAME}:${VERSION}-prerelease" \
-              --tag "${IMAGE_NAME}:prerelease" \
-              "${IMAGE_REF}"
-          fi
+        run: docker buildx imagetools create --tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE_REF}"
 
-      - name: Report image identity
-        if: steps.select.outputs.selected == 'true' && steps.release.outputs.publish == 'true'
+      - name: Report published image
         env:
-          CHANNEL: ${{ matrix.channel }}
           DIGEST: ${{ steps.build.outputs.digest }}
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
-          VERSION: ${{ steps.release.outputs.version }}
-          ROLLBACK_REF: ${{ steps.rollback.outputs.image_ref }}
-          ROLLBACK_VERSION: ${{ steps.rollback_verify.outputs.version }}
+          IMAGE_TAG: ${{ matrix.image_tag }}
+          VERSION: ${{ matrix.version }}
+        shell: bash
+        run: |
+          {
+            echo "## Published ${IMAGE_TAG}"
+            echo
+            echo "- Xray version: \`${VERSION}\`"
+            echo "- Digest: \`${DIGEST}\`"
+            echo "- Platforms: \`linux/amd64,linux/arm64\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  reconcile-latest:
+    needs: [discover, build-missing]
+    if: >-
+      always() &&
+      needs.discover.result == 'success' &&
+      (needs.build-missing.result == 'success' || needs.build-missing.result == 'skipped')
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: taoziyoyo2566/xray_docker
+      STABLE_TAG: ${{ needs.discover.outputs.stable_tag }}
+      STABLE_VERSION: ${{ needs.discover.outputs.stable_version }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+
+      - name: Resolve stable and latest digests
+        id: tags
         shell: bash
         run: |
           set -euo pipefail
+          read_digest() {
+            local tag="$1"
+            curl --fail --silent --show-error --location \
+              "https://hub.docker.com/v2/repositories/${IMAGE_NAME}/tags/${tag}" \
+              | jq -r '.digest'
+          }
+          stable_digest=''
+          for attempt in 1 2 3 4 5; do
+            stable_digest="$(read_digest "${STABLE_TAG}" 2>/dev/null || true)"
+            [[ "${stable_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] && break
+            sleep 5
+          done
+          if [[ ! "${stable_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "stable tag is unavailable after synchronization: ${STABLE_TAG}" >&2
+            exit 1
+          fi
+          latest_digest="$(read_digest latest 2>/dev/null || true)"
           {
-            echo "## Xray ${CHANNEL} image"
+            echo "stable_digest=${stable_digest}"
+            echo "move_latest=$([[ "${latest_digest}" == "${stable_digest}" ]] && echo false || echo true)"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify current stable image
+        env:
+          IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ steps.tags.outputs.stable_digest }}
+        shell: bash
+        run: bash docker-build/verify-image.sh "${IMAGE_REF}" "${STABLE_VERSION}"
+
+      - name: Login to Docker Hub
+        if: steps.tags.outputs.move_latest == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Move latest to verified stable
+        if: steps.tags.outputs.move_latest == 'true'
+        env:
+          IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ steps.tags.outputs.stable_digest }}
+        shell: bash
+        run: docker buildx imagetools create --tag "${IMAGE_NAME}:latest" "${IMAGE_REF}"
+
+      - name: Report stable identity
+        env:
+          DIGEST: ${{ steps.tags.outputs.stable_digest }}
+          MOVED: ${{ steps.tags.outputs.move_latest }}
+        shell: bash
+        run: |
+          {
+            echo '## Current stable image'
             echo
-            echo "- Version: \`${VERSION}\`"
+            echo "- Version tag: \`${STABLE_TAG}\`"
             echo "- Digest: \`${DIGEST}\`"
-            echo "- Tags:"
-            echo '```text'
-            if [[ "${CHANNEL}" == 'stable' ]]; then
-              echo "${IMAGE_NAME}:${VERSION}"
-              echo "${IMAGE_NAME}:stable"
-              echo "${IMAGE_NAME}:latest"
-            else
-              echo "${IMAGE_NAME}:${VERSION}-prerelease"
-              echo "${IMAGE_NAME}:prerelease"
-            fi
-            echo '```'
-            if [[ "${CHANNEL}" == 'stable' ]]; then
-              echo
-              echo "- Verified rollback: \`${ROLLBACK_REF}\` (\`${ROLLBACK_VERSION}\`)"
-              echo
-              echo '```yaml'
-              echo "xray_image_version: \"${VERSION}\""
-              echo "xray_image: \"${IMAGE_NAME}@${DIGEST}\""
-              echo '```'
-            fi
+            echo "- latest moved: \`${MOVED}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
