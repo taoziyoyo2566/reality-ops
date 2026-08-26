@@ -38,19 +38,18 @@ Last reviewed: 2026-08-26 JST
 ### Phase 1 release hardening
 
 - **Problem/outcome:** Prevent failed candidate builds from leaving public
-  version or build-revision tags, and prevent prerelease content from being
-  relabeled as a final release without a fresh build.
+  tags, prevent any published version tag from moving to different content,
+  and prevent prerelease content from being relabeled as a final release.
 - **Approach/scope:** Push candidates only by digest; verify the candidate and
-  rollback digest; then create only version and channel tags. Remove public
-  `build-*` generation; select only the changed or manually requested channel;
-  add no-build tag repair, durable `stable-previous`, ordered rollback
-  resolution, and read-only garbage-tag auditing; remove the registry-writing
-  login test; and synchronize the roadmap, evidence, runbook, and project
-  memory. No deployment change is included.
+  then create one immutable version tag. Discover the newest upstream stable
+  and every newer prerelease from GitHub, build only tags missing from Docker
+  Hub through a dynamic matrix, use repository-owned `-rN` overrides, map
+  prereleases to `-beta`, and retain `latest` as the only moving tag. Remove
+  fixed pins and old channel/rollback aliases. No deployment change is included.
 - **Acceptance:** Local workflow and shell checks pass; no build step contains
   a public tag; failed verification cannot create a public tag; a prerelease
-  pin that became stable is rejected; the scheduled stable check is read-only;
-  a post-merge run confirms the selected channel and intended public tags.
+  release assets and states are validated; a dry-run identifies the complete
+  window; a post-merge manual sync confirms all intended public tags.
 - **Publication:** One phase-1 hardening commit and PR from the current branch
   to `ops`, subject to separate authorization.
 - **Integration/closeout:** Close Phase 1 only after the hardened workflow has
@@ -73,23 +72,24 @@ Last reviewed: 2026-08-26 JST
 
 ## Phase 1 — Xray image release model (hardening in progress)
 
-Current target pins, subject to an official-release recheck at execution time:
+Current discovered window, subject to an official-release recheck at execution time:
 
 - stable: `v26.3.27`
-- prerelease: `v26.7.28`
+- prerelease range: `v26.4.13` through `v26.7.28` (11 releases)
 - Docker Hub repository: `taoziyoyo2566/xray_docker`
 
 Implementation checklist:
 
-- [x] Keep the stable and prerelease versions explicit and independently
-  auditable.
+- [x] Discover the stable-to-latest-prerelease window from official GitHub
+  Release state and keep the computed matrix auditable.
 - [x] Verify official release assets with architecture-specific SHA256 values
   before unpacking them.
 - [x] Configure `linux/amd64` and `linux/arm64` builds with version, build
   channel, source, and project-revision labels. Both architectures were built
   and verified in GitHub Actions run `32914861142`.
 - [ ] Publish no public tag until the candidate digest passes multi-platform
-  runtime verification; then create only the version and channel tags. Public
+  runtime verification; then create only the immutable version tag and, for
+  stable, move `latest`. Public
   `build-*` tags are not part of the release contract.
 - [x] The integrated baseline moved `stable` and `latest` from an already-built
   same-version image after runtime verification. This behavior is retained as
@@ -97,25 +97,20 @@ Implementation checklist:
 - [ ] Always build a final stable release from its final official assets, even
   when the same upstream version was previously built as prerelease. Never
   relabel the prerelease digest as stable.
-- [x] Gate `stable`, `latest`, and `prerelease` alias movement on a
-  digest-pinned manifest/runtime verifier. Stable updates also require the
-  current `latest` digest to pass the same verifier as a rollback candidate.
-- [x] Serialize build and repair alias updates through one GitHub Actions
-  concurrency group so they cannot race each other. The scheduled stable check
-  is read-only and never joins the registry writer group.
-- [x] Reject a prerelease presented as stable, a stale stable pin, missing
-  checksums, unsupported architectures, and malformed versions.
-- [ ] Publish prerelease version tags as `vX.Y.Z-prerelease`, and reject a
+- [x] Gate `latest` movement on a digest-pinned manifest/runtime verifier.
+  Version tags are immutable and publication rejects an existing target tag.
+- [x] Serialize manual and scheduled synchronization through one GitHub Actions
+  concurrency group so registry writers cannot race each other.
+- [x] Reject malformed release state/tags, missing official asset digests,
+  unsupported architectures, and incomplete API responses.
+- [ ] Publish prerelease version tags as `vX.Y.Z-beta[-rN]`, and reject a
   prerelease pin that is no longer marked prerelease. Update it independently
   rather than silently skipping or promoting its old image.
-- [ ] On manual runs build only `stable`, `prerelease`, or explicitly `all`;
-  on version-input pushes build only the changed channel. Workflow/tooling
-  changes must not cause an implicit registry build.
-- [ ] Repair missing version or channel tags from an existing verified digest
-  without rebuilding. Reject repair when every source tag and explicit digest
-  is absent or inaccessible.
-- [ ] Preserve the prior verified stable digest as `stable-previous`, with an
-  explicit bootstrap keep-list fallback when all stable aliases are absent.
+- [ ] On manual or scheduled runs build only immutable tags missing from the
+  discovered window. Merge and push events must not cause an implicit registry
+  build; successful prior matrix entries must be skipped on retry.
+- [ ] Remove `stable`, `prerelease`, and `stable-previous`; roll back by moving
+  only `latest` to a verified immutable stable version or recorded digest.
 - [ ] Audit all Docker Hub tag pages weekly without registry credentials or
   deletes; report retained, cleanup-candidate, unknown, and required-but-missing
   tags.
@@ -155,14 +150,13 @@ verifier to run each platform through its child manifest digest. Post-merge
 run `32914861142` then passed stable and prerelease target verification, stable
 rollback verification, and all expected alias promotions. A later registry
 audit found that pre-verification version/build tags made failed candidates
-public. The current hardening work removes public `build-*` tags and delays all
-remaining public tags until verification. A later registry cleanup also removed
-all stable tags and their digest is no longer readable, while prerelease remains
-intact. Phase 1 remains open until the hardening is integrated and a manual
-stable-only rebuild restores and verifies `v26.3.27/stable/latest` without
-rebuilding prerelease. A separate verified no-build repair then adds
-`v26.7.28-prerelease` before the ambiguous old `v26.7.28` tag is considered for
-cleanup. Deployment remains a separate later action.
+public. The current hardening work removes public `build-*` tags, delays public
+tags until verification, makes every version tag immutable with explicit image
+revisions, maps GitHub prereleases to `-beta`, and leaves `latest` as the only
+moving tag. The operator-reported registry still contains old aliases; their
+inventory and cleanup remain separate registry actions. Phase 1 remains open
+until this contract is integrated and exercised by a verified publication.
+Deployment remains a separate later action.
 
 ## Phase 2 — XHTTP + REALITY
 
