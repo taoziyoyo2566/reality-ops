@@ -1,0 +1,155 @@
+name: Repair Xray Image Tags
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Image channel whose tags should be reconciled
+        required: true
+        type: choice
+        options:
+          - stable
+          - prerelease
+      source_digest:
+        description: Optional known digest when every source tag is missing
+        required: false
+        type: string
+
+concurrency:
+  group: xray-image-alias-update
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: taoziyoyo2566/xray_docker
+      CHANNEL: ${{ inputs.channel }}
+      VERSION_FILE: ${{ inputs.channel == 'stable' && 'docker-build/XRAY_VERSION' || 'docker-build/XRAY_PRERELEASE_VERSION' }}
+      CHECKSUMS_FILE: ${{ inputs.channel == 'stable' && 'docker-build/XRAY_SHA256SUMS' || 'docker-build/XRAY_PRERELEASE_SHA256SUMS' }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+
+      - name: Validate pinned release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash docker-build/check-inputs.sh "${VERSION_FILE}" "${CHECKSUMS_FILE}"
+          version="$(tr -d '[:space:]' < "${VERSION_FILE}")"
+          release_json="$(curl --fail --silent --show-error --location \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "https://api.github.com/repos/XTLS/Xray-core/releases/tags/${version}")"
+          actual_prerelease="$(jq -r '.prerelease' <<< "${release_json}")"
+          actual_draft="$(jq -r '.draft' <<< "${release_json}")"
+          latest_version=''
+          if [[ "${CHANNEL}" == 'stable' ]]; then
+            latest_version="$(curl --fail --silent --show-error --location \
+              -H 'Accept: application/vnd.github+json' \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              'https://api.github.com/repos/XTLS/Xray-core/releases/latest' | jq -r '.tag_name')"
+          fi
+          bash docker-build/check-release-state.sh \
+            "${CHANNEL}" "${version}" "${actual_prerelease}" \
+            "${actual_draft}" "${latest_version}"
+
+      - name: Resolve existing repair source
+        if: steps.release.outputs.publish == 'true'
+        id: existing
+        shell: bash
+        run: >-
+          bash docker-build/resolve-image-repair.sh
+          "${IMAGE_NAME}" "${CHANNEL}" "${{ steps.release.outputs.version }}"
+          "${{ inputs.source_digest }}"
+
+      - name: Resolve stable rollback candidate
+        if: steps.release.outputs.publish == 'true' && inputs.channel == 'stable'
+        id: rollback
+        shell: bash
+        run: bash docker-build/resolve-rollback-image.sh "${IMAGE_NAME}"
+
+      - name: Set up QEMU
+        if: steps.release.outputs.publish == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.release.outputs.publish == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify repair source
+        if: steps.release.outputs.publish == 'true'
+        env:
+          IMAGE_REF: ${{ steps.existing.outputs.image_ref }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: bash docker-build/verify-image.sh "${IMAGE_REF}" "${VERSION}"
+
+      - name: Verify displaced stable image
+        if: >-
+          steps.release.outputs.publish == 'true' &&
+          inputs.channel == 'stable' &&
+          steps.rollback.outputs.image_ref != steps.existing.outputs.image_ref
+        env:
+          IMAGE_REF: ${{ steps.rollback.outputs.image_ref }}
+        shell: bash
+        run: bash docker-build/verify-image.sh "${IMAGE_REF}"
+
+      - name: Login to Docker Hub
+        if: steps.release.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Reconcile verified tags
+        if: steps.release.outputs.publish == 'true'
+        env:
+          IMAGE_REF: ${{ steps.existing.outputs.image_ref }}
+          PREVIOUS_REF: ${{ steps.rollback.outputs.image_ref }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${CHANNEL}" == 'stable' ]]; then
+            if [[ "${PREVIOUS_REF}" != "${IMAGE_REF}" ]]; then
+              docker buildx imagetools create \
+                --tag "${IMAGE_NAME}:stable-previous" \
+                "${PREVIOUS_REF}"
+            fi
+            docker buildx imagetools create \
+              --tag "${IMAGE_NAME}:${VERSION}" \
+              --tag "${IMAGE_NAME}:stable" \
+              --tag "${IMAGE_NAME}:latest" \
+              "${IMAGE_REF}"
+          else
+            docker buildx imagetools create \
+              --tag "${IMAGE_NAME}:${VERSION}-prerelease" \
+              --tag "${IMAGE_NAME}:prerelease" \
+              "${IMAGE_REF}"
+          fi
+
+      - name: Report repair
+        if: steps.release.outputs.publish == 'true'
+        env:
+          IMAGE_REF: ${{ steps.existing.outputs.image_ref }}
+          SOURCE_TAG: ${{ steps.existing.outputs.source_tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          {
+            echo '## Xray image tag repair'
+            echo
+            echo "- Channel: \`${CHANNEL}\`"
+            echo "- Version: \`${VERSION}\`"
+            echo "- Source tag: \`${SOURCE_TAG}\`"
+            echo "- Verified source: \`${IMAGE_REF}\`"
+            echo "- Image rebuilt: \`false\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

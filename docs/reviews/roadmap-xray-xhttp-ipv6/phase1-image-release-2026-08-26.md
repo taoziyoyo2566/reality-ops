@@ -7,12 +7,14 @@ Date: 2026-08-26 JST
 - Repository: `reality-ops`
 - Initial branch: `feat/xray-modernization`
 - Remediation branch: `fix/xray-image-verifier`
-- Current remediation base:
-  `origin/ops@46c97f65a6e1755c4fa71bd92757931876418bda`
+- Initial integration: PR #1 at
+  `46c97f65a6e1755c4fa71bd92757931876418bda`
+- Verifier remediation integration: PR #2 at
+  `890b16f23c9979edfd53eea97b701c2bdca674da`
 - Purpose: establish stable/prerelease Xray image inputs, tags, verification,
   and automatic alias promotion, and retain actual release evidence.
 
-## Implemented locally
+## Implemented
 
 - `docker-build/dockerfile` now uses a digest-pinned Alpine base, explicit Xray
   version and architecture checksum build arguments, checksum-before-unzip,
@@ -32,17 +34,51 @@ Date: 2026-08-26 JST
 - Build jobs move `stable`, `latest`, or `prerelease` only after the pushed
   digest passes that verifier. A stable build additionally resolves and
   verifies the pre-update `latest` digest as its rollback candidate.
-- Build-driven and scheduled promotions share the
-  `xray-image-alias-update` concurrency group, preventing overlapping alias
-  mutations across the two workflows.
-- `.github/workflows/promote-xray-stable.yml` resolves the official latest
-  stable release daily, verifies both the already-built target and the prior
-  `latest` rollback image when they differ, then promotes the target digest to
-  `stable` and `latest`; it does not rebuild that version.
+- The integrated baseline serialized build-driven and scheduled promotions
+  through `xray-image-alias-update`. That scheduled alias-only promotion is now
+  treated as an invalid prerelease-to-final assumption and is being removed.
+- `.github/workflows/promote-xray-stable.yml` previously moved an already-built
+  same-version image to `stable/latest`. It is replaced by
+  `.github/workflows/check-xray-stable.yml`, which only compares the repository
+  stable pin and asset digests with the upstream final release; it never logs
+  in to or writes Docker Hub.
 - `.github/workflows/quality.yml` runs both stable and prerelease input checks,
   shell syntax checks, and the focused image-verifier test suite.
 - The broad `.github` ignore rule was removed so new workflow files are
   trackable; unrelated ignore rules remain unchanged.
+
+## Pending release hardening
+
+The Docker Hub audit found that the integrated workflow creates version and
+`build-*` tags before runtime verification. This made both failed candidates
+from run `32911966721` publicly visible. The current local hardening changes:
+
+- push the candidate manifest by digest without a public tag;
+- create the version and channel tags only after target and rollback gates pass;
+- stop creating public `build-*` tags;
+- publish prerelease versions as `vX.Y.Z-prerelease` and reject a pin that is
+  no longer an upstream prerelease;
+- require every final stable release to use its final official assets and a
+  fresh stable build, even when the upstream version number is unchanged;
+- add focused release-state and workflow publication-policy tests.
+
+The expanded local lifecycle hardening also:
+
+- selects only the manually requested or input-file-changed channel;
+- keeps workflow/tooling changes from implicitly triggering a registry build;
+- repairs tags from an existing verified digest without rebuilding;
+- preserves the displaced stable digest as `stable-previous` and resolves
+  rollback candidates through an explicit ordered policy;
+- audits every Docker Hub tag page read-only and reports missing required tags;
+- removes the disposable registry-writing login-test workflow.
+
+Read-only inspection also found the old workflow's independent
+`taoziyoyo2566/dockerhub-test:test` image still present. Removing that test
+repository is a separate destructive Docker Hub action; it is not part of the
+`xray_docker` tag repair.
+
+These changes have local evidence only. They are not integrated and have not
+yet been exercised by a registry-writing GitHub Actions run.
 
 ## Verified results
 
@@ -136,41 +172,95 @@ verification failed before rollback verification or alias promotion, so the
 old `latest` remained unchanged and neither `stable` nor `prerelease` was
 created.
 
+## Successful release verification
+
+[PR #2](https://github.com/taoziyoyo2566/reality-ops/pull/2) merged the child
+manifest verifier as
+`890b16f23c9979edfd53eea97b701c2bdca674da`. The resulting
+[Build and Push Xray Images run](https://github.com/taoziyoyo2566/reality-ops/actions/runs/32914861142)
+completed successfully on 2026-08-26 JST. Both matrix jobs passed release
+validation, multi-platform build/push, target runtime verification, alias
+promotion, and reporting. The stable job also passed rollback resolution and
+runtime verification.
+
+Runtime and registry evidence:
+
+| Channel | Runtime result | Top-level digest | Published tags and aliases |
+|---|---|---|---|
+| stable | `v26.3.27` on `linux/amd64,linux/arm64` | `sha256:5b905e8ff49804690109f74e305611869513a803d5bacf9d1f24d5fa4b1e40ce` | `v26.3.27`, `stable`, `latest` |
+| prerelease | `v26.7.28` on `linux/amd64,linux/arm64` | `sha256:53cb9d8730738744a2dbe8c73502e5cd1d8667b14012fbd38a4a38e13495c3f8` | `v26.7.28`, `prerelease` |
+
+Before moving `stable/latest`, the stable job ran the prior `latest` digest
+`sha256:433d7302cddb336cb3b4d06f543798a850991a662cd136b5a6b7fa43274599a3`
+on both required architectures and identified its contained version as
+`v25.12.8`.
+
+The old workflow also published these build-revision tags. They are historical
+registry clutter rather than part of the intended release contract:
+
+- `build-890b16f23c9979edfd53eea97b701c2bdca674da-xray-v26.3.27`;
+- `build-890b16f23c9979edfd53eea97b701c2bdca674da-xray-v26.7.28`.
+
 ## Current registry state
 
-Read-only Docker Hub inspection after the failed run found `v26.3.27`,
-`v26.7.28`, and both `build-46c97f65...` tags. Each top-level digest contains
-`linux/amd64` and `linux/arm64`. The existing `latest` remains at
-`sha256:433d7302cddb336cb3b4d06f543798a850991a662cd136b5a6b7fa43274599a3`.
-There is still no `stable` or `prerelease` alias. No deployment reference
-changed.
+Read-only Docker Hub inspection after the successful run confirmed:
 
-## Gaps and next protected actions
+- `v26.3.27`, `stable`, and `latest` resolve to
+  `sha256:5b905e8ff49804690109f74e305611869513a803d5bacf9d1f24d5fa4b1e40ce`;
+- `v26.7.28` and `prerelease` resolve to
+  `sha256:53cb9d8730738744a2dbe8c73502e5cd1d8667b14012fbd38a4a38e13495c3f8`;
+- both digests expose exactly `linux/amd64` and `linux/arm64` as Linux
+  runtime platforms.
 
-- Both target images were built and pushed, but contained-version verification
-  did not complete because of the verifier defect described above.
-- The current `latest` rollback manifest and image configuration were inspected
-  read-only, but its contained Xray binary could not be executed because this
-  user cannot access `/var/run/docker.sock`.
-- Version and build tags were written. No stable/latest/prerelease promotion
-  ran.
-- No production or staging deployment reference changed.
-- The existing `latest` digest is the configured rollback candidate, but its
-  runtime behavior is still unverified.
-- GitHub CLI authentication was available for the failure investigation;
-  authenticated job logs confirmed both jobs failed for the same reason.
-- The project guidance names `scripts/check-project-memory.sh` as a freshness
-  gate, but that path is absent from the current branch and repository file
-  list, so the named check could not run. The required memory update was made
-  manually; the missing checker remains a project-governance gap.
-- Git staging, commit, push, PR creation, and merge remain separate actions.
+A tag inventory initially found 13 public tags. Under the then-active release
+contract, the intended retained set was:
 
-The next gate is a reviewed verifier-fix publication and PR. Its integration to
-`ops` will trigger a new multi-platform build; rerunning the old workflow cannot
-pick up the fix. Actual child-digest runtime verification, rollback
-verification, and alias promotion remain required evidence. Git publication,
-the new registry write, and any later deployment each require their own
-authorization.
+- `v26.3.27`, `stable`, and `latest` for the then-current stable digest;
+- `v26.7.28` and `prerelease` for the current prerelease digest;
+- `276dbacafbe703cde6e4a03bdff09f1ec7e45aee` for the verified `v25.12.8`
+  rollback digest.
+
+Seven tags were cleanup candidates: all four existing `build-*` tags and the
+unreferenced legacy SHA tags `4d5f99fe...`, `6593b674...`, and `7033c408...`.
+Repository search found no deployment reference to them; external consumers
+cannot be proven from repository state.
+
+A later read-only Docker Hub API query returned only three tags:
+
+- `v26.7.28` and `prerelease` at the verified prerelease digest;
+- `276dbacafbe703cde6e4a03bdff09f1ec7e45aee` at the verified `v25.12.8`
+  rollback digest.
+
+The cleanup candidates are gone, but `v26.3.27`, `stable`, and `latest` were
+also removed. The previously verified stable digest now returns `not found`,
+so it cannot be repaired by re-tagging. The ordered rollback resolver selects
+the retained `276d...` tag successfully. After the hardening is integrated,
+recovery therefore requires a manual stable-only rebuild; prerelease must not
+be rebuilt. The hardened tag contract uses `v26.7.28-prerelease`, so a separate
+no-build prerelease repair must validate the existing digest and add that tag.
+The old unsuffixed `v26.7.28` is then an explicit manual-review cleanup target,
+not a final-release image. Because deployment still defaults to `latest`,
+new-node or forced pull operations must stop until recovery completes. No
+registry write was performed as part of this read-only audit.
+
+No deployment reference changed.
+
+## Completion and remaining boundary
+
+- The integrated baseline verified official inputs, multi-platform builds,
+  contained versions, rollback behavior, immutable digests, and floating
+  aliases. Phase 1 remains open while the no-public-candidate-tag hardening is
+  unpublished and lacks a merge-triggered registry run.
+- The failed first attempt remains recorded because it explains the verifier
+  regression test and why its earlier local mock was insufficient.
+- No production or staging deployment was performed. Choosing or rolling out a
+  new deployment digest remains a separately reviewed action.
+- Removing obsolete Docker Hub tags is a separate destructive registry action;
+  it does not substitute for fixing and verifying the publishing workflow.
+- Current stable recovery is a separate registry-writing action after the
+  hardening is integrated. Until then, the required stable tags are absent.
+- Publication of the hardening changes and all Phase 2 work remain separate
+  actions.
 
 Executable operator procedure:
 [`xray-image-release.md`](../../runbooks/xray-image-release.md).

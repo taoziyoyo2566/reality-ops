@@ -16,12 +16,29 @@ jobs:
       - name: Validate Xray image tooling
         run: |
           bash -n docker-build/check-inputs.sh
+          bash -n docker-build/check-release-state.sh
+          bash -n docker-build/resolve-image-repair.sh
+          bash -n docker-build/resolve-rollback-image.sh
+          bash -n docker-build/audit-image-tags.sh
+          bash -n docker-build/select-image-channels.sh
           bash -n docker-build/verify-image.sh
+          bash -n tests/test_xray_release_state.sh
+          bash -n tests/test_xray_image_repair.sh
+          bash -n tests/test_xray_image_tag_audit.sh
+          bash -n tests/test_xray_image_channel_selection.sh
+          bash -n tests/test_xray_rollback_resolution.sh
+          bash -n tests/test_xray_image_workflow.sh
           bash -n tests/test_xray_image_verify.sh
           bash docker-build/check-inputs.sh
           bash docker-build/check-inputs.sh \
             docker-build/XRAY_PRERELEASE_VERSION \
             docker-build/XRAY_PRERELEASE_SHA256SUMS
+          bash tests/test_xray_release_state.sh
+          bash tests/test_xray_image_repair.sh
+          bash tests/test_xray_image_tag_audit.sh
+          bash tests/test_xray_image_channel_selection.sh
+          bash tests/test_xray_rollback_resolution.sh
+          bash tests/test_xray_image_workflow.sh
           bash tests/test_xray_image_verify.sh
 
   whitespace:
