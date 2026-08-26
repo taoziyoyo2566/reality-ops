@@ -5,7 +5,7 @@ image_ref="${1:-}"
 expected_version="${2:-}"
 docker_bin="${DOCKER_BIN:-docker}"
 
-if [[ ! "${image_ref}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+if [[ ! "${image_ref}" =~ ^[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
   echo "image reference must use a sha256 digest: '${image_ref}'" >&2
   exit 1
 fi
@@ -16,26 +16,34 @@ if [[ -n "${expected_version}" && ! "${expected_version}" =~ ^v[0-9]+\.[0-9]+\.[
 fi
 
 manifest_json="$("${docker_bin}" buildx imagetools inspect --raw "${image_ref}")"
-platforms="$(jq -r '
+manifest_rows="$(jq -r '
   [.manifests[]?
    | select(.platform.os == "linux")
-   | "\(.platform.os)/\(.platform.architecture)"]
-  | unique
-  | sort
-  | join(",")
+   | [(.platform.os + "/" + .platform.architecture), .digest]]
+  | sort_by(.[0])
+  | .[]
+  | @tsv
 ' <<< "${manifest_json}")"
+platforms="$(cut -f1 <<< "${manifest_rows}" | paste -sd, -)"
 
 if [[ "${platforms}" != 'linux/amd64,linux/arm64' ]]; then
   echo "image must contain exactly the required Linux architectures; found '${platforms}'" >&2
   exit 1
 fi
 
+image_repository="${image_ref%@sha256:*}"
 verified_version=""
-for platform in linux/amd64 linux/arm64; do
+while IFS=$'\t' read -r platform manifest_digest; do
+  if [[ ! "${manifest_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "${platform} manifest has an invalid digest: '${manifest_digest}'" >&2
+    exit 1
+  fi
+
+  platform_ref="${image_repository}@${manifest_digest}"
   first_line="$("${docker_bin}" run --rm \
     --platform "${platform}" \
     --entrypoint /usr/bin/xray \
-    "${image_ref}" -version | sed -n '1p')"
+    "${platform_ref}" -version | sed -n '1p')"
   actual_version="$(awk '$1 == "Xray" { print "v" $2; exit }' <<< "${first_line}")"
 
   if [[ ! "${actual_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -51,7 +59,7 @@ for platform in linux/amd64 linux/arm64; do
     exit 1
   fi
   verified_version="${actual_version}"
-done
+done <<< "${manifest_rows}"
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   {

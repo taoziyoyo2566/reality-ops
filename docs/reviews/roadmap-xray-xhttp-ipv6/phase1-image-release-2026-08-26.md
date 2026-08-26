@@ -5,10 +5,12 @@ Date: 2026-08-26 JST
 ## Scope
 
 - Repository: `reality-ops`
-- Branch: `feat/xray-modernization`
-- Base: `origin/ops@68ce3e0574d3f30f871060e8e52b06e5b0bf5607`
+- Initial branch: `feat/xray-modernization`
+- Remediation branch: `fix/xray-image-verifier`
+- Current remediation base:
+  `origin/ops@46c97f65a6e1755c4fa71bd92757931876418bda`
 - Purpose: establish stable/prerelease Xray image inputs, tags, verification,
-  and automatic alias promotion without building, pushing, or deploying.
+  and automatic alias promotion, and retain actual release evidence.
 
 ## Implemented locally
 
@@ -23,9 +25,10 @@ Date: 2026-08-26 JST
   `build-<Git-SHA>-xray-<version>` tags. Verification and handoff use the
   resulting digest rather than treating those tags as immutable.
 - `docker-build/verify-image.sh` accepts only a digest-pinned image reference,
-  requires exactly `linux/amd64` and `linux/arm64`, runs the contained Xray
-  binary on both platforms, and requires their versions to agree with each
-  other and the expected version when supplied.
+  requires exactly `linux/amd64` and `linux/arm64`, resolves each platform's
+  child manifest digest, runs the contained Xray binary through those distinct
+  child references, and requires their versions to agree with each other and
+  the expected version when supplied.
 - Build jobs move `stable`, `latest`, or `prerelease` only after the pushed
   digest passes that verifier. A stable build additionally resolves and
   verifies the pre-update `latest` digest as its rollback candidate.
@@ -75,50 +78,99 @@ Repository-local checks passed:
 - digest-only verifier acceptance and rejection coverage for a missing arm64
   manifest, an extra Linux architecture, cross-platform version mismatch, and
   a mutable tag
+- regression coverage that rejects reuse of the top-level multi-platform
+  digest for both platform runs and requires the matching child manifest
+  digest for each architecture
+- rejection coverage for a malformed child manifest digest
 - verifier output generation for version, platforms, and immutable image
   reference
-- PyYAML parsing of all three changed workflow files
+- PyYAML parsing of all four workflow files
 - `bash -n` for every embedded workflow run block
 - `git diff --check`
 
+## First GitHub Actions release attempt
+
+Merge commit
+`46c97f65a6e1755c4fa71bd92757931876418bda` triggered
+[run 32911966721](https://github.com/taoziyoyo2566/reality-ops/actions/runs/32911966721)
+on 2026-08-26 JST. Both matrix jobs validated inputs, logged in, built, and
+pushed successfully, then failed in `Verify pushed multi-platform image`:
+
+```text
+docker: cannot overwrite digest sha256:...
+Process completed with exit code 125.
+```
+
+The original verifier ran the amd64 and arm64 variants through the same
+top-level index digest. Docker resolved the first platform into its local image
+store, then refused to overwrite that digest with the other platform. The
+local mock had returned versions without modeling this Docker image-store
+collision, so its prior success was insufficient integration evidence.
+
+Published target digests from the failed run:
+
+| Channel | Version | Top-level digest |
+|---|---|---|
+| stable | `v26.3.27` | `sha256:168290fdc51724f35b60f2b60d4b043816145bf7ac572af538d79897b3cf7a7d` |
+| prerelease | `v26.7.28` | `sha256:f4220a4d33e935574cb1f892677885805acc35d84b596d2b23177b0507c7f095` |
+
+The remediated verifier was then exercised read-only against those real
+top-level manifests. Its runtime command was stubbed because the local user
+cannot access the Docker daemon; manifest retrieval, parsing, platform
+selection, digest validation, and child-reference construction used the real
+Docker Hub data:
+
+| Channel | Platform | Selected child manifest digest |
+|---|---|---|
+| stable | `linux/amd64` | `sha256:190a55263202695497973921aa976a8f3e9530eca1dfb4dedfa88d0bfb55a740` |
+| stable | `linux/arm64` | `sha256:1cb0b3b7a7308fdf8491af09e3e1d1a0e4488ba7e3598a11f31c39b3a4f225e1` |
+| prerelease | `linux/amd64` | `sha256:e1a8ef19972e0af994612058804b775baba2edfdf4d1c822b8a8114be1f58ebd` |
+| prerelease | `linux/arm64` | `sha256:3c0760b6559532f1e6d8adf0520493db185dd9ffb1d424bb5d7c07600871f71c` |
+
+This confirms that the corrected path no longer passes the same top-level
+digest to both platform runs. It is not evidence that either container binary
+actually ran; that remains a GitHub Actions gate.
+
+The version tags and their `build-46c97f65...` tags exist. Target
+verification failed before rollback verification or alias promotion, so the
+old `latest` remained unchanged and neither `stable` nor `prerelease` was
+created.
+
 ## Current registry state
 
-The read-only Docker Hub query returned five existing tags: `latest` and four
-full Git commit hashes. It returned no human-readable Xray version, `stable`,
-or `prerelease` tag. The current `latest` top-level digest is
+Read-only Docker Hub inspection after the failed run found `v26.3.27`,
+`v26.7.28`, and both `build-46c97f65...` tags. Each top-level digest contains
+`linux/amd64` and `linux/arm64`. The existing `latest` remains at
 `sha256:433d7302cddb336cb3b4d06f543798a850991a662cd136b5a6b7fa43274599a3`.
-Both the Docker Hub tag API and `docker buildx imagetools inspect --raw`
-reported active `linux/amd64` and `linux/arm64` manifests plus the two expected
-`unknown/unknown` provenance manifests. This establishes the platform shape of
-the rollback candidate, but not its contained Xray version. No alias was
-changed, so automatic promotion is not claimed as executed or effective.
+There is still no `stable` or `prerelease` alias. No deployment reference
+changed.
 
 ## Gaps and next protected actions
 
-- No Docker image was built locally or in GitHub Actions.
-- No newly built stable or prerelease digest exists to verify.
+- Both target images were built and pushed, but contained-version verification
+  did not complete because of the verifier defect described above.
 - The current `latest` rollback manifest and image configuration were inspected
   read-only, but its contained Xray binary could not be executed because this
   user cannot access `/var/run/docker.sock`.
-- No Docker Hub login, push, tag mutation, or stable/latest promotion ran.
+- Version and build tags were written. No stable/latest/prerelease promotion
+  ran.
 - No production or staging deployment reference changed.
 - The existing `latest` digest is the configured rollback candidate, but its
   runtime behavior is still unverified.
-- GitHub CLI authentication is invalid for both configured accounts, so
-  `gh`-based PR and workflow operations are unavailable until the operator
-  reauthenticates. Git push authentication was not tested because no
-  publication action was authorized.
+- GitHub CLI authentication was available for the failure investigation;
+  authenticated job logs confirmed both jobs failed for the same reason.
 - The project guidance names `scripts/check-project-memory.sh` as a freshness
   gate, but that path is absent from the current branch and repository file
   list, so the named check could not run. The required memory update was made
   manually; the missing checker remains a project-governance gap.
 - Git staging, commit, push, PR creation, and merge remain separate actions.
 
-The next gate is a reviewed Git publication and PR so the repository quality
-workflow can run. After review and integration to `ops`, the push-triggered
-multi-platform build can publish and verify the two version digests before
-moving aliases. Git publication, registry writes, and any later deployment each
-require their own authorization and evidence.
+The next gate is a reviewed verifier-fix publication and PR. Its integration to
+`ops` will trigger a new multi-platform build; rerunning the old workflow cannot
+pick up the fix. Actual child-digest runtime verification, rollback
+verification, and alias promotion remain required evidence. Git publication,
+the new registry write, and any later deployment each require their own
+authorization.
 
 Executable operator procedure:
 [`xray-image-release.md`](../../runbooks/xray-image-release.md).
