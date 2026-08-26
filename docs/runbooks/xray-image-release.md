@@ -20,7 +20,9 @@
 | stable | `docker-build/XRAY_VERSION` | `docker-build/XRAY_SHA256SUMS` | `stable`、`latest` |
 | prerelease | `docker-build/XRAY_PRERELEASE_VERSION` | `docker-build/XRAY_PRERELEASE_SHA256SUMS` | `prerelease` |
 
-构建工作流同时发布 `linux/amd64` 和 `linux/arm64`，每个通道生成：
+构建工作流同时发布 `linux/amd64` 和 `linux/arm64`。验证器先从顶层 index
+解析两个平台各自的子 manifest digest，再分别运行子 digest，避免 Docker 本地
+镜像存储把同一个顶层 digest 绑定到两个不同平台。每个通道生成：
 
 - Xray 版本标签，例如 `v26.3.27`；
 - `build-<Git-SHA>-xray-<Xray版本>`；
@@ -140,16 +142,18 @@ curl --fail --silent --show-error --location \
 正式工作流还会把仓库 SHA256 与 GitHub 官方 asset digest 比对。不要为了让构建
 通过而删除这层远端校验。
 
-## 6. 首次发布第一阶段代码
+## 6. 发布代码变更
 
-本节只用于尚未发布的 `feat/xray-modernization`。以后更新版本使用第 10 节。
+第一阶段初始 PR 已经合入 `ops`。不要重复使用已经合并的
+`feat/xray-modernization`；修复或版本升级必须从当前 `origin/ops` 创建新的、
+已评审分支。当前验证器修复分支是 `fix/xray-image-verifier`。
 
 操作摘要：
 
-- **发生什么：** 提交已评审的第一阶段路径，并把
-  `feat/xray-modernization` 推送到 `origin`。
-- **目标：** 仅下列文件和新的远端功能分支，PR base 保持 `ops`。
-- **预期影响：** 可以创建 PR 并运行质量检查；只推送功能分支不会构建镜像。
+- **发生什么：** 提交本次已评审的修复或版本输入，并把当前功能分支推送到
+  `origin`。
+- **目标：** 仅任务明确列出的文件和对应远端功能分支，PR base 保持 `ops`。
+- **预期影响：** 可以创建 PR 并运行质量检查；只推送非 `ops` 分支不会构建镜像。
 - **风险与恢复：** 不使用 force；若路径、身份、分支或 diff 与评审不一致则停止。
 - **不包含：** 不合并、不写 Docker Hub、不部署 VPS、不删除分支。
 
@@ -164,42 +168,38 @@ git config --local --get user.email || true
 git status --short --branch
 ```
 
-分支必须是 `feat/xray-modernization`，仓库本地身份查询必须无输出。只暂存已评审
-路径：
+分支必须是本次已评审分支，仓库本地身份查询必须无输出。以下是当前验证器修复的
+候选路径；执行前以实际 diff 为准，禁止用 `git add .` 或 `git add -A`：
 
 ```bash
 git add -- \
-  .github/workflows/build-image.yml \
-  .github/workflows/promote-xray-stable.yml \
-  .github/workflows/quality.yml \
   docker-build/verify-image.sh \
+  tests/test_xray_image_verify.sh \
   docs/project-memory.md \
   docs/reviews/roadmap-xray-xhttp-ipv6-2026-08-25.md \
   docs/reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md \
-  docs/runbooks/xray-image-release.md \
-  tests/test_xray_image_verify.sh
+  docs/runbooks/xray-image-release.md
 
 git diff --cached --check
 git diff --cached --stat
 git status --short --branch
 ```
 
-完整审阅暂存 diff 后，使用已批准的提交消息和 push：
+完整审阅暂存 diff 后，只使用本次发布评审中批准的 commit 和 push 命令。不得从
+本文复制一个旧提交消息来替代当次评审。
 
 ```bash
 git diff --cached
-git commit -m "P1: gate and document Xray image releases"
-git push --set-upstream origin feat/xray-modernization
 ```
 
 如果认证、hook 或远端状态拒绝操作，停止并重新评审。不要自动 amend、跳过 hook、
 force push、pull、rebase 或用不同命令重试。
 
-## 7. 创建 PR 并触发首次构建
+## 7. 创建 PR 并触发构建
 
-创建 base=`ops`、head=`feat/xray-modernization` 的 PR：
+创建 base=`ops`、head=本次功能分支的 PR。当前验证器修复对应：
 
-`https://github.com/taoziyoyo2566/reality-ops/compare/ops...feat/xray-modernization?expand=1`
+`https://github.com/taoziyoyo2566/reality-ops/compare/ops...fix/xray-image-verifier?expand=1`
 
 合并前确认：
 
@@ -233,8 +233,9 @@ prerelease 两个 matrix job。每个通道必须通过：
 4. stable 还必须通过 `Verify rollback image`；
 5. `Promote verified channel aliases`。
 
-验证器要求镜像恰好包含 `linux/amd64` 和 `linux/arm64`，分别执行
-`/usr/bin/xray -version`，并核对预期版本。
+验证器要求镜像恰好包含 `linux/amd64` 和 `linux/arm64`，从顶层 index 取出
+每个平台的子 manifest digest，分别执行 `/usr/bin/xray -version`，并核对预期
+版本。不得对两个平台重复运行同一个顶层 digest。
 
 不能把 push step 成功当成发布成功。如果验证失败，版本/build 标签可能已经推送，
 但对应浮动标签不应移动。
@@ -364,6 +365,7 @@ docker buildx imagetools create \
 | release digest 不一致 | 仓库校验和过期或错误；重新读取官方 assets。 |
 | Docker Hub 登录失败 | 检查 Secret 名、Token 期限和 Read & Write 权限；轮换 Token，不打印它。 |
 | 目标验证失败 | 版本/build 标签可能已存在，但浮动标签不应移动；先诊断 manifest/二进制。 |
+| `docker: cannot overwrite digest` | 运行的是重复使用顶层 digest 的旧验证器；合入子 manifest digest 修复后触发新 run，不要重跑旧 run。 |
 | 回滚镜像验证失败 | stable 浮动标签不应移动；先建立已验证回滚镜像。 |
 | 当前 `latest` 不存在 | stable 构建会有意失败；单独评审 bootstrap，不得临时删门禁。 |
 | 定时晋升找不到版本标签 | 先构建该官方版本；晋升工作流从不负责构建。 |

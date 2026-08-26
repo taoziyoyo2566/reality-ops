@@ -101,6 +101,14 @@ Local verification evidence:
 Operator procedure:
 [`xray-image-release.md`](../runbooks/xray-image-release.md).
 
+Execution note, 2026-08-26: the first merged build pushed both version/build
+tag pairs, then both jobs failed because the verifier reused one top-level
+multi-platform digest for sequential amd64 and arm64 runs. Alias promotion was
+skipped and the old `latest` remained unchanged. Remediation on
+`fix/xray-image-verifier` resolves and runs each platform's child manifest
+digest; the phase remains open until a new real workflow run passes target and
+rollback verification and moves the expected aliases.
+
 ## Phase 2 — XHTTP + REALITY
 
 - [ ] Add one validated `tcp|xhttp` node selector; default to `tcp`.

@@ -4,23 +4,21 @@ Last updated: 2026-08-26 JST
 
 ## Current Branch State
 
-- Active branch: `feat/xray-modernization`.
+- Active branch: `fix/xray-image-verifier`.
 - Current committed HEAD verified on 2026-08-26:
-  `dbf34413fa09dda136b140c589360cedf154f2c2` (`P1: establish Xray image
-  release channels`).
+  `46c97f65a6e1755c4fa71bd92757931876418bda` (`Merge pull request #1 from
+  taoziyoyo2566/feat/xray-modernization`).
 - Branch base verified on 2026-08-26:
-  `origin/ops@68ce3e0574d3f30f871060e8e52b06e5b0bf5607`.
+  `origin/ops@46c97f65a6e1755c4fa71bd92757931876418bda`.
 - `git worktree list --porcelain` reports one worktree, the primary workspace
   `/home/saberu/workspace/projects/reality-ops`, checked out on this branch.
   The temporary isolated worktree has been removed.
-- The pre-modernization workspace is preserved locally on
-  `feat/roadmap-2026-08@d9240fca12e680c99b3c9754f6c09e8ed04e7b99`.
-- The current uncommitted phase-1 completion work is limited to the image build
-  and promotion workflows, the repository quality workflow, the image verifier
-  and its focused tests, the roadmap, image-release runbook, evidence, and this
-  memory update.
-- No upstream is configured for `feat/xray-modernization`; no staging, commit,
-  push, PR, or integration was performed for these completion changes.
+- Pull request #1 merged the initial phase-1 image-release implementation into
+  `ops`. The current branch tracks `origin/ops` and contains an uncommitted,
+  focused remediation for the pushed-image verifier plus its tests, roadmap,
+  runbook, evidence, and this memory update.
+- No staging, commit, push, pull request, workflow rerun, registry write, or
+  deployment was performed for the current remediation.
 
 Before publishing or considering the phase closed, run:
 
@@ -28,8 +26,8 @@ Before publishing or considering the phase closed, run:
 git status --short --branch
 ```
 
-Review the complete diff against `origin/ops`; do not infer that uncommitted
-phase work is published or integrated.
+Review the complete diff against `origin/ops`; do not infer that the verifier
+remediation is published, integrated, or active in GitHub Actions.
 
 ## Xray Image Release State
 
@@ -45,29 +43,45 @@ Last verified: 2026-08-26 JST.
 - The Dockerfile base pin matches Docker Hub's current top-level digest for
   `alpine:3.24`:
   `sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b`.
-- Docker Hub repository `taoziyoyo2566/xray_docker` still has only `latest`
-  and four Git-SHA tags. No `v26.3.27`, `v26.7.28`, `stable`, or `prerelease`
-  tag has been published.
-- The existing `latest` digest is
+- GitHub Actions run
+  [`32911966721`](https://github.com/taoziyoyo2566/reality-ops/actions/runs/32911966721)
+  built and pushed both candidates before both jobs failed in
+  `Verify pushed multi-platform image` with
+  `docker: cannot overwrite digest sha256:...`.
+- Docker Hub now has candidate tags for both channels, resolving to these
+  immutable top-level digests:
+  - `v26.3.27` and
+    `build-46c97f65a6e1755c4fa71bd92757931876418bda-xray-v26.3.27` resolve to
+    `sha256:168290fdc51724f35b60f2b60d4b043816145bf7ac572af538d79897b3cf7a7d`;
+  - `v26.7.28` and
+    `build-46c97f65a6e1755c4fa71bd92757931876418bda-xray-v26.7.28` resolve to
+    `sha256:f4220a4d33e935574cb1f892677885805acc35d84b596d2b23177b0507c7f095`.
+- Neither `stable` nor `prerelease` was promoted. The existing `latest` tag
+  remains unchanged at
   `sha256:433d7302cddb336cb3b4d06f543798a850991a662cd136b5a6b7fa43274599a3`.
   Read-only Docker Hub and Buildx inspection reported `linux/amd64` and
   `linux/arm64` plus two `unknown/unknown` provenance manifests.
-- The build and scheduled-promotion workflows now require digest-pinned target
+- The build and scheduled-promotion workflows require digest-pinned target
   runtime verification before moving aliases. Stable updates also require the
   current `latest` digest to pass as a rollback candidate. Both workflows use
   the shared `xray-image-alias-update` concurrency group.
-- Local input validation, verifier positive/negative behavior, GitHub output
-  generation, workflow YAML parsing, embedded shell syntax, and
-  `git diff --check` passed.
-- Actual stable/prerelease builds, new digest/runtime inspection, registry
-  publication, alias promotion, and deployment selection remain gaps. The
-  current rollback binary was not executed because this user cannot access the
-  Docker socket. GitHub CLI authentication is invalid for both configured
-  accounts, so `gh`-based PR/workflow actions are unavailable; Git push
-  authentication was not tested. The guidance-required
-  `scripts/check-project-memory.sh` is absent from the current repository and
-  could not run; this memory was updated manually. No registry, node, DNS,
-  Gist, or deployment write ran in this task.
+- Root cause: the verifier reused the top-level multi-platform index digest for
+  sequential `linux/amd64` and `linux/arm64` runs. Docker's local image store
+  retained the first platform under that digest and refused to overwrite it
+  with the second platform. The remediation resolves and validates each child
+  manifest digest from the index, then runs each platform by its own immutable
+  digest.
+- Focused verifier tests now reproduce the old local-store collision, assert
+  exact per-platform child references, and reject malformed child digests.
+  Shell syntax checks, the focused test suite, and `git diff --check` passed
+  locally.
+- A fresh GitHub Actions run with the remediation, real amd64/arm64 runtime
+  checks, alias promotion, and deployment selection remain gaps. This user
+  still cannot access the local Docker socket, so a real local container test
+  cannot run. GitHub CLI authentication is valid for read-only investigation;
+  publication and workflow reruns were not authorized. The guidance-required
+  `scripts/check-project-memory.sh` is absent from the repository, so this
+  memory was updated manually.
 
 Detailed evidence:
 [`docs/reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md`](reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md).
