@@ -56,8 +56,7 @@ Last verified: 2026-08-27 JST.
 - The separate legacy `taoziyoyo2566/dockerhub-test:test` image still exists;
   it has no remaining workflow owner and is a separately reviewed cleanup
   target.
-- That hardening remains local until Git publication, CI, a separately approved
-  first manual sync, and Docker Hub verification complete. Merge itself does
+- The lifecycle hardening was merged to `ops` in `b942b61` (PR #4). Merge did
   not trigger registry writes; manual and daily scheduled syncs do.
 - Automatic discovery reads the live GitHub Releases API and Docker Hub tags
   API on every run; no checked-in file pins the current upstream version. The
@@ -71,16 +70,19 @@ Last verified: 2026-08-27 JST.
   later run only retries missing tags. There is currently no repository-owned
   external paging integration; GitHub Actions run state and notification
   settings are the operational alert path.
-- A read-only Docker Hub audit on 2026-08-27 JST confirmed `latest` and
-  `v26.3.27` at
+- The first manual dynamic sync
+  (`https://github.com/taoziyoyo2566/reality-ops/actions/runs/32986819040`)
+  completed successfully on 2026-08-27 JST and published all eleven required
+  beta tags from `v26.4.13-beta` through `v26.7.28-beta`. A subsequent live
+  audit found no missing required tags. `latest` and `v26.3.27` remain at
   `sha256:a5c6e5de23ce9b5f9d1ccbe5562b82557968ec1b3696c31b9d4ea352cfe73098`;
   old `v26.7.28` and `prerelease` at
-  `sha256:53cb9d8730738744a2dbe8c73502e5cd1d8667b14012fbd38a4a38e13495c3f8`;
-  and every required `-beta` tag missing. The official dry-run window contains
-  `v26.3.27` plus eleven prereleases from `v26.4.13` through `v26.7.28`; the
-  first sync therefore plans eleven multi-platform builds. Old aliases and SHA
-  tags require separately reviewed cleanup; this working-tree change has not
-  mutated Docker Hub.
+  `sha256:53cb9d8730738744a2dbe8c73502e5cd1d8667b14012fbd38a4a38e13495c3f8`.
+- A manual audit run overlapped that sync and observed a transient final
+  missing tag while publication was still running. The follow-up change makes
+  synchronization and audit share one concurrency group, warns on known
+  legacy-tag debt, and fails only for missing required tags. Old aliases and
+  SHA tags still require separately reviewed cleanup.
 - The current deployment default remains
   `taoziyoyo2566/xray_docker:latest`; no deployment reference changed and no
   VPS rollout ran. Release evidence and runtime verification use immutable
