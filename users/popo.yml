@@ -1,0 +1,17 @@
+{
+  "name": "popo",
+  "uuid": "cb0c8009-fa05-41d7-91fd-2ff8a06f3347",
+  "port": 38723,
+  "short_id": "665962492061e41e",
+  "private_key": "2KuEoUw_I1gkKiVgr08GfCP-FFvhKtmJrZ3BUr6pGEk",
+  "public_key": "dJaBBuzIxwVqEX3UhaTKP4LZ57z2uwnCkvMIrIIEtF4",
+  "groups": [
+    "free"
+  ],
+  "hosts": [
+    "jp05",
+    "jp10",
+    "kagoya"
+  ],
+  "deny_hosts": []
+}
