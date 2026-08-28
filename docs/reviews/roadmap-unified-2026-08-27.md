@@ -201,7 +201,7 @@ Docker 29.7.1，构建平台 `linux/amd64`。
 | 影响 | multi 模式下 Xray 的用户维度统计是**配了但没接**。`todo.md` 第 3 项的"流量统计"在 multi 下走的是另一条链路 |
 | 归属 | P3 |
 
-### D10 — `audit.yml` 只对 single 模式有效
+### D10 — `audit.yml` 只对 single 模式有效（2026-08-29 补充：判断偏轻，另见 D14/D15）
 
 | 项 | 内容 |
 |---|---|
@@ -209,6 +209,8 @@ Docker 29.7.1，构建平台 `linux/amd64`。
 | | `[代码]` multi 模式日志在 `{{ reality_logs_dir }}/{{ item.name }}/`（`docker-compose.yml.j2:21`） |
 | 影响 | 在 multi 节点上 audit 静默返回空（`audit.yml` 内有 `if [ -f "$LOG_FILE" ]` 保护，不报错） |
 | 归属 | P0 |
+| 补充 | `[实测]` 2026-08-29：本条只说 multi 失效，但同一个 task 还有两个更重的问题 —— 取值取到了 outbound tag（**single 也从未有效**，见 D14）与采样窗口按行数取（见 D15）。三条一并修复 |
+| 状态 | **已修（2026-08-29）**：日志路径改为 `{{ reality_logs_dir }}/*/access.log` 通配，single 的 `reality_core/` 与 multi 的每实例目录一并覆盖，不再按模式分支 |
 
 ### D11 — 线上配置含仓库中已不存在的变量产物（2026-08-29 改判：不成立）
 
@@ -255,6 +257,33 @@ Docker 29.7.1，构建平台 `linux/amd64`。
 | 影响 | 任何人可从公开仓库取得全部用户私钥。轮换需同时更新客户端订阅，成本高 |
 | 决定 | **操作者 2026-08-29 决定：记录待后续处理**，本轮不修复 |
 | 归属 | 待定级。与 P3/P5 的用户体系改造相关，需单独规划 |
+
+### D14 — `audit.yml` 把 outbound tag 当成了用户名（所有模式都失效）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | 全网审计报告产出的"用户"是 `direct]`，不是任何真实用户 |
+| 证据 | `[代码]` `audit.yml:14` — `awk '{print $9, $4}'` |
+| | `[实测]` 2026-08-29 本机 `spt` 真实 `access.log` 字段骨架：`NF=11`，`$3=from` `$4=IP:PORT` `$7=[user-xxx` `$8=>>` `$9=outbound]` `$10=email:` `$11=user.host` —— **`$9` 是 outbound tag** |
+| | `[实测]` 用原管线跑真实日志最近 2000 行，输出为单行 `2 direct] <IP>` |
+| 根因 | 写死列号。行内 inbound tag（`roles/reality_single/templates/config.json.j2:112` 的 `user-<name>`）存在与否会让整行移位，列号随之漂移 |
+| 影响 | D10 只说 multi 静默返回空；实际上 **single 节点也从未产出过有效审计数据**。该报告自始至终没统计过用户 |
+| 修法 | 遍历字段、锚定 `from` / `email:` 记号取其后一个值，不依赖列号 |
+| 状态 | **已修（2026-08-29）**。`[实测]` 修正后跑同一份真实日志：8 个真实用户 / 22 个去重 IP |
+| 归属 | P0（随 D10 一并修复） |
+
+### D15 — `audit.yml` 的采样窗口按行数取，跨节点不可比
+
+| 项 | 内容 |
+|---|---|
+| 现象 | `tail -n 2000` 在不同流量的节点上覆盖的时间长度差几个数量级，汇总出的"全网"没有统一口径 |
+| 证据 | `[实测]` 2026-08-29 本机 `spt`：最近 2000 行实际只覆盖 **26 分钟**（`02:26:32` → `02:52:08`） |
+| | `[实测]` 该节点日均 41,718 行；按此折算 2000 行 ≈ 1.2 小时，闲节点则可能回溯数周 |
+| 影响 | 报告口径不确定：忙节点只看到最近半小时，闲节点把几周前的 IP 当作当前活动 |
+| 修法 | 改为按日期取窗口（`audit_since_days`，默认 1），行数（`audit_max_lines`，默认 500000）只作 I/O 上限 |
+| 备注 | `tail -n N` 从文件尾反向读，与文件总大小无关 —— `[实测]` 在 675MB 日志上取 50 万行耗时 **0.26 秒** |
+| 状态 | **已修（2026-08-29）** |
+| 归属 | P0（随 D10 一并修复） |
 
 ---
 
@@ -428,7 +457,7 @@ P2 计划补 index 级 `annotations`，但存在一个**未验证的前提**：
 | 任务 | 依据 | 验收 |
 |---|---|---|
 | ~~删除两个模板的 `connLimit` 与 `group_vars/all/main.yml:19-20`~~ **已完成 2026-08-29** | D3 | ✅ 渲染回归通过：两模板渲染为合法 JSON，`policy.levels.0` 无 `connLimit`，其余字段无回归 |
-| `audit.yml:10` 支持 multi 模式日志路径 | D10 | 两种模式都能取到日志 |
+| ~~`audit.yml:10` 支持 multi 模式日志路径~~ **已完成 2026-08-29**（连带修 D14 取错字段、D15 采样窗口） | D10 / D14 / D15 | ✅ 两种模式的 fixture 都能取到日志；真实生产日志产出 8 用户 / 22 IP（原为 1 条 `direct]`） |
 
 **授权边界**：仅工作树编辑。提交 / 推送 / PR 需单独授权。
 
@@ -702,3 +731,4 @@ for t in d['results']: print(f\"  {t['name']:<24} {t['last_updated']}\")"
 | 2026-08-29 | P2-a 已执行：本仓库两条镜像 workflow 手工停用（记录见 P2-a），§1.5 双发布者表相应更正。§3.5 更正：在途 patch 改为随 `300b098` 提交而非丢弃，并同步 `tests/test_xray_image_workflow.sh:11` 的断言，使主干在 P2-b 之前保持绿。交接内容改由 `feat/image-handoff` 合入 —— 原 `fix/xray-image-lifecycle` 名称与内容不符，且与 xray-docker 继承的历史重名 |
 | 2026-08-29 | **D11 改判为不成立**：`socks5_egress` 定义在 `group_vars/all/socks5.yml:6`，原判只 grep 了 `host_vars/`，配置可从仓库复现，P1 部署阻塞撤销。顺此发现并新增 **D12**（SOCKS5 凭据被写入每一台 single 节点 —— outbound 不做主机门控，routing 规则做）与 **D13**（32/32 个已跟踪 `users/*.yml` 含明文 `private_key`，仓库为 public；操作者决定记录待后续处理）。G1 补入本机 `spt` 快照（1/18 → 2/18），并更正「从本机无法采集其余节点」—— 当前执行环境就是可用控制端 |
 | 2026-08-29 | **P0 第 1 项已修**：删除 `roles/reality_single/templates/config.json.j2` 与 `roles/reality_multi/templates/config.json.j2` 的 `connLimit`（multi 侧同时去掉 `bufferSize` 的尾逗号）以及 `group_vars/all/main.yml` 的 `reality_conn_limit_single` / `reality_conn_limit_multi`。验收用 Jinja2 桩上下文渲染两个模板并 `json.loads`，确认合法 JSON、`connLimit` 消失、其余 policy 字段无回归 |
+| 2026-08-29 | **P0 第 2 项已修**：重写 `audit.yml` 的采集与汇总。日志路径改通配覆盖 single/multi（D10）；取值改为锚定 `from` / `email:` 记号，修正原先把 outbound tag 当用户名的错误（**新增 D14**，该缺陷令 single 节点也从未产出有效审计）；采样窗口由 `tail -n 2000` 改为按日期取（**新增 D15**，原窗口在本机实测仅覆盖 26 分钟）；用户名归一为首个 `.` 之前，与 `agent.py.j2:288` 对齐，使跨节点合并真正生效；报告表头移到 `sort -nr` 之后；汇总临时文件收紧为 `0600` |
