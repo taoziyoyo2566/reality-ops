@@ -1,5 +1,12 @@
 # Xray Modernization Roadmap
 
+> **SUPERSEDED 2026-08-27.** This roadmap covered delivery-layer work only and
+> did not intersect the config-layer plan in `todo.md`. Both were merged into
+> [`roadmap-unified-2026-08-27.md`](roadmap-unified-2026-08-27.md), which is now
+> the single planning source. Phases 1–4 below are carried forward there as
+> P2 and P4; unchecked Phase 1 items are tracked in its P2. Retained for the
+> branch contract and historical decisions.
+
 Last reviewed: 2026-08-26 JST
 
 ## Branch contract

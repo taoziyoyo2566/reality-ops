@@ -140,9 +140,11 @@ Reality Ops 是一套基于 Ansible 的 Reality (Xray) 节点编排项目，包�
 
 ## 当前策略说明
 - 镜像策略保持 `latest`：完整部署会执行镜像拉取；也可以单独执行 `--tags update_image` 强制刷新镜像。
-- `taoziyoyo2566/xray_docker` 自动同步 Xray 官方最新 stable 及其后全部 prerelease，
-  支持 Intel/AMD 64 位 x86（`linux/amd64`）和 64 位 ARM（`linux/arm64`）；镜像标签、
-  拉取方式和不可变发布规则见 [`docker-build/README.md`](docker-build/README.md)。
+- 镜像由独立项目 [`taoziyoyo2566/xray-docker`](https://github.com/taoziyoyo2566/xray-docker)
+  构建发布，自动同步 Xray 官方最新 stable 及其后全部 prerelease，支持 Intel/AMD 64 位
+  x86（`linux/amd64`）和 64 位 ARM（`linux/arm64`）。tag 语义：`latest` 会移动，
+  `vX.Y.Z` 会因镜像定义变更而重建改指，需要内容绝对不变请 pin digest。
+  本仓库只是该镜像的消费者，不再负责其构建与发布。
 - SSH Host Key 校验已开启（`host_key_checking=True`），并通过 `StrictHostKeyChecking=accept-new` 保留首次接入体验。
 - 监控 Python 依赖固定在仓库根目录 `requirements.txt`，部署时会下发并按该文件安装。
 

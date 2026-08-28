@@ -109,7 +109,7 @@ sudo docker run -d \
   --tmpfs /run \
   --cap-drop ALL \
   --security-opt no-new-privileges:true \
-  taoziyoyo2566/xray_docker:latest
+  taoziyoyo2566/xray-docker:latest
 ```
 
 这里采用 `--network bridge`，所以 Xray 容器内配置使用 `"listen": "0.0.0.0"`；安全边界由 Docker 端口发布控制：
