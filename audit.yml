@@ -2,17 +2,36 @@
 # 第一步：去所有节点抓取日志
 - hosts: reality_nodes
   gather_facts: yes
+  vars:
+    # 只统计日期 >= (今天 - audit_since_days) 的行。1 = 昨天与今天。
+    # 按时间取窗口而非按行数：同样 2000 行在忙节点是几十分钟、在闲节点是几周，
+    # 跨节点不可比，汇总出来的"全网"也就没有意义。
+    audit_since_days: 1
+    # 仅作 I/O 上限，防止在超大日志上无谓读取。tail 从文件尾反向读，与文件总大小无关。
+    audit_max_lines: 500000
   tasks:
     - name: 提取最近的访问日志 (User + IP)
       become: yes
       shell: |
-        # 统一使用 /opt/reality 路径
-        LOG_FILE="{{ reality_logs_dir }}/reality_core/access.log"
+        # single 模式日志在 <logs>/reality_core/，multi 模式在 <logs>/<实例名>/，
+        # 用通配一并覆盖，无需按 reality_mode 分支。
+        CUTOFF=$(date -d '{{ audit_since_days }} days ago' +%Y/%m/%d)
 
-        # 如果找到了，提取 用户名 和 IP
-        if [ -f "$LOG_FILE" ]; then
-            tail -n 2000 "$LOG_FILE" | grep "email:" | awk '{print $9, $4}'
-        fi
+        for LOG_FILE in "{{ reality_logs_dir }}"/*/access.log; do
+            [ -f "$LOG_FILE" ] || continue
+            tail -n {{ audit_max_lines }} "$LOG_FILE" | grep "email:" | awk -v cutoff="$CUTOFF" '
+                # 锚定 from / email: 记号取值，不用固定列号：
+                # 行内 inbound tag 存在与否会整体移位，写死列号会取到 outbound tag。
+                $1 < cutoff { next }
+                {
+                    ip = ""; user = "";
+                    for (i = 1; i < NF; i++) {
+                        if ($i == "from")   ip   = $(i + 1);
+                        if ($i == "email:") user = $(i + 1);
+                    }
+                    if (ip != "" && user != "") print user, ip;
+                }'
+        done
       register: log_output
       changed_when: false
       # 忽略错误，防止某台机器日志不存在导致整体中断
@@ -31,15 +50,21 @@
           {% endif %}
           {% endfor %}
         dest: "/tmp/global_reality_logs.txt"
+        mode: '0600'
 
     - name: 生成全网审计报告
       shell: |
         cat /tmp/global_reality_logs.txt \
         | awk '{
-            # 1. 清洗数据：去掉后缀、去掉tcp前缀、去掉端口号
-            sub(/@.*/, "", $1);
+            # 1. 清洗数据
+            #    用户名：single 为 <用户>.<主机>，multi 为 <用户>.<主机>@<域名>；
+            #    截到第一个 . 之前，才能让同一用户在不同节点上的记录合并。
+            #    这与 roles/monitor/templates/agent.py.j2 的归一规则一致。
+            sub(/[.@].*/, "", $1);
+            #    IP：去掉端口，去掉 IPv6 的方括号
             sub(/^tcp:/, "", $2);
             sub(/:[0-9]*$/, "", $2);
+            gsub(/[][]/, "", $2);
             print $1, $2
           }' \
         | sort | uniq \
@@ -49,16 +74,19 @@
             if(ips[$1]==""){ips[$1]=$2}else{ips[$1]=ips[$1]", "$2}
           }
           END {
-            # 3. 格式化输出
-            print "------------------------------------------------------------"
-            printf "%-5s %-15s : %s\n", "IP数", "用户", "IP列表 (全网去重)"
-            print "------------------------------------------------------------"
             for(u in count) {
                 printf "%-5s %-15s : %s\n", count[u], u, ips[u]
             }
           }' \
-        | sort -nr
+        | sort -nr \
+        | awk 'BEGIN {
+            # 3. 表头必须在排序之后加，否则会被 sort -nr 排到报告最底下
+            print "------------------------------------------------------------"
+            printf "%-5s %-15s : %s\n", "IP数", "用户", "IP列表 (全网去重)"
+            print "------------------------------------------------------------"
+          } { print }'
       register: audit_report
+      changed_when: false
 
     - name: 显示结果
       debug:
