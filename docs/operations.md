@@ -373,14 +373,137 @@ GET /subs/logs?limit=200
 
 ## 11. 订阅分发（Gist）
 
-数据源是控制端本地 `/opt/reality/users/*.json`，部署时由 `post_tasks` 自动调用 `generate_subs_gist.py`（自动注入环境变量，无需手工 export）。
+数据源是控制端本地 `/opt/reality/users/*.json`，部署时由 `post_tasks` 自动调用 `generate_subs_gist.py`。凭据由 Ansible Vault 注入，日常操作不要手工 `export GITHUB_TOKEN=...`，也不要把 token 写进命令行、`.env`、代码、agent 权限配置或运维记录。
 
-手工执行（一般不需要）：
+### 11.1 凭据边界
+
+| Vault 变量 | 用途 | 是否为 GitHub 凭据 |
+|---|---|---|
+| `vault_github_token` | 调用 GitHub API 更新 Gist | 是 |
+| `vault_monitor_gist_user` | Gist 所有者账号 | 否（标识符） |
+| `vault_monitor_gist_id` | 目标 Gist ID | 否（标识符） |
+| `vault_monitor_subs_token` | 订阅代理 URL 的访问控制 | 否（但仍是必须保密的业务 token） |
+
+GitHub 支持 classic PAT（常见前缀 `ghp_`）和 fine-grained PAT（常见前缀 `github_pat_`）。本项目只需以 Gist 所有者身份调用 `PATCH /gists/{gist_id}`，优先使用权限更小、可设过期时间的 fine-grained PAT。
+
+### 11.2 创建 fine-grained PAT（GitHub 网页）
+
+1. 使用 `vault_monitor_gist_user` 对应的账号登录 GitHub。
+2. 打开 [Settings → Developer settings → Personal access tokens → Fine-grained tokens](https://github.com/settings/personal-access-tokens/new)。
+3. `Token name` 填写可识别用途的名称，例如 `reality-ops-gist`。
+4. `Expiration` 设置明确的有效期，并在过期前轮换。
+5. `Resource owner` 必须选择 `vault_monitor_gist_user` 对应的账号。
+6. `Repository access` 保留公共仓库只读的默认范围；Gist 是账号级资源，不需要 `All repositories`。
+7. `Account permissions` 只设置 `Gists: Read and write`，不授予 `Contents`、`Administration`、`Workflows` 等无关权限。
+8. 点击 `Generate token`，只将新 token 写入 Vault，不要粘贴到 issue、PR、Gist、聊天或 shell 历史。
+
+GitHub 当前的 `Update a gist` 接口对 fine-grained PAT 的最小要求是账号级 `Gists` 写权限，见 [GitHub REST API 文档](https://docs.github.com/en/rest/gists/gists#update-a-gist)。
+
+### 11.3 写入或轮换 Vault 中的 GitHub PAT
+
+使用仓库相对的 Python module 调用，避免依赖可能包含旧绝对路径 shebang 的 venv console script：
+
 ```bash
-GITHUB_TOKEN=... GIST_ID=... GITHUB_USER=... \
-SUBS_BASE_URL=https://subs.example.com SUBS_TOKEN=... \
-python3 generate_subs_gist.py
+ANSIBLE_LOCAL_TEMP=/tmp/reality-ops-ansible-local \
+EDITOR=vim \
+monitor_venv/bin/python -m ansible vault edit \
+  group_vars/all/vault.yml \
+  --vault-password-file ~/.vault_pass
 ```
+
+只替换 `vault_github_token`，不要同时改动 Gist ID、所有者或其他监控凭据：
+
+```yaml
+vault_github_token: "github_pat_<redacted>"
+```
+
+`~/.vault_pass` 是控制端用户的仓库外密码文件，不应改成仓库内硬编码绝对路径或纳入 Git。保存后确认 Vault 仍为密文：
+
+```bash
+head -n 1 group_vars/all/vault.yml
+# 预期：$ANSIBLE_VAULT;1.1;AES256
+```
+
+若看到 YAML 明文，立即停止，不得 commit 或 push。
+
+### 11.4 只读验证 PAT
+
+先验证新 token 能否通过 GitHub 认证；下列命令只在进程管道中解密，不打印 token：
+
+```bash
+ANSIBLE_LOCAL_TEMP=/tmp/reality-ops-ansible-local \
+monitor_venv/bin/python -m ansible vault view \
+  group_vars/all/vault.yml \
+  --vault-password-file ~/.vault_pass |
+monitor_venv/bin/python -c '
+import sys
+import yaml
+import requests
+
+vault = yaml.safe_load(sys.stdin)
+response = requests.get(
+    "https://api.github.com/user",
+    headers={
+        "Authorization": "Bearer " + vault["vault_github_token"],
+        "Accept": "application/vnd.github+json",
+    },
+    timeout=20,
+)
+print("GitHub authentication: HTTP", response.status_code)
+'
+```
+
+- `HTTP 200`：认证有效，可继续发布。
+- `HTTP 401`：token 无效、已过期/撤销或 Vault 中的值未正确保存。
+- `HTTP 403`：查权限/账号策略与 GitHub 短期认证限制，不要快速连续重试。
+
+`HTTP 200` 只证明 token 本身有效；Gist 写权限由创建页面的 `Gists: Read and write` 和后续实际发布共同验证。
+
+### 11.5 受控发布与验收
+
+Gist 任务会聚合控制端 `/opt/reality/users/*.json` 的**全部**缓存，不是只发布本次部署的节点。发布前先确认文件数量、时间与应有用户/节点符合预期；旧缓存会继续污染订阅。
+
+发布动作边界：
+
+- 目标：`vault_monitor_gist_id` 对应的整个 Gist。
+- 效果：使用全部本地缓存更新 Gist 文件，产生新 Gist revision。
+- 排除：使用本地 `spt` 限定时不部署其他节点或容器。
+- 风险/恢复：本地缓存错误会发布错误订阅；可从 Gist revision history 核对上一版，修正缓存后重新发布。
+
+确认范围后执行一次：
+
+```bash
+./ansible-playbook deploy spt --tags gist
+```
+
+`spt` 是本地控制端/默认 `monitor.server_host`，此限定避免为单独更新 Gist 再连接其他节点。成功必须看到：
+
+```text
+✅ Gist 更新成功
+```
+
+不能只根据 `PLAY RECAP failed=0` 判定成功：当前 `generate_subs_gist.py` 会捕获 GitHub 请求异常并返回 `False`，但未让进程以非零状态退出。同时，当前脚本会在终端输出完整订阅 URL（含 `vault_monitor_subs_token`），只能在私密终端运行，不得粘贴原始输出或上传日志。
+
+可读取 Gist 元数据确认更新时间（`<gist_id>` 替换为配置值）：
+
+```bash
+gh api gists/<gist_id> --jq '{updated_at, file_count: (.files | keys | length)}'
+```
+
+### 11.6 泄露、失效与轮换
+
+GitHub secret-scanning 中的 `publicly leaked` 表示凭据曾出现在可公开扫描的仓库、Gist、issue、PR 或其他 GitHub 内容中；`inactive` 只表示该凭据已不可用。历史告警中的 secret 不一定与当前 `vault_github_token` 是同一个，必须根据 alert location、token 所有者和当前认证结果分别处理。
+
+发现 GitHub PAT 泄露或 `401` 时：
+
+1. 停止使用旧 token，不再输出或复制其值。
+2. 在 GitHub token 设置中撤销旧 token，检查 Security log 中是否有异常使用。
+3. 按 §11.2 使用最小权限创建新 token，按 §11.3 只替换 `vault_github_token`。
+4. 按 §11.4 只读验证，再按 §11.5 发布并验收。
+5. 删除工作区、历史记录、issue/PR/Gist、终端日志和 agent 本地配置中的明文副本；已撤销 token 不会因为删除文本而恢复。
+6. secret-scanning alert 核对完成后按实际状态标记 `Revoked`；只在合规要求必须清除 Git 历史原文时，再单独评审 history rewrite 和 force-push 的影响。
+
+`vault_monitor_subs_token` 泄露不会造成 GitHub API `401`，但会让未授权用户访问订阅代理。它泄露时必须单独轮换，同步更新 monitor server 和客户端订阅 URL，不得把它当作 GitHub PAT 处理。
 
 ---
 
@@ -406,12 +529,12 @@ tail -n 300 /opt/reality/logs/reality_core/access.log
 | 节点上没有某用户容器 | ACL：用户 `groups/hosts/deny_hosts`、inventory 分组、`acl_matrix` |
 | 改了用户但没生效 | 是否重新部署了该节点（`deploy <节点> --tags users`） |
 | 封禁没生效 | `deny_hosts` 拼对节点名 + 是否重新部署该节点（见 §4.1 实测） |
-| 部署 `failed=0` 但订阅没变 | 查 `/opt/reality/users/<用户>_<节点>.json` 的 mtime 是不是今天；`failed_when:false` 会把任务报错吞成 `ok`，RECAP 不可信。修复后只刷订阅：`./ansible-playbook deploy <节点> --tags local_file,gist -K`（见 §5） |
+| 部署 `failed=0` 但订阅没变 | 查 `/opt/reality/users/<用户>_<节点>.json` 的 mtime 是不是今天；当前 `generate_subs_gist.py` 捕获 GitHub 异常后未以非零状态退出，RECAP 不能证明 Gist 成功。查输出是否有 `Gist 更新成功`；修复后只刷订阅：`./ansible-playbook deploy <节点> --tags local_file,gist -K`（见 §5、§11） |
 | `--tags users` 报 `rsync` 缺失 | 先跑完整部署，或在目标机装 `rsync` |
 | `--tags users` 不想触发监控/Gist | 追加 `--skip-tags monitor,gist` |
 | 本地临时目录不可写（`~/.ansible/tmp`） | 见下方环境变量改用 `/tmp` |
 | 用户在 `list` 里看不到 | 用户文件是否合法 JSON（`["spt"]` 而非裸词 `[spt]`） |
-| 订阅未更新 | `vault_github_token` 与 Gist 参数是否配置；是否被 `--skip-tags gist` 跳过 |
+| 订阅未更新 | 按 §11.4 验证 `vault_github_token` 是否返回 `HTTP 200`；检查 Gist 所有者/ID 与 `Gists: Read and write` 权限；确认未被 `--skip-tags gist` 跳过 |
 | reset 找不到下线节点（如 `sky`） | 别用 `--limit sky`，改 `--limit spt -e "reset_subs_only=true reset_target_hosts=sky reset_confirm=YES"` |
 | 监控页 401 | CF 是否配成 **Request Header** Transform Rule（不是 Response Header）；secret 与 vault `tunnel_secret` 是否一致；运维 IP 是否在 `ip_allowlist`；临时用 Bearer |
 
