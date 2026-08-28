@@ -98,7 +98,11 @@ if ! jq -e '.results | type == "array"' <<< "${tags_json}" >/dev/null; then
 fi
 
 registry_names="$(jq -c '[.results[].name]' <<< "${tags_json}")"
-missing_json="$(jq -c --argjson names "${registry_names}" '[.[] | select(.image_tag as $tag | ($names | index($tag) | not))]' <<< "${window_json}")"
+missing_json="$(jq -c --argjson names "${registry_names}" '
+  [.[] | select(.image_tag as $tag | ($names | index($tag) | not))]
+  | sort_by(.published_at)
+  | (map(select(.prerelease)) + map(select(.prerelease | not)))
+' <<< "${window_json}")"
 matrix="$(jq -cn --argjson include "${missing_json}" '{include: $include}')"
 expected_tags="$(jq -c '[.[].image_tag]' <<< "${window_json}")"
 prerelease_versions="$(jq -c '[.[] | select(.prerelease) | .version]' <<< "${window_json}")"

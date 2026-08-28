@@ -1,8 +1,17 @@
 # Project Memory
 
-Last updated: 2026-08-27 JST
+Last updated: 2026-08-28 JST
 
 ## Xray Image Release State
+
+> **2026-08-28: 镜像项目已剥离。** 构建与发布迁往独立仓库
+> [`taoziyoyo2566/xray-docker`](https://github.com/taoziyoyo2566/xray-docker)
+> （本地 `~/workspace/projects/xray-docker`）。本节以下条目描述的发布机制
+> **已不再由本仓库拥有**，保留为历史记录；镜像侧的现状以新仓库为准。
+> 本仓库自此只是消费者，部署默认已改为 `taoziyoyo2566/xray-docker:latest`
+> （`group_vars/all/main.yml:3`），旧仓库 `taoziyoyo2566/xray_docker` 冻结、不再更新。
+> 本仓库侧的剩余去耦动作见
+> [`docs/reviews/roadmap-unified-2026-08-27.md`](reviews/roadmap-unified-2026-08-27.md) P2。
 
 Last verified: 2026-08-27 JST.
 
@@ -83,9 +92,10 @@ Last verified: 2026-08-27 JST.
   synchronization and audit share one concurrency group, warns on known
   legacy-tag debt, and fails only for missing required tags. Old aliases and
   SHA tags still require separately reviewed cleanup.
-- The current deployment default remains
-  `taoziyoyo2566/xray_docker:latest`; no deployment reference changed and no
-  VPS rollout ran. Release evidence and runtime verification use immutable
+- The deployment default was `taoziyoyo2566/xray_docker:latest` at the time of
+  that release work, with no deployment reference changed and no VPS rollout.
+  **Superseded 2026-08-28**: it is now `taoziyoyo2566/xray-docker:latest`; that
+  edit is working-tree only and still unpublished and unrolled. Release evidence and runtime verification use immutable
   digests, but deployment is not yet digest-pinned. Under the new contract it
   follows the sole moving tag `latest`.
 

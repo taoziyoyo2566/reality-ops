@@ -1,3 +1,8 @@
+> **已于 2026-08-27 并入 `docs/reviews/roadmap-unified-2026-08-27.md`（P3 / P4）。**
+> 下列条目保留原文备查，计划以统一 roadmap 为准。
+> 注意：第 3 项"连接数"在 Xray 层无法实现（`policy` 无 `connLimit` 字段，
+> 已实测确认未知字段被静默忽略），统一 roadmap 的 D3 给出了重新定义。
+
 1,基于 geoip/geosite 的分流/广告拦截（需要对应数据文件）
 2,入站 sniffing + 域名路由（配合上面的分流）
 3,policy.levels 按用户等级设置连接数/空闲时间/流量统计
