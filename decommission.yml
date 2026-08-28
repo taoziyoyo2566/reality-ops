@@ -88,7 +88,7 @@
       become: false
       command:
         cmd: >-
-          git grep -n -- {{ dc_target }} -- inventory.ini host_vars users README.md todo.md
+          git grep -n -- {{ dc_target }} -- inventory.ini host_vars users README.md
       check_mode: no
       register: dc_source_refs
       changed_when: false
