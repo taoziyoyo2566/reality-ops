@@ -132,6 +132,8 @@ Docker 29.7.1，构建平台 `linux/amd64`。
 | 可观测替代 | `[实测]` `statsUserOnline` 是合法字段（`Configuration OK`），但它只**统计**在线数（20 秒内活跃），不限制 |
 | 影响 | `todo.md` 第 3 项"按用户等级设置连接数"需要**重新定义**，不能按原文实现 |
 | 归属 | P0（删除死配置）+ P3（重新定义分级策略） |
+| 状态 | **P0 部分已修（2026-08-29）**：两个模板与 `group_vars/all/main.yml` 的 `connLimit` 已删除，渲染回归通过（两模板均为合法 JSON，`policy.levels.0` 仅余 `handshake`/`connIdle`/`uplinkOnly`/`downlinkOnly`/`bufferSize`/`statsUser*`）。P3 的分级策略重定义仍未开始 |
+| 未闭合 | 线上 18 台节点的 `config.json` 仍带该字段，**要到下次部署才会消失**；因该字段本就被 Xray 静默丢弃，不部署也无行为影响 |
 
 ### D4 — 无 `dns` 块，但 `domainStrategy` 是 `IPIfNonMatch`
 
@@ -425,7 +427,7 @@ P2 计划补 index 级 `annotations`，但存在一个**未验证的前提**：
 
 | 任务 | 依据 | 验收 |
 |---|---|---|
-| 删除两个模板的 `connLimit` 与 `group_vars/all/main.yml:19-20` | D3 | 生成配置回归测试通过 |
+| ~~删除两个模板的 `connLimit` 与 `group_vars/all/main.yml:19-20`~~ **已完成 2026-08-29** | D3 | ✅ 渲染回归通过：两模板渲染为合法 JSON，`policy.levels.0` 无 `connLimit`，其余字段无回归 |
 | `audit.yml:10` 支持 multi 模式日志路径 | D10 | 两种模式都能取到日志 |
 
 **授权边界**：仅工作树编辑。提交 / 推送 / PR 需单独授权。
@@ -699,3 +701,4 @@ for t in d['results']: print(f\"  {t['name']:<24} {t['last_updated']}\")"
 | 2026-08-28 | 操作者决定直接切换镜像库：`group_vars` / `README` / `JPNTT` / `project-memory` 已在工作树改为 `taoziyoyo2566/xray-docker:latest`，旧库冻结。P2-c 解除 P1 阻塞并取消分批滚动 |
 | 2026-08-29 | P2-a 已执行：本仓库两条镜像 workflow 手工停用（记录见 P2-a），§1.5 双发布者表相应更正。§3.5 更正：在途 patch 改为随 `300b098` 提交而非丢弃，并同步 `tests/test_xray_image_workflow.sh:11` 的断言，使主干在 P2-b 之前保持绿。交接内容改由 `feat/image-handoff` 合入 —— 原 `fix/xray-image-lifecycle` 名称与内容不符，且与 xray-docker 继承的历史重名 |
 | 2026-08-29 | **D11 改判为不成立**：`socks5_egress` 定义在 `group_vars/all/socks5.yml:6`，原判只 grep 了 `host_vars/`，配置可从仓库复现，P1 部署阻塞撤销。顺此发现并新增 **D12**（SOCKS5 凭据被写入每一台 single 节点 —— outbound 不做主机门控，routing 规则做）与 **D13**（32/32 个已跟踪 `users/*.yml` 含明文 `private_key`，仓库为 public；操作者决定记录待后续处理）。G1 补入本机 `spt` 快照（1/18 → 2/18），并更正「从本机无法采集其余节点」—— 当前执行环境就是可用控制端 |
+| 2026-08-29 | **P0 第 1 项已修**：删除 `roles/reality_single/templates/config.json.j2` 与 `roles/reality_multi/templates/config.json.j2` 的 `connLimit`（multi 侧同时去掉 `bufferSize` 的尾逗号）以及 `group_vars/all/main.yml` 的 `reality_conn_limit_single` / `reality_conn_limit_multi`。验收用 Jinja2 桩上下文渲染两个模板并 `json.loads`，确认合法 JSON、`connLimit` 消失、其余 policy 字段无回归 |

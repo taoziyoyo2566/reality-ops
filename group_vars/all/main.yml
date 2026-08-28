@@ -15,9 +15,6 @@ reality_memory_limit: "300m"
 reality_memory_swap: "1g"
 reality_memory_reservation: "200m"
 reality_mem_swappiness: 60
-# 连接数限制（可按模式/节点覆盖）
-reality_conn_limit_single: 24
-reality_conn_limit_multi: 6
 
 # --- 节点别名标签（客户端显示名） ---
 # node_tags 在 host_vars/<host>.yml 覆盖，如 node_tags: ["4837", "Unlimited"]
