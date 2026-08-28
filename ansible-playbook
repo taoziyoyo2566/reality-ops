@@ -58,21 +58,24 @@ find_real_ansible_playbook() {
     echo /usr/bin/ansible-playbook
     return 0
   fi
-  if [[ -x "${repo_root}/monitor_venv/bin/ansible-playbook" ]]; then
-    echo "${repo_root}/monitor_venv/bin/ansible-playbook"
-    return 0
-  fi
   return 1
 }
 
 real_ansible_playbook="$(find_real_ansible_playbook || true)"
-if [[ -z "$real_ansible_playbook" ]]; then
+if [[ -n "$real_ansible_playbook" ]]; then
+  ansible_playbook_cmd=("$real_ansible_playbook")
+elif [[ -x "${repo_root}/monitor_venv/bin/python" ]] &&
+  "${repo_root}/monitor_venv/bin/python" -c 'from ansible.cli.playbook import main' 2>/dev/null; then
+  # A venv's generated console scripts contain absolute shebangs and break when
+  # the checkout moves. Module dispatch only depends on this wrapper's location.
+  ansible_playbook_cmd=("${repo_root}/monitor_venv/bin/python" -m ansible playbook)
+else
   echo "未找到真实 ansible-playbook 可执行文件。" >&2
   exit 1
 fi
 
 if [[ $# -eq 0 ]]; then
-  exec "$real_ansible_playbook"
+  exec "${ansible_playbook_cmd[@]}"
 fi
 
 action="$1"
@@ -102,7 +105,7 @@ case "$action" in
       exit 1
     fi
 
-    cmd=("$real_ansible_playbook" -i "$inventory_default" "$playbook_file")
+    cmd=("${ansible_playbook_cmd[@]}" -i "$inventory_default" "$playbook_file")
 
     if [[ -n "$target" ]]; then
       case "$playbook_action" in
@@ -138,6 +141,6 @@ case "$action" in
     ;;
   *)
     # passthrough native ansible-playbook usage
-    exec "$real_ansible_playbook" "$action" "$@"
+    exec "${ansible_playbook_cmd[@]}" "$action" "$@"
     ;;
 esac
