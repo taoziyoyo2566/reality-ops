@@ -8,5 +8,5 @@
   "groups": [
     "premium"
   ],
-  "hosts": []
+  "hosts": ["spt"]
 }

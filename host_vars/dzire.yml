@@ -2,7 +2,7 @@
 reality_mode: multi
 monitor_enabled: true
 # 客户端显示标签（自由列表）——待填，例: ["Optimized", "Native"]
-node_tags: ["Native"]
+node_tags: ["Native","Unlimited"]
 # Reality 回落：Flipkart（印度最大电商；本节点位于印度，本土站配本土 IP，地理自洽）。
 # 印度候选里唯一满足 TLS1.3+H2+OCSP Stapling+200 完整页面的站点。
 # dest 与 serverNames 必须成对覆盖，只改一个会导致握手失败；deploy.yml 前置检查会拦。
