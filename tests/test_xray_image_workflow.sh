@@ -8,7 +8,7 @@ audit_workflow="${repo_root}/.github/workflows/audit-xray-image-tags.yml"
 grep -F 'name: Sync Xray Release Images' "${workflow}" >/dev/null
 grep -F 'bash docker-build/discover-release-window.sh' "${workflow}" >/dev/null
 grep -F 'matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}' "${workflow}" >/dev/null
-grep -F 'max-parallel: 2' "${workflow}" >/dev/null
+grep -F 'max-parallel: 1' "${workflow}" >/dev/null
 grep -F 'schedule:' "${workflow}" >/dev/null
 grep -F 'workflow_dispatch:' "${workflow}" >/dev/null
 grep -F 'group: xray-image-registry-state' "${workflow}" >/dev/null

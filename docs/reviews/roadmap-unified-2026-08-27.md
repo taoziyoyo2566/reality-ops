@@ -77,18 +77,19 @@ Docker 29.7.1，构建平台 `linux/amd64`。
 这些修复**只存在于新镜像里**。节点当前拉的仍是旧仓库镜像，D1/D2 在线上依旧成立，
 其关闭以 P2-c 的迁移验收为准——**不得凭"新仓库已修"记为已通过**。
 
-**当前处于双发布者状态**（`[实测]` 2026-08-28 GitHub API / Docker Hub API 快照）：
+**双发布者状态（`[实测]` 2026-08-28 GitHub API / Docker Hub API 快照；已于 2026-08-29 止血）**：
 
 | | `taoziyoyo2566/xray_docker`（旧） | `taoziyoyo2566/xray-docker`（新） |
 |---|---|---|
-| 发布者 | 本仓库 workflow，仍 `active` + 每日 cron，8-27 15:28 由 schedule 触发过 | 新仓库 workflow |
+| 发布者 | 本仓库 workflow，每日 cron，8-27 15:28 最后一次由 schedule 触发；**2026-08-29 已手工停用**（见 P2-a） | 新仓库 workflow |
 | `latest` | 2026-08-26 | 2026-08-27 |
 | tag 数 | 16（含 `stable` / `stable-previous` 等遗留） | 13 |
 | 累计拉取 | 2236 | 990 |
 | 谁在消费 | `group_vars/all/main.yml:3` → 全部节点 | 无 |
 
-上游一旦发布新版本，两条流水线会各自构建，并推向两个不同的 Docker Hub 仓库。
-止血动作见 P2-a。
+在停用之前，上游一旦发布新版本，两条流水线会各自构建，并推向两个不同的 Docker Hub
+仓库。P2-a 已于 2026-08-29 执行，旧发布者不再产出新 tag；工作流文件本身仍在
+`ops` 上，由 P2-b 删除后仓库状态与实际启停才重新一致。
 
 ---
 
@@ -319,21 +320,26 @@ P2 计划补 index 级 `annotations`，但存在一个**未验证的前提**：
 
 ---
 
-## 3.5 在途未提交变更（2026-08-28 作废）
+## 3.5 在途未提交变更（2026-08-28 作废；2026-08-29 改为随交接提交）
 
 工作树中那处未提交的 patch（`.github/workflows/build-image.yml` 的
 `max-parallel: 2 → 1`、`docker-build/discover-release-window.sh` 的排序修正）
 **已随镜像项目剥离失去归宿**：这两个文件在本仓库即将删除（P2-b），
 而新仓库的对应实现已改用 `build-fingerprint.sh` 方案，不再是同一段代码。
 
+**2026-08-29 更正**：最终没有走丢弃路线。该 patch 已随 `300b098` 一并提交，
+保留在 `feat/image-handoff` 上，等 P2-b 删除这两个文件时自然消失。
+改为提交而非丢弃，省掉了一次「丢弃未提交工作」的授权，代价只是这两行多活几天。
+
 | 项 | 处置 |
 |---|---|
-| `max-parallel` 与排序 patch | 在本仓库丢弃；对应问题由新仓库自行维护 |
-| `tests/test_xray_image_workflow.sh:11` 的红测试 | 随测试文件一并删除，不再修 |
-| `discover-release-window.sh` 的同秒 tie-break 缺陷（`\| reverse \| sort_by`） | 移交新仓库；本仓库不再跟踪 |
+| `max-parallel` 与排序 patch | 已随 `300b098` 提交；P2-b 删文件时消失。对应问题由新仓库自行维护 |
+| `tests/test_xray_image_workflow.sh:11` 的红测试 | 已在 `feat/image-handoff` 上把断言同步为 `max-parallel: 1`，使主干在 P2-b 之前保持绿 |
+| `discover-release-window.sh` 的同秒 tie-break 缺陷 | 移交新仓库；本仓库不再跟踪 |
 
-**丢弃这两处工作树改动需要单独授权**（属丢弃未提交工作，见
-`~/workspace/.agents/rules/git-recovery.md`）。在授权前保持原样，不要 checkout 覆盖。
+`[实测]` 2026-08-29 核对新仓库：`build-image.yml:65` 已是 `max-parallel: 1`，
+`discover-release-window.sh:180-198` 已含 `reverse` + `sort_by(.published_at)`
+与同秒 tie-break 的处理。两处等价实现在新仓库均已存在，本仓库无论保留或删除都无损失。
 
 ---
 
@@ -375,9 +381,23 @@ P2 计划补 index 级 `annotations`，但存在一个**未验证的前提**：
 
 | 任务 | 说明 |
 |---|---|
-| 停用本仓库的 `Sync Xray Release Images` 与 `Audit Xray Image Tags` | 二者仍 `active`（§1.5）。不停用，旧镜像名会继续长出新 tag，"哪个是真相源"永远不收敛 |
+| 停用本仓库的 `Sync Xray Release Images` 与 `Audit Xray Image Tags` | **已于 2026-08-29 执行**。二者原为 `active`（§1.5）。不停用，旧镜像名会继续长出新 tag，"哪个是真相源"永远不收敛 |
 
-**授权边界**：改动 GitHub workflow 启停属外部写，需单独授权。
+**执行记录（`[实测]` 2026-08-29）**：
+
+| Workflow | ID | 执行前 | 执行后 |
+|---|---|---|---|
+| Sync Xray Release Images | `218448596` | `active` | `disabled_manually` |
+| Audit Xray Image Tags | `342639627` | `active` | `disabled_manually` |
+
+停用范围仅限本仓库。`Repository quality checks` / `Dependency Graph` /
+`Dependabot Updates` 保持 `active`；`taoziyoyo2566/xray-docker` 的 5 个 workflow
+全部未动（已复核）。恢复方式：`gh workflow enable <id> --repo taoziyoyo2566/reality-ops`。
+
+这是 GitHub 上的手工状态，而仓库里的 workflow 文件仍然存在 —— 属于有意的临时漂移，
+由 P2-b 删除文件后消除。**在 P2-b 合并前，不要仅凭仓库内容判断这两条流水线是否会运行。**
+
+**授权边界**：改动 GitHub workflow 启停属外部写，需单独授权。已按此授权并执行。
 
 #### P2-b 删除镜像资产并补消费者契约（工作树编辑）
 
@@ -607,3 +627,4 @@ for t in d['results']: print(f\"  {t['name']:<24} {t['last_updated']}\")"
 | 2026-08-27 | 就地实测本机（生产 single 节点）：G1 部分关闭并填入实证快照；新增 D11（线上配置含仓库无法再生成的 outbound，升为 P1 阻塞）；**更正 D7 两处失实**（apple 仅为默认值、13/18 台已覆盖；"两模板固定 8443"错误，single 直接监听 `item.port`）；更正初版"无 `~/.ssh/config`"的错误陈述 |
 | 2026-08-28 | 镜像项目已剥离为 `taoziyoyo2566/xray-docker`。新增 §1.5 项目边界与双发布者现状；§3.5 在途 patch 作废；P0 移出已在新仓库完成的 D1/D2 与三项测试任务；P2 重写为「镜像去耦与迁移（本仓库侧）」，拆为 P2-a 止血 / P2-b 删除与契约 / P2-c 切名迁移 |
 | 2026-08-28 | 操作者决定直接切换镜像库：`group_vars` / `README` / `JPNTT` / `project-memory` 已在工作树改为 `taoziyoyo2566/xray-docker:latest`，旧库冻结。P2-c 解除 P1 阻塞并取消分批滚动 |
+| 2026-08-29 | P2-a 已执行：本仓库两条镜像 workflow 手工停用（记录见 P2-a），§1.5 双发布者表相应更正。§3.5 更正：在途 patch 改为随 `300b098` 提交而非丢弃，并同步 `tests/test_xray_image_workflow.sh:11` 的断言，使主干在 P2-b 之前保持绿。交接内容改由 `feat/image-handoff` 合入 —— 原 `fix/xray-image-lifecycle` 名称与内容不符，且与 xray-docker 继承的历史重名 |
