@@ -208,23 +208,57 @@ Docker 29.7.1，构建平台 `linux/amd64`。
 | 影响 | 在 multi 节点上 audit 静默返回空（`audit.yml` 内有 `if [ -f "$LOG_FILE" ]` 保护，不报错） |
 | 归属 | P0 |
 
-### D11 — 线上配置含仓库中已不存在的变量产物
+### D11 — 线上配置含仓库中已不存在的变量产物（2026-08-29 改判：不成立）
+
+> **改判（`[实测]` 2026-08-29）**：原判的唯一依据是
+> `grep -rn "socks5_egress" host_vars/*.yml` 零命中，但这个变量根本不在 `host_vars` ——
+> 它定义在 `group_vars/all/socks5.yml:6`，由 vault 的 `vault_socks5_jpntt_*` 驱动，
+> 作用于全体主机。**线上那个 outbound 完全可以从仓库复现**，本条不成立，
+> P1 部署阻塞撤销。顺这条线索发现的真实缺陷见 D12。
 
 | 项 | 内容 |
 |---|---|
-| 现象 | 线上 `config.json` 有一个仓库当前**无法再生成**的 outbound |
-| 证据 | `[实测]` 本机线上配置 `outbounds` 标签为 `["direct","blocked","socks5-profile-jpntt_isp"]` |
-| | `[代码]` `grep -rn "socks5_egress" host_vars/*.yml` → **零命中**；`host_vars/jp10.yml` 全文 9 行，无任何 socks5 配置 |
-| | `[代码]` `reality_single/templates/config.json.j2:1-3` 的 `socks5-profile-*` outbound 由 `socks5_egress.profiles` 驱动 |
-| 结论 | 以当前仓库状态重新部署该节点，会**静默丢失** `socks5-profile-jpntt_isp` 出站。<br>变量来源只可能是：部署后被删除、或来自未提交的 vault / `-e` 额外变量 |
-| 影响 | 这是"仓库 ≠ 线上"最硬的证据——不只是镜像版本落后，**配置也无法从仓库复现**。任何重新部署都是有损的 |
-| 归属 | **P1（阻塞）**。在查明该变量来源前，不得对该节点执行 `deploy` |
+| 现象 | 线上 `config.json` 有一个当时认为仓库**无法再生成**的 outbound |
+| 原证据 | `[实测]` 线上配置 `outbounds` 标签为 `["direct","blocked","socks5-profile-jpntt_isp"]` |
+| | `[代码]` `grep -rn "socks5_egress" host_vars/*.yml` → 零命中 —— **检索范围有误，漏了 `group_vars/`** |
+| 改判证据 | `[代码]` `group_vars/all/socks5.yml:6` 定义 `socks5_egress`；`:9` 为 profile `jpntt_isp`；`:17` 的 `route.hosts` 为 `["jp10"]` |
+| | `[代码]` `roles/reality_single/tasks/main.yml:137`、`:150` 由 `socks5_egress` 取值 |
+| 结论 | 配置可从仓库复现。「重新部署会静默丢失该 outbound」不成立 |
+| 归属 | **撤销**。原 P1 阻塞取消；由此发现的 D12 另行归属 |
+
+---
+
+### D12 — SOCKS5 凭据被写入每一台 single 节点
+
+| 项 | 内容 |
+|---|---|
+| 现象 | 只有 jp10 需要走 jpntt 的 SOCKS5 出口，但该出口的地址、用户名、密码被写进**全部** single 节点的 `config.json` |
+| 证据 | `[代码]` `roles/reality_single/templates/config.json.j2:156` —— outbound 的生成条件只有 `profile.enabled && address && port > 0`，**不做主机门控** |
+| | `[代码]` 同文件 `:69` —— routing 规则的条件是 `profile_complete and host_matches and has_route_rule`，**做主机门控** |
+| | `[代码]` `group_vars/all/socks5.yml:17` 的 `route.hosts: ["jp10"]` 只影响 `:69` 那个块 |
+| | `[实测]` 2026-08-29 本机 `spt`：`outbounds` 含 `socks5-profile-jpntt_isp`，而 `routing.rules` 只有 2 条、无对应规则 —— **凭据在，路由不在** |
+| 影响 | 凭据扩散面由 1 台放大到全部 single 节点。任一节点上读到 `config.json` 即泄露该 SOCKS5 账号 |
+| 归属 | 待定级。修复方向：给 `:156` 的条件补上与 `:69` 相同的 `host_matches` |
+
+---
+
+### D13 — 用户私钥以明文进入公开仓库
+
+| 项 | 内容 |
+|---|---|
+| 现象 | 每个用户的 Reality `private_key` 以明文提交在公开仓库中 |
+| 证据 | `[实测]` 2026-08-29 `gh api repos/taoziyoyo2566/reality-ops --jq .visibility` → `public` |
+| | `[实测]` 已跟踪的 `users/*.yml` 共 32 个，**32 个全部含 `private_key`** |
+| | `[代码]` `.gitignore:19` 只忽略 `users/*.json`，`.yml` 不在范围内 |
+| 影响 | 任何人可从公开仓库取得全部用户私钥。轮换需同时更新客户端订阅，成本高 |
+| 决定 | **操作者 2026-08-29 决定：记录待后续处理**，本轮不修复 |
+| 归属 | 待定级。与 P3/P5 的用户体系改造相关，需单独规划 |
 
 ---
 
 ## 3. 明确的缺口（未知，不得当作已通过）
 
-### G1 — 节点实际运行态（本机已关闭，其余 17 台仍未知）
+### G1 — 节点实际运行态（已采集 2/18，其余 16 台仍未知）
 
 **2026-08-27 更新**：执行环境本身就是一台生产节点（`single` 模式），已就地实测。
 以下为该节点的实证快照；**其余 17 台仍属未知**，G1 未全部关闭。
@@ -262,12 +296,38 @@ Docker 29.7.1，构建平台 `linux/amd64`。
 | 端口 | **占用 `0.0.0.0:443` 与 `[::]:443`** |
 | 备注 | `xray` 不在该镜像 `$PATH` 中，结构与本项目镜像不同。本项目容器**未占用 443** |
 
+**本机（控制端 `spt`）快照**（`[实测]` 2026-08-29）：
+
+| 项 | 实测值 |
+|---|---|
+| 主机 | `mail.taoziyoyo.com`，`inventory.ini:27` 以 `ansible_connection=local` 声明为 `spt` |
+| 容器 | `reality_core`（`single` 模式），Up 5 days，创建于 2026-08-22 |
+| 镜像 | `taoziyoyo2566/xray_docker:latest` |
+| 镜像 digest | `sha256:433d7302…` —— **与 G1 上一台节点完全相同** |
+| 镜像构建时间 | `2025-12-24T17:13:07Z` |
+| 运行中 Xray 版本 | **`25.12.8`**（`81f8f39`，go1.25.5） |
+| 规模 | 25 个 inbound（24 用户 + 1 api），IPv4/IPv6 双栈映射 |
+| outbounds | `["direct","blocked","socks5-profile-jpntt_isp"]` —— 见 D12 |
+
+**该节点对各缺陷的实证确认**：
+
+| 缺陷 | 线上确认 |
+|---|---|
+| D3 `connLimit` | ✅ `policy.levels.0` 含 `"connLimit": 24` |
+| D4 无 `dns` 块 | ✅ 顶层键为 `log/api/stats/policy/routing/inbounds/outbounds`；`domainStrategy` 为 `IPIfNonMatch` |
+| D5 无 `sniffing` | ✅ 25 个 inbound 中含 `sniffing` 的为 0 |
+| geo 分流未启用 | ✅ `routing.rules` 仅 2 条 |
+| D6 不重拉镜像 | ✅ 容器 7 天前才创建，拉到的仍是 8 个月前的镜像 |
+
+**两台不同机器、不同用户规模、同一个镜像 digest、同一组缺陷** —— 漂移是系统性的，
+不是个例。
+
 **仍未关闭的部分** —— 其余 17 台需要同样的采集：
 
 | 项 | 为什么必须 |
 |---|---|
 | 各节点镜像 digest 与 Xray 版本 | 判断漂移分布；本机证实可落后 8 个月 |
-| 各节点实际 `config.json` | 见 D11 |
+| 各节点实际 `config.json` | 判断配置漂移与凭据扩散范围，见 D12 |
 | single / multi 分布 | `[代码]` `host_vars` 声明：single 10 台、multi 6 台、未声明 2 台。**声明值需与线上核对** |
 
 `[实测]` 本机 SSH 配置（`~/.ssh/config` → `Include config.d/*`）仅定义 6 个 Host
@@ -276,6 +336,13 @@ ansible ad-hoc 报 `Attempting to decrypt but no vault secrets found`。
 **从本机无法采集其余节点** —— 需在真正的控制端执行。
 
 > 初版称"无 `~/.ssh/config`"有误，实际存在但只是一行 `Include config.d/*`。
+
+> **更正（`[实测]` 2026-08-29）**：上文「从本机无法采集其余节点」说的是撰写该段时
+> 所在的那台机器。**当前执行环境（`mail.taoziyoyo.com`，即 `spt`）就是可用的控制端**：
+> `~/.ssh/config` + `config.d/` 共 21 个 Host，覆盖 inventory 18 台中的 16 台
+> （未覆盖 `hk-hn` —— ssh 侧为 `hk01`/`hn01`，映射待确认；以及 `spt` 自身，它是 local）；
+> `~/.vault_pass` 与仓库 `.vault_pass` 均存在；`monitor_venv/bin/` 下 ansible 可用。
+> **G1-b 的采集清单在这台机器上可以执行**，G1 不再是无解的阻塞。
 
 ### G1-b — 采集清单（供控制端执行）
 
@@ -288,6 +355,9 @@ ansible ad-hoc 报 `Attempting to decrypt but no vault secrets found`。
 | 容器 uptime | `docker ps --format '{{.Status}}'` | 判断上次真实变更时间 |
 
 **在 G1 关闭前，任何涉及部署的动作都不应执行。**
+
+> **2026-08-29 澄清**：这条谨慎与 D11 无关。D11 已改判撤销，但本条依旧成立 ——
+> 依据是其余 16 台的运行态仍然未知，不是那个已撤销的 outbound 结论。
 
 ### G2 — 本机到节点的连通性未验证
 
@@ -628,3 +698,4 @@ for t in d['results']: print(f\"  {t['name']:<24} {t['last_updated']}\")"
 | 2026-08-28 | 镜像项目已剥离为 `taoziyoyo2566/xray-docker`。新增 §1.5 项目边界与双发布者现状；§3.5 在途 patch 作废；P0 移出已在新仓库完成的 D1/D2 与三项测试任务；P2 重写为「镜像去耦与迁移（本仓库侧）」，拆为 P2-a 止血 / P2-b 删除与契约 / P2-c 切名迁移 |
 | 2026-08-28 | 操作者决定直接切换镜像库：`group_vars` / `README` / `JPNTT` / `project-memory` 已在工作树改为 `taoziyoyo2566/xray-docker:latest`，旧库冻结。P2-c 解除 P1 阻塞并取消分批滚动 |
 | 2026-08-29 | P2-a 已执行：本仓库两条镜像 workflow 手工停用（记录见 P2-a），§1.5 双发布者表相应更正。§3.5 更正：在途 patch 改为随 `300b098` 提交而非丢弃，并同步 `tests/test_xray_image_workflow.sh:11` 的断言，使主干在 P2-b 之前保持绿。交接内容改由 `feat/image-handoff` 合入 —— 原 `fix/xray-image-lifecycle` 名称与内容不符，且与 xray-docker 继承的历史重名 |
+| 2026-08-29 | **D11 改判为不成立**：`socks5_egress` 定义在 `group_vars/all/socks5.yml:6`，原判只 grep 了 `host_vars/`，配置可从仓库复现，P1 部署阻塞撤销。顺此发现并新增 **D12**（SOCKS5 凭据被写入每一台 single 节点 —— outbound 不做主机门控，routing 规则做）与 **D13**（32/32 个已跟踪 `users/*.yml` 含明文 `private_key`，仓库为 public；操作者决定记录待后续处理）。G1 补入本机 `spt` 快照（1/18 → 2/18），并更正「从本机无法采集其余节点」—— 当前执行环境就是可用控制端 |
