@@ -1,6 +1,30 @@
 {% set socks5_module = socks5_egress | default({}) %}
 {% set socks5_module_enabled = socks5_module.enabled | default(false) %}
 {% set socks5_profiles = socks5_module.profiles | default({}) %}
+{#
+  D12：socks5 出站与引用它的 routing 规则必须同门同出。
+  历史缺陷是两处各算各的门控 —— 规则判「配置完整 + 主机命中 + 有规则条件」，
+  出站却只判「配置完整」，于是 jpntt 的用户名口令被写进了每一台 single 节点的
+  config.json，而只有 route.hosts 命中的那台才有对应规则。凭据在，路由不在。
+  这里把判定收敛成唯一一份 socks5_active，下面两处都只认它，杜绝再次漂移。
+#}
+{% set socks5_active = [] %}
+{% for _p in socks5_profiles | dict2items %}
+{% set _profile = _p.value %}
+{% set _route = _profile.route | default({}) %}
+{% set _route_hosts = _route.hosts | default([]) %}
+{% set _route_users = _route.users | default([]) %}
+{% set _complete = (_profile.enabled | default(false) | bool) and (_profile.address | default('') | length > 0) and ((_profile.port | default(0) | int) > 0) %}
+{% set _host_matches = (_route_hosts | length == 0) or (inventory_hostname in _route_hosts) %}
+{% set _matched_users = [] %}
+{% for _u in reality_instances | default([]) if _u.name in _route_users %}
+{% set _ = _matched_users.append(_u.name) %}
+{% endfor %}
+{% set _has_route_rule = (_matched_users | length > 0) or ((_route.domains | default([])) | length > 0) or ((_route.ips | default([])) | length > 0) or ((_route.protocols | default([])) | length > 0) %}
+{% if _complete and _host_matches and _has_route_rule %}
+{% set _ = socks5_active.append(_p.key) %}
+{% endif %}
+{% endfor %}
 {
   "log": {
     "loglevel": {{ reality_log_level | default('warning') | to_json }},
@@ -52,20 +76,16 @@
       {% set profile_name = _p.key %}
       {% set profile = _p.value %}
       {% set route = profile.route | default({}) %}
-      {% set route_hosts = route.hosts | default([]) %}
       {% set route_users = route.users | default([]) %}
       {% set route_domains = route.domains | default([]) %}
       {% set route_ips = route.ips | default([]) %}
       {% set route_protocols = route.protocols | default([]) %}
       {% set route_network = route.network | default('') %}
-      {% set host_matches = (route_hosts | length == 0) or (inventory_hostname in route_hosts) %}
-      {% set profile_complete = (profile.enabled | default(false) | bool) and (profile.address | default('') | length > 0) and ((profile.port | default(0) | int) > 0) %}
       {% set inbound_tags = [] %}
       {% for user_item in reality_instances if user_item.name in route_users %}
       {% set _ = inbound_tags.append('user-' ~ user_item.name) %}
       {% endfor %}
-      {% set has_route_rule = (inbound_tags | length > 0) or (route_domains | length > 0) or (route_ips | length > 0) or (route_protocols | length > 0) %}
-      {% if profile_complete and host_matches and has_route_rule %}
+      {% if profile_name in socks5_active %}
       ,
       {
         "type": "field"
@@ -152,8 +172,7 @@
     {% for _p in socks5_profiles | dict2items | sort(attribute='value.priority') %}
     {% set profile_name = _p.key %}
     {% set profile = _p.value %}
-    {% set profile_complete = (profile.enabled | default(false) | bool) and (profile.address | default('') | length > 0) and ((profile.port | default(0) | int) > 0) %}
-    {% if profile_complete %}
+    {% if profile_name in socks5_active %}
     ,
     {
       "protocol": "socks",

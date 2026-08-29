@@ -243,6 +243,12 @@ Docker 29.7.1，构建平台 `linux/amd64`。
 | | `[实测]` 2026-08-29 本机 `spt`：`outbounds` 含 `socks5-profile-jpntt_isp`，而 `routing.rules` 只有 2 条、无对应规则 —— **凭据在，路由不在** |
 | 影响 | 凭据扩散面由 1 台放大到全部 single 节点。任一节点上读到 `config.json` 即泄露该 SOCKS5 账号 |
 | 线上确认 | `[实测]` 2026-08-29 采集 5 台：`outbounds` 全部为 `['direct','blocked','socks5-profile-jpntt_isp']`；`routing` 规则数 `jp05=2 / jp10=3 / kagoya=2 / netcup=2 / spt=2`。**4 台带着凭据但无对应路由规则** —— 本条由推断升为实证 |
+| 根因 | `[代码]` 两处门控各算各的：`config.json.j2` 的 routing 规则判「配置完整 + 主机命中 + 有规则条件」，出站却只判「配置完整」。不是漏了一个条件，是**同一个判定被写了两份**，必然漂 |
+| 修法 | 在模板顶部一次性算出 `socks5_active`（本机真正要启用的 profile 名单），routing 与 outbound 两处都只认它，删掉出站侧那份重复判定。同门同出由结构保证，不靠人记得同步 |
+| 回归测试 | 新增 `tests/test_socks5_gate.py`，断言两条通用不变量：规则引用的 socks5 outbound 必须存在（否则 Xray 起不来）、存在的 socks5 outbound 必须被规则引用（否则凭据白写）。7 组场景。`[实测]` 对**修复前**的模板跑同一套测试 **3 组失败**，修复后 7/7 通过 —— 测试本身有效 |
+| CI | `[代码]` `.github/workflows/quality.yml` 新增 `config-template` job 执行该测试，防止再次漂移 |
+| 状态 | **仓库侧已修（2026-08-29）**。`reality_multi` 无此问题：其 `use_socks5_egress` 一处算好一处使用，且出站是整实例默认出口，由 `target_users` 门控 |
+| 未闭合 | **线上凭据仍在**。已采集的 5 台中有 4 台带着无用的 socks5 出站，**要到下次部署才会消失**；未采集的 13 台情况未知。若认为这些凭据已算泄露，轮换 jpntt 的 SOCKS5 口令是另一件事，需单独决定 |
 | 归属 | 待定级。修复方向：给 `:156` 的条件补上与 `:69` 相同的 `host_matches` |
 
 ---
@@ -836,3 +842,4 @@ for t in d['results']: print(f\"  {t['name']:<24} {t['last_updated']}\")"
 | 2026-08-29 | **P0 第 2 项已修**：重写 `audit.yml` 的采集与汇总。日志路径改通配覆盖 single/multi（D10）；取值改为锚定 `from` / `email:` 记号，修正原先把 outbound tag 当用户名的错误（**新增 D14**，该缺陷令 single 节点也从未产出有效审计）；采样窗口由 `tail -n 2000` 改为按日期取（**新增 D15**，原窗口在本机实测仅覆盖 26 分钟）；用户名归一为首个 `.` 之前，与 `agent.py.j2:288` 对齐，使跨节点合并真正生效；报告表头移到 `sort -nr` 之后；汇总临时文件收紧为 `0600` |
 | 2026-08-29 | **新增 D16 并完成仓库侧修复**：Reality 日志从无轮转，本机实测 675MB / 604 万行 / 145 天、4.7MB 每天且无上界。新增根 `templates/reality-xray-logrotate.j2`，由 `deploy.yml` 的 `post_tasks` 装包并下发到 `/etc/logrotate.d/reality-xray`（`template` 带 `validate` 钩子，配置写坏会在下发时失败而非静默生效），`decommission.yml` 负责移除。验证中否掉了 `su 10000 10000`（logrotate 报 `unknown group`）。**尚未下发到任何节点** |
 | 2026-08-29 | **G1-b 首轮采集（5/18）与 G2 关闭**。**更正**「本机就是可用控制端」—— 实跑 ping 只有 local 的 `spt` 成功，两把私钥都带 passphrase 且无 ssh-agent，握手停在 `Server accepts key` 之后；另更正 vault 口令文件（`~/.vault_pass` 而非仓库内 `.vault_pass`）。采集证实 **D6 漂移全体一致**（5 台同一 digest `sha256:433d7302…`、同为 8 个月前镜像、仍引用旧库）、**D3/D4/D5 五台全中**、**D12 由推断升为实证**（5 台都有 socks5 outbound，只有 `jp10` 有对应路由规则）。新发现 `jp05` 磁盘仅余 9%。G2 记录完整连通性矩阵：`[test_nodes]` 全组 TCP 不可达、`hk-hn` 无 ssh 映射，两项待操作者确认。D16 的 `maxsize` 收紧为 `50M` 并去掉 `delaycompress`。**操作者决定：验证目的已达成，不再继续采集** |
+| 2026-08-29 | **D12 已修**：`roles/reality_single/templates/config.json.j2` 的 socks5 门控由两份重复判定收敛为顶部唯一的 `socks5_active`，routing 规则与 outbound 两处都只认它。新增 `tests/test_socks5_gate.py`（7 组场景，断言「规则引用的出站必须存在」与「存在的出站必须被引用」两条不变量），并接入 `quality.yml` 的 `config-template` job。该测试对修复前的模板 3 组失败、修复后 7/7 通过。`reality_multi` 经核对无此问题。线上凭据要到下次部署才清除 |
