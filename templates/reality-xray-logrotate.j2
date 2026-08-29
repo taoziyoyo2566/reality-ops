@@ -15,12 +15,15 @@
 # 整个配置块。目录不是 group/world 可写，因此无需 su，由 root 轮转即可。
 # nocreate 用于覆盖 /etc/logrotate.conf 的全局 create —— copytruncate
 # 方式下原文件始终存在，不需要重建。
+#
+# 不设 delaycompress：它的用途是避免压缩一个仍被进程持有的文件，而
+# copytruncate 产出的是一份完整副本，没有任何进程持有它。保留只会让
+# 最近一份历史一直以未压缩状态占盘（最坏情况多占一个 maxsize）。
 {{ reality_logs_dir }}/*/*.log {
     daily
     rotate {{ reality_log_rotate_keep }}
     maxsize {{ reality_log_rotate_maxsize }}
     compress
-    delaycompress
     copytruncate
     notifempty
     missingok
