@@ -242,6 +242,7 @@ Docker 29.7.1，构建平台 `linux/amd64`。
 | | `[代码]` `group_vars/all/socks5.yml:17` 的 `route.hosts: ["jp10"]` 只影响 `:69` 那个块 |
 | | `[实测]` 2026-08-29 本机 `spt`：`outbounds` 含 `socks5-profile-jpntt_isp`，而 `routing.rules` 只有 2 条、无对应规则 —— **凭据在，路由不在** |
 | 影响 | 凭据扩散面由 1 台放大到全部 single 节点。任一节点上读到 `config.json` 即泄露该 SOCKS5 账号 |
+| 线上确认 | `[实测]` 2026-08-29 采集 5 台：`outbounds` 全部为 `['direct','blocked','socks5-profile-jpntt_isp']`；`routing` 规则数 `jp05=2 / jp10=3 / kagoya=2 / netcup=2 / spt=2`。**4 台带着凭据但无对应路由规则** —— 本条由推断升为实证 |
 | 归属 | 待定级。修复方向：给 `:156` 的条件补上与 `:69` 相同的 `host_matches` |
 
 ---
@@ -299,15 +300,17 @@ Docker 29.7.1，构建平台 `linux/amd64`。
 | | **不能加 `su 10000 10000`**。`[实测]` logrotate 解析该指令时报 `unknown group '10000'` 并跳过整个配置块 —— 容器用户 UID 10000 在宿主机没有 passwd/group 条目。日志目录为 `755`，非 group/world 可写，无需 `su` |
 | | 需 `nocreate` 覆盖 `/etc/logrotate.conf` 的全局 `create`（`[实测]` 该文件全局为 `weekly` / `rotate 4` / `create`） |
 | 预期收敛 | `[实测]` gzip -9 实测压缩比 **11.3:1**（20 万行样本 23MB → 2164KB）。按 `daily` + `rotate 14` + `delaycompress`，稳态约 **15 MB**（今日 4.7MB + 昨日 4.7MB + 13 份各约 0.4MB），取代当前无上界增长 |
-| 状态 | **仓库侧已修（2026-08-29）**：`deploy.yml` 下发 `/etc/logrotate.d/reality-xray`，`decommission.yml` 负责清理 |
-| 未闭合 | **尚未下发到任何节点**，需部署授权。其余 17 台是否已装 logrotate、日志实际体量多大，均未验证 —— 并入 P1 的 G1-b 采集清单 |
+| 多节点确认 | `[实测]` 2026-08-29 采集 5 台：logrotate **全部已安装**、reality 轮转配置**全部缺失**；日志体量 `netcup` 1.2MB / `kagoya` 20.9MB / `jp05` 36.7MB / `jp10` 102.9MB / `spt` 678.6MB |
+| 紧迫性 | `[实测]` `jp05` 磁盘 **仅余 179MB / 共 1978MB（9%）** —— 该节点应优先接收本配置 |
+| 状态 | **仓库侧已修（2026-08-29）**：`maxsize` 按操作者要求由 `200M` 收紧为 **`50M`**，并去掉 `delaycompress`（copytruncate 产出的是完整副本，无进程持有，保留它只会让最近一份历史长期未压缩占盘）。最坏情况占用由约 630MB 降至约 112MB。`deploy.yml` 下发 `/etc/logrotate.d/reality-xray`，`decommission.yml` 负责清理 |
+| 未闭合 | **尚未下发到任何节点**，需部署授权。已采集的 5 台情况见上；其余 13 台是否已装 logrotate、日志实际体量多大**仍未验证**（7 台网络不可达、6 台缺凭据，见 G2） |
 | 归属 | P0 |
 
 ---
 
 ## 3. 明确的缺口（未知，不得当作已通过）
 
-### G1 — 节点实际运行态（已采集 2/18，其余 16 台仍未知）
+### G1 — 节点实际运行态（已采集 5/18；其余 13 台中 7 台网络不可达、6 台缺凭据）
 
 **2026-08-27 更新**：执行环境本身就是一台生产节点（`single` 模式），已就地实测。
 以下为该节点的实证快照；**其余 17 台仍属未知**，G1 未全部关闭。
@@ -393,6 +396,14 @@ ansible ad-hoc 报 `Attempting to decrypt but no vault secrets found`。
 > `~/.vault_pass` 与仓库 `.vault_pass` 均存在；`monitor_venv/bin/` 下 ansible 可用。
 > **G1-b 的采集清单在这台机器上可以执行**，G1 不再是无解的阻塞。
 
+> **再更正（`[实测]` 2026-08-29）：上面这句仍然不准确。** 实跑 `ansible reality_nodes -m ping`
+> 的结果是 **18 台里只有 `spt` 成功**，而 `spt` 是 `ansible_connection=local`。
+> ssh config 里有 Host 条目，不等于连得上：`~/.ssh/vps-fleet` 与 `~/.ssh/id_ed25519`
+> 都带 passphrase，而 `SSH_AUTH_SOCK` 未设置、没有 ssh-agent 在跑。
+> `ssh -v` 的握手停在 `Server accepts key: …/vps-fleet` 之后 —— **授权没问题，是本地签不出来**。
+> 结论：**本机只是「装了 ssh 配置与 vault 口令」的机器，不是开箱即用的控制端**；
+> 采集前必须先由操作者把私钥装进 ssh-agent。这正是 G2 本该拦下的事。
+
 ### G1-b — 采集清单（供控制端执行）
 
 | 项 | 命令要素 | 为什么必须 |
@@ -403,16 +414,88 @@ ansible ad-hoc 报 `Attempting to decrypt but no vault secrets found`。
 | 运行模式 | 容器名是 `reality_core` 还是 `reality_<user>` | 决定 D9/D10 的适用范围 |
 | 容器 uptime | `docker ps --format '{{.Status}}'` | 判断上次真实变更时间 |
 
+**G1-b 首轮采集结果（`[实测]` 2026-08-29，5/18 台）**
+
+采集方式：只读脚本经 `ansible -m script` 下发，只回传结构性事实；
+`uuid` / `private_key` / `short_id` / `email` / socks5 凭据一律不回传，
+回收数据已自查（UUID 形态 0 命中）。
+
+| 节点 | 模式 | 容器状态 | Xray | 镜像构建 | inbound | 日志 | 磁盘可用 |
+|---|---|---|---|---|---|---|---|
+| `jp05` | single | Up 13h | 25.12.8 | 2025-12-24 | 30 | 36.7 MB | **179 MB / 1978 MB** |
+| `jp10` | single | Up 13h | 25.12.8 | 2025-12-24 | 28 | 102.9 MB | 1392 MB / 5001 MB |
+| `kagoya` | single | Up 13h | 25.12.8 | 2025-12-24 | 28 | 20.9 MB | 75.8 GB / 197 GB |
+| `netcup` | single | Up 12h | 25.12.8 | 2025-12-24 | 32 | 1.2 MB | 845 GB / 1007 GB |
+| `spt` | single | Up 6d | 25.12.8 | 2025-12-24 | 25 | 678.6 MB | 24.1 GB / 98 GB |
+
+**D6 漂移是全体一致，不是个例**：5 台的镜像 digest **完全相同**
+（`sha256:433d7302cddb336cb3b4…`），全部 `Xray 25.12.8`、镜像构建于 `2025-12-24`，
+且引用的仍是**旧仓库** `taoziyoyo2566/xray_docker:latest`。容器 13 小时前刚重建过，
+拉到的依然是 8 个月前的镜像 —— `pull: never` 的效果就是这样。
+
+**D3 / D4 / D5 五台全中**：
+
+| | jp05 | jp10 | kagoya | netcup | spt |
+|---|---|---|---|---|---|
+| `policy.levels.0.connLimit`（D3） | 有 | 有 | 有 | 有 | 有 |
+| 顶层 `dns` 块（D4） | 无 | 无 | 无 | 无 | 无 |
+| `domainStrategy` | `IPIfNonMatch` | `IPIfNonMatch` | `IPIfNonMatch` | `IPIfNonMatch` | `IPIfNonMatch` |
+| 含 `sniffing` 的 inbound（D5） | 0 | 0 | 0 | 0 | 0 |
+
+**D12 线上坐实**：5 台的 `outbounds` 全部是
+`['direct', 'blocked', 'socks5-profile-jpntt_isp']`，而 `routing` 规则数为
+`jp05=2 / jp10=3 / kagoya=2 / netcup=2 / spt=2`。
+`group_vars/all/socks5.yml:17` 的 `route.hosts` 是 `["jp10"]`，
+所以只有 `jp10` 多出那条规则 —— **其余 4 台带着 jpntt 的 SOCKS5 用户名口令、
+却没有任何规则会用到它**。凭据在，路由不在，5 台实证。
+
+**D7**：REALITY 目标各节点不同（`www.yahoo.co.jp` / `www.ebay.de` / `www.walmart.com`），
+均非 apple 默认值，第一条警告不成立。
+
+**新发现 —— `jp05` 磁盘只剩 179 MB（9%）**：总 1978 MB、已用 1683 MB。
+其日志已 36.7 MB 且无轮转。该节点应优先接收 D16 的 logrotate 配置。
+
+**logrotate 现状**：5 台**全部已安装** `/usr/sbin/logrotate`，
+且**全部没有** reality 轮转配置 —— D16 的 `package` 步骤会是 no-op，配置可直接落地。
+
+**顺带确认**：本节开头那台未具名的 G1 首采节点就是 **`kagoya`**
+（`v133-18-145-97-vir`），其占用 443 的第三方容器 `xray_reality` **仍在运行**。
+
+**未采集的 13 台**（见 G2 的连通性矩阵）：7 台 TCP 层不可达，
+6 台因 `id_ed25519` 未装入 agent 而无法连接。
+**操作者 2026-08-29 决定：验证目的已达成，本轮不再继续采集。**
+
 **在 G1 关闭前，任何涉及部署的动作都不应执行。**
 
 > **2026-08-29 澄清**：这条谨慎与 D11 无关。D11 已改判撤销，但本条依旧成立 ——
 > 依据是其余 16 台的运行态仍然未知，不是那个已撤销的 outbound 结论。
 
-### G2 — 本机到节点的连通性未验证
+### G2 — 本机到节点的连通性（`[实测]` 2026-08-29 已验证，非全通）
 
-- `[实测]` `ansible` / `ansible-playbook` **不在 PATH**；仓库 wrapper `ansible-playbook:61-62` 回退到 `monitor_venv/bin/ansible-playbook`，该文件存在
-- `[实测]` 无 `~/.ssh/config`
-- 是否能实际连通节点**未验证**
+- `[实测]` `ansible` / `ansible-playbook` **不在 PATH**；仓库 wrapper 回退到 `monitor_venv/bin/`，可用
+- `[实测]` `~/.ssh/config` 存在（`Include ~/.ssh/config.d/*.conf` + 若干直写 Host）
+- `[实测]` vault 口令：仓库内 `.vault_pass` **解不开** group_vars 的 vault（`Decryption failed`），
+  能解开的是 `~/.vault_pass`。两者内容不同，选错会在采集第一步就失败
+
+**连通性矩阵（`[实测]` 2026-08-29，`ansible reality_nodes -m ping`）**：
+
+| 类别 | 节点 | 原因 |
+|---|---|---|
+| ✅ 可达 | `spt` | `ansible_connection=local` |
+| ✅ 可达（装入 `vps-fleet` 后） | `jp05` `jp10` `kagoya` `netcup` | — |
+| ⚠️ 缺凭据 | `ali` `ams` `dcc` `dzire` `usca` `sg` | 用 `id_ed25519`，未装入 ssh-agent |
+| ❌ 网络不可达 | `hkcod12` `hyu24` `hyd13` `hyu22` | TCP 探测均不通；**恰好是 `[test_nodes]` 全组**，其中三台同在 `82.152.164.0/24` |
+| ❌ 网络不可达 | `jpntt` `hk-hn2` | TCP 探测不通 |
+| ❌ 无映射 | `hk-hn` | ssh config 里**没有该 Host**，DNS 也解析不了；ssh 侧只有 `hk01` / `hn01`，对应关系未确认 |
+
+**两个待操作者确认的问题**：
+
+1. `[test_nodes]` 四台是否已退役？若是，inventory 应清理；若否，是真故障
+2. `hk-hn` 与 ssh 侧 `hk01` / `hn01` 的映射关系
+
+**关键教训**：ssh config 里有 Host 条目 ≠ 连得上。私钥带 passphrase 且无 ssh-agent 时，
+握手会停在 `Server accepts key` 之后失败 —— 看起来像"没授权"，实际是"签不出名"。
+任何声称"本机可作控制端"的判断，都必须以一次真实 `ping` 为准。
 
 ### G3 — VLESS Encryption 仅做了配置校验
 
@@ -752,3 +835,4 @@ for t in d['results']: print(f\"  {t['name']:<24} {t['last_updated']}\")"
 | 2026-08-29 | **P0 第 1 项已修**：删除 `roles/reality_single/templates/config.json.j2` 与 `roles/reality_multi/templates/config.json.j2` 的 `connLimit`（multi 侧同时去掉 `bufferSize` 的尾逗号）以及 `group_vars/all/main.yml` 的 `reality_conn_limit_single` / `reality_conn_limit_multi`。验收用 Jinja2 桩上下文渲染两个模板并 `json.loads`，确认合法 JSON、`connLimit` 消失、其余 policy 字段无回归 |
 | 2026-08-29 | **P0 第 2 项已修**：重写 `audit.yml` 的采集与汇总。日志路径改通配覆盖 single/multi（D10）；取值改为锚定 `from` / `email:` 记号，修正原先把 outbound tag 当用户名的错误（**新增 D14**，该缺陷令 single 节点也从未产出有效审计）；采样窗口由 `tail -n 2000` 改为按日期取（**新增 D15**，原窗口在本机实测仅覆盖 26 分钟）；用户名归一为首个 `.` 之前，与 `agent.py.j2:288` 对齐，使跨节点合并真正生效；报告表头移到 `sort -nr` 之后；汇总临时文件收紧为 `0600` |
 | 2026-08-29 | **新增 D16 并完成仓库侧修复**：Reality 日志从无轮转，本机实测 675MB / 604 万行 / 145 天、4.7MB 每天且无上界。新增根 `templates/reality-xray-logrotate.j2`，由 `deploy.yml` 的 `post_tasks` 装包并下发到 `/etc/logrotate.d/reality-xray`（`template` 带 `validate` 钩子，配置写坏会在下发时失败而非静默生效），`decommission.yml` 负责移除。验证中否掉了 `su 10000 10000`（logrotate 报 `unknown group`）。**尚未下发到任何节点** |
+| 2026-08-29 | **G1-b 首轮采集（5/18）与 G2 关闭**。**更正**「本机就是可用控制端」—— 实跑 ping 只有 local 的 `spt` 成功，两把私钥都带 passphrase 且无 ssh-agent，握手停在 `Server accepts key` 之后；另更正 vault 口令文件（`~/.vault_pass` 而非仓库内 `.vault_pass`）。采集证实 **D6 漂移全体一致**（5 台同一 digest `sha256:433d7302…`、同为 8 个月前镜像、仍引用旧库）、**D3/D4/D5 五台全中**、**D12 由推断升为实证**（5 台都有 socks5 outbound，只有 `jp10` 有对应路由规则）。新发现 `jp05` 磁盘仅余 9%。G2 记录完整连通性矩阵：`[test_nodes]` 全组 TCP 不可达、`hk-hn` 无 ssh 映射，两项待操作者确认。D16 的 `maxsize` 收紧为 `50M` 并去掉 `delaycompress`。**操作者决定：验证目的已达成，不再继续采集** |
