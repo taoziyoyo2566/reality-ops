@@ -189,6 +189,22 @@
   # 🟢 核心修改：使用 post_tasks 代替独立的 localhost play
   # =========================================================
   post_tasks:
+    - name: 安装 logrotate
+      package:
+        name: logrotate
+        state: present
+      tags: ['system', 'logrotate']
+
+    - name: 下发 Reality 日志轮转配置
+      template:
+        src: reality-xray-logrotate.j2
+        dest: /etc/logrotate.d/reality-xray
+        owner: root
+        group: root
+        mode: '0644'
+        validate: '{{ reality_logrotate_bin }} --debug %s'
+      tags: ['system', 'logrotate']
+
     - name: 执行脚本更新 GitHub Gist
       command: python3 {{ playbook_dir }}/generate_subs_gist.py
       delegate_to: localhost  # 强制在本机执行

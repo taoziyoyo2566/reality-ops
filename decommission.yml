@@ -330,6 +330,12 @@
           changed_when: true
           tags: ['cleanup']
 
+        - name: 移除 Reality 日志轮转配置
+          file:
+            path: /etc/logrotate.d/reality-xray
+            state: absent
+          tags: ['cleanup']
+
     - name: 删除目标节点订阅缓存文件
       run_once: true
       delegate_to: localhost

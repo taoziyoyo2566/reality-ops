@@ -15,6 +15,10 @@ reality_memory_limit: "300m"
 reality_memory_swap: "1g"
 reality_memory_reservation: "200m"
 reality_mem_swappiness: 60
+# 日志轮转（logrotate + copytruncate；Xray 无重开日志的信号）
+reality_log_rotate_keep: 14          # 保留多少份历史（压缩后单份约 0.4MB/天量级）
+reality_log_rotate_maxsize: "200M"   # 单份超过此大小则提前于每日周期轮转
+reality_logrotate_bin: "/usr/sbin/logrotate"   # 少数发行版路径不同，可在 host_vars 覆盖
 
 # --- 节点别名标签（客户端显示名） ---
 # node_tags 在 host_vars/<host>.yml 覆盖，如 node_tags: ["4837", "Unlimited"]

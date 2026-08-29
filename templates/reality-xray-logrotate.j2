@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+# Reality/Xray 访问与错误日志轮转。
+#
+# 通配同时覆盖两种部署模式：
+#   single -> {{ reality_logs_dir }}/reality_core/{access,error}.log
+#   multi  -> {{ reality_logs_dir }}/<实例名>/{access,error}.log
+#
+# 必须用 copytruncate：Xray 没有重开日志的信号（不像 nginx 的 USR1），
+# 容器又是 read_only + cap_drop ALL。若把文件改名，Xray 会继续往已改名的
+# fd 写，新建的 access.log 永远是空的。代价是拷贝与截断之间有极小的丢行
+# 窗口，对 IP 审计可以接受。
+#
+# 不设 su：日志目录属主为容器用户 10000，但该 UID 在宿主机没有 passwd/
+# group 条目，logrotate 解析 `su 10000 10000` 会报 unknown group 并跳过
+# 整个配置块。目录不是 group/world 可写，因此无需 su，由 root 轮转即可。
+# nocreate 用于覆盖 /etc/logrotate.conf 的全局 create —— copytruncate
+# 方式下原文件始终存在，不需要重建。
+{{ reality_logs_dir }}/*/*.log {
+    daily
+    rotate {{ reality_log_rotate_keep }}
+    maxsize {{ reality_log_rotate_maxsize }}
+    compress
+    delaycompress
+    copytruncate
+    notifempty
+    missingok
+    nocreate
+}

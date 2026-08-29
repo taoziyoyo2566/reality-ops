@@ -285,6 +285,24 @@ Docker 29.7.1，构建平台 `linux/amd64`。
 | 状态 | **已修（2026-08-29）** |
 | 归属 | P0（随 D10 一并修复） |
 
+### D16 — Reality/Xray 日志从无轮转，磁盘占用无上界
+
+| 项 | 内容 |
+|---|---|
+| 现象 | `access.log` 自节点部署起持续追加，从未轮转、从未压缩、从未清理 |
+| 证据 | `[实测]` 2026-08-29 本机 `spt`：`access.log` **675 MB / 6,049,140 行**，首行 `2026/04/06 22:07`，末行 `2026/08/29 02:52` —— 145 天无轮转 |
+| | `[实测]` 增长速率 **4.7 MB/天、41,718 行/天**；`error.log` 仅 2.3 KB，非主因 |
+| | `[代码]` 全仓 `grep -rn "logrotate\|max-size\|log-opt\|logging:"` 零命中 —— 仓库侧无任何日志治理 |
+| | `[实测]` 宿主机已装 `logrotate`（`/usr/sbin/logrotate`），`logrotate.timer` 已 enabled，每日运行；`/etc/logrotate.d/` 下无任何 reality/xray 相关配置 |
+| 关联影响 | 该体量同时压垮了 audit 的采样窗口，见 D15 |
+| 修法约束 | **必须 `copytruncate`**。Xray 没有重开日志的信号（不像 nginx 的 `USR1`），容器又是 `read_only` + `cap_drop ALL`；改名轮转会让 Xray 继续写已改名的 fd，新 `access.log` 恒空 |
+| | **不能加 `su 10000 10000`**。`[实测]` logrotate 解析该指令时报 `unknown group '10000'` 并跳过整个配置块 —— 容器用户 UID 10000 在宿主机没有 passwd/group 条目。日志目录为 `755`，非 group/world 可写，无需 `su` |
+| | 需 `nocreate` 覆盖 `/etc/logrotate.conf` 的全局 `create`（`[实测]` 该文件全局为 `weekly` / `rotate 4` / `create`） |
+| 预期收敛 | `[实测]` gzip -9 实测压缩比 **11.3:1**（20 万行样本 23MB → 2164KB）。按 `daily` + `rotate 14` + `delaycompress`，稳态约 **15 MB**（今日 4.7MB + 昨日 4.7MB + 13 份各约 0.4MB），取代当前无上界增长 |
+| 状态 | **仓库侧已修（2026-08-29）**：`deploy.yml` 下发 `/etc/logrotate.d/reality-xray`，`decommission.yml` 负责清理 |
+| 未闭合 | **尚未下发到任何节点**，需部署授权。其余 17 台是否已装 logrotate、日志实际体量多大，均未验证 —— 并入 P1 的 G1-b 采集清单 |
+| 归属 | P0 |
+
 ---
 
 ## 3. 明确的缺口（未知，不得当作已通过）
@@ -452,12 +470,13 @@ P2 计划补 index 级 `annotations`，但存在一个**未验证的前提**：
 ### P0 — 修正已验证缺陷（不改架构，零风险）
 
 镜像侧的 D1 / D2 与三项发布脚本测试任务已随项目剥离移出（见 §1.5、§3.5），
-本仓库剩下的 P0 只剩配置层两项：
+本仓库剩下的 P0 为配置层三项（第三项为 2026-08-29 顺查日志体量时新发现的 D16）：
 
 | 任务 | 依据 | 验收 |
 |---|---|---|
 | ~~删除两个模板的 `connLimit` 与 `group_vars/all/main.yml:19-20`~~ **已完成 2026-08-29** | D3 | ✅ 渲染回归通过：两模板渲染为合法 JSON，`policy.levels.0` 无 `connLimit`，其余字段无回归 |
 | ~~`audit.yml:10` 支持 multi 模式日志路径~~ **已完成 2026-08-29**（连带修 D14 取错字段、D15 采样窗口） | D10 / D14 / D15 | ✅ 两种模式的 fixture 都能取到日志；真实生产日志产出 8 用户 / 22 IP（原为 1 条 `direct]`） |
+| 为 Reality 日志下发 logrotate（`copytruncate` + `compress`） | D16 | `logrotate --debug` 解析通过且轮转行为正确；`--syntax-check` 通过。**下发到节点需部署授权** |
 
 **授权边界**：仅工作树编辑。提交 / 推送 / PR 需单独授权。
 
@@ -732,3 +751,4 @@ for t in d['results']: print(f\"  {t['name']:<24} {t['last_updated']}\")"
 | 2026-08-29 | **D11 改判为不成立**：`socks5_egress` 定义在 `group_vars/all/socks5.yml:6`，原判只 grep 了 `host_vars/`，配置可从仓库复现，P1 部署阻塞撤销。顺此发现并新增 **D12**（SOCKS5 凭据被写入每一台 single 节点 —— outbound 不做主机门控，routing 规则做）与 **D13**（32/32 个已跟踪 `users/*.yml` 含明文 `private_key`，仓库为 public；操作者决定记录待后续处理）。G1 补入本机 `spt` 快照（1/18 → 2/18），并更正「从本机无法采集其余节点」—— 当前执行环境就是可用控制端 |
 | 2026-08-29 | **P0 第 1 项已修**：删除 `roles/reality_single/templates/config.json.j2` 与 `roles/reality_multi/templates/config.json.j2` 的 `connLimit`（multi 侧同时去掉 `bufferSize` 的尾逗号）以及 `group_vars/all/main.yml` 的 `reality_conn_limit_single` / `reality_conn_limit_multi`。验收用 Jinja2 桩上下文渲染两个模板并 `json.loads`，确认合法 JSON、`connLimit` 消失、其余 policy 字段无回归 |
 | 2026-08-29 | **P0 第 2 项已修**：重写 `audit.yml` 的采集与汇总。日志路径改通配覆盖 single/multi（D10）；取值改为锚定 `from` / `email:` 记号，修正原先把 outbound tag 当用户名的错误（**新增 D14**，该缺陷令 single 节点也从未产出有效审计）；采样窗口由 `tail -n 2000` 改为按日期取（**新增 D15**，原窗口在本机实测仅覆盖 26 分钟）；用户名归一为首个 `.` 之前，与 `agent.py.j2:288` 对齐，使跨节点合并真正生效；报告表头移到 `sort -nr` 之后；汇总临时文件收紧为 `0600` |
+| 2026-08-29 | **新增 D16 并完成仓库侧修复**：Reality 日志从无轮转，本机实测 675MB / 604 万行 / 145 天、4.7MB 每天且无上界。新增根 `templates/reality-xray-logrotate.j2`，由 `deploy.yml` 的 `post_tasks` 装包并下发到 `/etc/logrotate.d/reality-xray`（`template` 带 `validate` 钩子，配置写坏会在下发时失败而非静默生效），`decommission.yml` 负责移除。验证中否掉了 `su 10000 10000`（logrotate 报 `unknown group`）。**尚未下发到任何节点** |
