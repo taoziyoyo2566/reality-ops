@@ -7,6 +7,23 @@ on:
       - ops
 
 jobs:
+  config-template:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Jinja2
+        run: pip install --quiet 'jinja2>=3.1'
+
+      - name: Check the socks5 outbound and its routing rule stay in lockstep
+        run: python tests/test_socks5_gate.py
+
   whitespace:
     runs-on: ubuntu-latest
     steps:
