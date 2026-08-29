@@ -1,0 +1,127 @@
+name: Check Pinned Runtime Updates
+
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install checker dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install packaging requests pyyaml
+
+      - name: Check pinned runtime dependencies
+        id: check
+        run: |
+          set +e
+          python scripts/check_pinned_updates.py > update-report.md
+          rc=$?
+          echo "exit_code=${rc}" >> "${GITHUB_OUTPUT}"
+
+          case "${rc}" in
+            0)
+              echo "status=up_to_date" >> "${GITHUB_OUTPUT}"
+              ;;
+            10)
+              echo "status=updates_available" >> "${GITHUB_OUTPUT}"
+              ;;
+            *)
+              echo "status=check_failed" >> "${GITHUB_OUTPUT}"
+              ;;
+          esac
+
+          exit 0
+
+      - name: Create or refresh update issue
+        if: steps.check.outputs.status == 'updates_available'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          issue_number=$(gh issue list \
+            --search 'Pinned runtime updates available in:title state:open' \
+            --json number \
+            --jq '.[0].number')
+
+          if [[ -n "${issue_number}" ]]; then
+            gh issue edit "${issue_number}" \
+              --title "Pinned runtime updates available" \
+              --body-file update-report.md
+          else
+            gh issue create \
+              --title "Pinned runtime updates available" \
+              --body-file update-report.md
+          fi
+
+      - name: Close resolved update issue
+        if: steps.check.outputs.status == 'up_to_date'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          issue_number=$(gh issue list \
+            --search 'Pinned runtime updates available in:title state:open' \
+            --json number \
+            --jq '.[0].number')
+
+          if [[ -n "${issue_number}" ]]; then
+            gh issue comment "${issue_number}" \
+              --body "Pinned runtime dependencies are currently up to date."
+            gh issue close "${issue_number}"
+          fi
+
+      - name: Create or refresh checker failure issue
+        if: steps.check.outputs.status == 'check_failed'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          issue_number=$(gh issue list \
+            --search 'Pinned runtime update check failed in:title state:open' \
+            --json number \
+            --jq '.[0].number')
+
+          if [[ -n "${issue_number}" ]]; then
+            gh issue edit "${issue_number}" \
+              --title "Pinned runtime update check failed" \
+              --body-file update-report.md
+          else
+            gh issue create \
+              --title "Pinned runtime update check failed" \
+              --body-file update-report.md
+          fi
+
+      - name: Close resolved checker failure issue
+        if: steps.check.outputs.status != 'check_failed'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          issue_number=$(gh issue list \
+            --search 'Pinned runtime update check failed in:title state:open' \
+            --json number \
+            --jq '.[0].number')
+
+          if [[ -n "${issue_number}" ]]; then
+            gh issue comment "${issue_number}" \
+              --body "Pinned runtime dependency checks are working again."
+            gh issue close "${issue_number}"
+          fi
+
+      - name: Fail workflow on checker error
+        if: steps.check.outputs.status == 'check_failed'
+        run: |
+          cat update-report.md
+          exit 1

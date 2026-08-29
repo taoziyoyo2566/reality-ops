@@ -1,0 +1,24 @@
+version: 2
+
+updates:
+  # The schedule controls version checks. Security updates are advisory-driven
+  # and are not delayed by this schedule or the version-update PR limit.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "cron"
+      cronjob: "0 6 * * *"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 5
+    assignees:
+      - "taoziyoyo2566"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "cron"
+      cronjob: "15 6 * * *"
+      timezone: "Asia/Tokyo"
+    open-pull-requests-limit: 5
+    assignees:
+      - "taoziyoyo2566"
