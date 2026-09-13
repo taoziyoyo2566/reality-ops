@@ -9,7 +9,7 @@
     "basic"
   ],
   "hosts": [
-    "hk-hn"
+    "hk01"
   ],
   "deny_hosts": []
 }

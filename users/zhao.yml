@@ -9,7 +9,6 @@
     "premium"
   ],
   "hosts": [
-    "sg",
     "spt"
   ],
   "deny_hosts": [
