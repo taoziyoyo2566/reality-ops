@@ -4,7 +4,7 @@ Last updated: 2026-08-28 JST
 
 ## Xray Image State (Consumer Side)
 
-Last updated: 2026-08-29 JST.
+Last updated: 2026-09-14 JST.
 
 Image build and publication left this repository entirely and now belong to
 [`taoziyoyo2566/xray-docker`](https://github.com/taoziyoyo2566/xray-docker).
@@ -12,22 +12,32 @@ This repository is only a consumer: it owns no Dockerfile, release pipeline, or
 tag contract. The contract and upgrade procedure live in
 [`docs/runbooks/xray-image-consumption.md`](runbooks/xray-image-consumption.md).
 
-- The deployment default is `taoziyoyo2566/xray-docker:latest`
-  (`group_vars/all/main.yml:3`). The reference is committed but has **not been
-  deployed to any node**.
+- The deployment default is the floating `taoziyoyo2566/xray-docker:latest`
+  (`group_vars/all/main.yml:3`). No digest is pinned (roadmap C12).
+- `[实测]` 2026-09-14 read-only snapshot of `spt`, `dzire`, and `usca`: every
+  `reality_*` container runs `taoziyoyo2566/xray-docker:latest` and reports
+  Xray `26.3.27` (`d2758a0`), in bridge network mode.
+  - `spt`: `reality_core` created 2026-09-12, restart count 0; local image
+    `taoziyoyo2566/xray-docker@sha256:fd502666d1a9ca7ea772e2c1638bb83e79bdc12c97cddd5e3755edc7485b3ec7`
+    (image created 2026-08-28).
+  - `dzire` (multi, 32 containers) and `usca` (single): repository digest was
+    not collected.
+  - The other nodes were not probed; do not assume they run the new image.
+  - This supersedes the 2026-08-29 record that the new reference had not been
+    deployed and that `spt` still ran `xray_docker@sha256:433d7302...`
+    (Xray `25.12.8`).
 - The old repository `taoziyoyo2566/xray_docker` is frozen; its `latest` stopped
   at 2026-08-26. It had roughly 2236 pulls and may have users outside this
   project, but receives no further updates.
 - This repository's `Sync Xray Release Images` and `Audit Xray Image Tags` were
-  disabled on 2026-08-29 and their files are removed in this change. This
-  repository no longer produces any image.
-- `[实测]` The node recorded in unified roadmap G1 and this control host `spt`
-  both still run `xray_docker@sha256:433d7302...`, built 2025-12-24, reporting
-  Xray `25.12.8`. Nodes do not re-pull automatically (roadmap D6), so the image
-  switch has no effect until a deployment runs.
+  disabled on 2026-08-29 and their files were removed. This repository no
+  longer produces any image.
+- Nodes do not re-pull automatically; `latest` on different nodes may resolve to
+  different digests. Per-node digest reconciliation is tracked in roadmap C12.
 - Migration acceptance -- geodata resolution under `--read-only --cap-drop ALL`,
-  image size, bad-config behaviour, `XRAY_HEALTH_PORT` -- has not been executed.
-  See roadmap P2-c. **Do not record it as passed on the strength of "the new
+  image size, bad-config behaviour, `XRAY_HEALTH_PORT` -- has still not been
+  executed. The three probed nodes starting the image and serving traffic is
+  not that acceptance. **Do not record it as passed on the strength of "the new
   repository already fixed it".**
 
 Publisher-side history is retained in
@@ -71,21 +81,52 @@ Important details:
 
 ## Node Naming State
 
-Canonical inventory names are now:
+Last updated: 2026-09-14 JST. Source: `inventory.ini` after `ops@91e171d` and the
+test node retirement below, `host_vars/`, and local SSH config resolved
+with `ssh -G`. `inventory.ini` is authoritative; re-read it instead of trusting
+this list.
+
+`[reality_nodes]` hosts:
 
 ```text
-de, sg, jp05
+dzire, netcup, ams, dcc, legend, jp05, hk01, hk02, jp10, kagoya, usca, spt, ali
 ```
 
-Former names:
+Tier groups: `[free]` dzire, usca, netcup; `[basic]` jp05, legend, kagoya;
+`[normal]` jp10, hk01; `[premium]` ams, dcc, hk02. Feature groups: `[special]` spt;
+`[china]` ali.
 
-```text
-netcup -> de
-legend -> sg
-lej -> jp05
-```
+Name changes since the previous record:
 
-Inventory now uses canonical host `de` directly; SSH connection resolves through local SSH config `Host de`.
+| Previous name | Current inventory name | Notes |
+|---|---|---|
+| `de` | `netcup` | `1a648c5 Rename the de node to netcup and update user assignments` |
+| `sg` | `legend` | `91e171d`; SSH `Host legend`, `host_vars/legend.yml` |
+| `hk-hn` | `hk01` | `91e171d`; SSH `Host hk01`, `host_vars/hk01.yml` |
+| `hk-hn2` | `hk02` | `91e171d`; SSH `Host hk02`, `host_vars/hk02.yml` |
+| `jpntt` | removed | `91e171d`. The `socks5_egress` profile `jpntt_isp` is only a profile name and routes on `jp10` |
+| `lej` | `jp05` | Unchanged since the previous record |
+| `hkcod12`, `hyu24`, `hyd13`, `hyu22` | removed | Operator retired all four test nodes on 2026-09-14: removed from `[reality_nodes]`, the `[test_nodes]` group, their `host_vars`, `group_vars/test_nodes.yml`, and the monitor task guard keyed on that group. No replacement test node is chosen (roadmap §9) |
+
+Remaining gaps:
+
+1. Monitor records are keyed by `inventory_hostname`. After the next monitor agent
+   deploy, renamed nodes report under the new names; history under `hk-hn`,
+   `hk-hn2`, and `sg` is not migrated.
+2. None of the renames or removals has been deployed. Node config, subscriptions,
+   and monitor names change only when a deploy runs; removing a host from the
+   inventory does not stop its containers or decommission it.
+3. `[实测]` 2026-09-14 the stale `test_hkcod12.json` and `test_hyu24.json` were
+   deleted from `/opt/reality/users` on `spt`; no cache file for any retired test
+   node remains there. The published Gist `test`/`test-full` files still carry the
+   retired links until the next Gist generation rewrites them from the remaining
+   `test_jp05.json` and `test_jp10.json`.
+
+### Historical: 2026-08 rename to `de`, `sg`, `jp05`
+
+At that time the canonical names were `de`, `sg`, `jp05` (from `netcup`, `legend`,
+`lej`), with SSH through `Host de`. `de` and `sg` were later abandoned as described
+above.
 
 Old monitor history for `netcup`, `legend`, and `lej` was deleted from the monitor DB because historical data was not needed:
 

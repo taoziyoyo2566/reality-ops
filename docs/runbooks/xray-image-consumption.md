@@ -38,7 +38,7 @@ Overview 全部归独立项目
 - 默认只在**本地无该镜像时**才拉取（`reality_single/tasks/main.yml:126`、
   `reality_multi/tasks/main.yml:111` 的 `when: images | length == 0`）。
 - multi 模式的 compose 使用 `pull: never`（`reality_multi/tasks/main.yml:257`）。
-- 无条件拉取的任务挂在 `update_image` tag 下，默认不执行
+- 无条件拉取的任务挂在 `update_image` tag 下，默认不执行；当前任务尚未设置 `force_source: true`，因此不能把该 tag 当作可靠的强制刷新
   （`reality_single/tasks/main.yml:133`、`reality_multi/tasks/main.yml:118`）。
 
 结果：节点会长期停在首次拉取的那个 `latest`。`[实测]` 已观察到节点运行 8 个月前的
@@ -52,8 +52,8 @@ Overview 全部归独立项目
    [`xray-docker` 的 Actions](https://github.com/taoziyoyo2566/xray-docker/actions)
    或 [Docker Hub tag 列表](https://hub.docker.com/r/taoziyoyo2566/xray-docker/tags)。
 2. 需要固定版本或 digest 时，改 `group_vars/all/main.yml` 的 `xray_image`。
-3. 强制拉取：`./ansible-playbook deploy <host> --tags update_image`。
-4. 完整部署以重建容器。
+3. 先显式拉取目标 tag 或 digest，再运行完整部署以重建容器；在拉取任务补上 `force_source: true` 并完成验证前，不要只依赖 `--tags update_image`。
+4. 检查运行容器实际 Image ID/RepoDigest 和 Xray 版本，不以 `latest` 字符串相同作为升级证据。
 5. 按下节验收。
 
 ## 首次切到 `xray-docker` 必须盯的行为差异
@@ -62,7 +62,7 @@ Overview 全部归独立项目
 
 | 项 | 变化 |
 |---|---|
-| 坏配置行为 | 新 entrypoint 在启动前执行 `xray run -test`。坏配置从「静默重启循环」变为「容器直接退出并打印解析错误」；`restart: always` 下表现为**容器停住**。这是最需要盯的一条 |
+| 坏配置行为 | 新 entrypoint 在启动前执行 `xray run -test`。坏配置会在启动前被拒绝并打印解析错误；若编排仍使用 `restart: always`，可能表现为持续重启，必须检查 `RestartCount` 和日志，不能假设容器会停住。这是最需要盯的一条 |
 | geodata | 由 `/usr/bin/` 改为 `/usr/local/share/xray` 并设置 `XRAY_LOCATION_ASSET`，可在 `--read-only --cap-drop ALL` 下正常解析 |
 | 镜像体积 | 约 154MB 降至约 104MB（amd64，未压缩） |
 | 容器 UID | 仍为 `10000:10000`，与现有部署一致，无需改动 |
