@@ -45,7 +45,6 @@ chmod 600 .vault_pass
 
 # 4) 连通性检查
 ansible -i inventory.ini all -m ping --vault-password-file ~/.vault_pass
-ansible -i inventory.ini test_nodes -m ping --vault-password-file ~/.vault_pass   # 仅测试组
 ```
 
 依赖前提：控制端有 `ansible`、`python3`；若有 `reality_mode: multi` 节点还需 `docker compose`（本地 `compose config` 校验）；目标机为 Debian/Ubuntu、Docker 可用、支持 sudo。

@@ -36,17 +36,6 @@
       when: (monitor.subs_proxy.enabled | default(false)) | bool
       tags: ['monitor', 'monitor_server']
 
-    - name: "[Guard] 测试节点禁止上报生产 monitor (staging 隔离层④)"
-      assert:
-        that:
-          - "'monitor.taoziyoyo.com' not in (monitor.server_url | default(''))"
-          - (monitor.server_host | default('')) != 'spt'
-          - (vault_monitor_report_token | default('')) | length == 0 or (monitor.report_token | default('')) != (vault_monitor_report_token | default(''))
-          - (vault_monitor_tunnel_secret | default('')) | length == 0 or (monitor.tunnel_secret | default('')) != (vault_monitor_tunnel_secret | default(''))
-        fail_msg: "测试节点 {{ inventory_hostname }} 启用监控但仍指向生产 monitor/server/token；请在 test group_vars 覆盖完整 monitor 字典并使用独立 token"
-      when: "'test_nodes' in group_names"
-      tags: ['monitor']
-
     - name: 确保系统安装了基础依赖
       apt:
         name: ["python3-pip", "python3-venv", "cron"]
