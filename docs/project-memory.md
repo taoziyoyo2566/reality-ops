@@ -12,20 +12,21 @@ This repository is only a consumer: it owns no Dockerfile, release pipeline, or
 tag contract. The contract and upgrade procedure live in
 [`docs/runbooks/xray-image-consumption.md`](runbooks/xray-image-consumption.md).
 
-- The deployment default is the floating `taoziyoyo2566/xray-docker:latest`
-  (`group_vars/all/main.yml:3`). No digest is pinned (roadmap C12).
-- `[实测]` 2026-09-14 read-only snapshot of `spt`, `dzire`, and `usca`: every
-  `reality_*` container runs `taoziyoyo2566/xray-docker:latest` and reports
-  Xray `26.3.27` (`d2758a0`), in bridge network mode.
-  - `spt`: `reality_core` created 2026-09-12, restart count 0; local image
-    `taoziyoyo2566/xray-docker@sha256:fd502666d1a9ca7ea772e2c1638bb83e79bdc12c97cddd5e3755edc7485b3ec7`
-    (image created 2026-08-28).
-  - `dzire` (multi, 32 containers) and `usca` (single): repository digest was
-    not collected.
-  - The other nodes were not probed; do not assume they run the new image.
-  - This supersedes the 2026-08-29 record that the new reference had not been
-    deployed and that `spt` still ran `xray_docker@sha256:433d7302...`
-    (Xray `25.12.8`).
+- The existing single/multi deployment keeps the floating
+  `taoziyoyo2566/xray-docker:latest` (`group_vars/all/main.yml:3`). Per roadmap
+  §4.1.3 decisions 7 and 9 (2026-09-15) the old implementation is not modified;
+  the new single-instance implementation gets its own image variable pinned by
+  digest (candidate `v26.3.27` =
+  `sha256:fd502666d1a9ca7ea772e2c1638bb83e79bdc12c97cddd5e3755edc7485b3ec7`).
+- `[实测]` 2026-09-15 00:00 JST read-only snapshot of the 12 reachable inventory
+  nodes (`ali` refused SSH authentication): every `reality_*` container reports
+  Xray `26.3.27` with restart count 0. Ten nodes run the `fd502666` image;
+  `spt` and `kagoya` run the older `b891c9781882` build (image created
+  2026-08-27). On `spt` the local `latest` tag already points at `fd502666`, but
+  `reality_core` (created 2026-09-12) was not recreated. Per-node detail is in
+  roadmap §3.3.
+  - This supersedes the 2026-09-14 record that `spt` ran `fd502666`; that record
+    described the local tag, not the running container.
 - The old repository `taoziyoyo2566/xray_docker` is frozen; its `latest` stopped
   at 2026-08-26. It had roughly 2236 pulls and may have users outside this
   project, but receives no further updates.
@@ -113,14 +114,24 @@ Remaining gaps:
 1. Monitor records are keyed by `inventory_hostname`. After the next monitor agent
    deploy, renamed nodes report under the new names; history under `hk-hn`,
    `hk-hn2`, and `sg` is not migrated.
-2. None of the renames or removals has been deployed. Node config, subscriptions,
-   and monitor names change only when a deploy runs; removing a host from the
-   inventory does not stop its containers or decommission it.
+2. `[实测]` 2026-09-14 a deploy limited to `hk01:hk02:legend` ran from 22:32 JST.
+   Artifact timestamps show it synced node configs at 22:49, regenerated the local
+   subscription cache at 22:48–22:50 and updated the Gist at 22:51
+   (`SUBSCRIPTIONS.txt`), then hung writing output after its parent session exited;
+   it was terminated at about 23:50. Read-only checks afterwards: every
+   `reality_*` container on `hk01` (25) and `hk02` (23) and the single container
+   on `legend` is running, and on `hk01`/`hk02` each container's `/config.json`
+   hash matches the host file. Whether the running Xray processes loaded the
+   latest content was not proven; the containers were created 2026-09-14 08 JST,
+   after `91e171d`. Other renamed or removed nodes were not deployed by this run.
 3. `[实测]` 2026-09-14 the stale `test_hkcod12.json` and `test_hyu24.json` were
-   deleted from `/opt/reality/users` on `spt`; no cache file for any retired test
-   node remains there. The published Gist `test`/`test-full` files still carry the
-   retired links until the next Gist generation rewrites them from the remaining
-   `test_jp05.json` and `test_jp10.json`.
+   deleted from `/opt/reality/users` on `spt` after that Gist update. The Gist was
+   then regenerated at 23:56 JST with `--tags gist --limit spt`
+   (`changed=1`, `failed=0`, `SUBSCRIPTIONS.txt` rewritten), so `test`/`test-full`
+   are built only from `test_jp05.json` and `test_jp10.json`. The published Gist
+   content itself was not read back.
+4. The operator confirmed on 2026-09-14 that the four test node servers have
+   already been cancelled, so there is nothing left to decommission on them.
 
 ### Historical: 2026-08 rename to `de`, `sg`, `jp05`
 
