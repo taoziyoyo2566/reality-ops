@@ -1,0 +1,63 @@
+---
+# 移除 xray_edge 新实例（回滚用）。只触碰 xray_edge 自己的容器、目录、timer 与控制端测试链接，
+# 不触碰旧 single/multi 实例。节点 REALITY 密钥默认保留，便于重新部署后公钥不变：
+#   ./monitor_venv/bin/ansible-playbook -i inventory.ini edge-remove.yml --limit dzire -K
+#   追加 -e edge_remove_keys=true 同时删除密钥（之后重新部署会生成新公钥，已导入的测试链接失效）。
+- hosts: reality_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  vars:
+    edge_remove_keys: false
+  tasks:
+    - name: 必须用 --limit 指定目标
+      assert:
+        that:
+          - ansible_limit is defined
+        fail_msg: edge-remove.yml 只按节点逐台执行，请用 --limit 指定。
+
+    - name: 删除 xray_edge 容器
+      community.docker.docker_container:
+        name: "{{ edge_container_name }}"
+        state: absent
+
+    - name: 停用日志轮转 timer
+      systemd:
+        name: xray-edge-logrotate.timer
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: 删除日志轮转配置与 unit
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/xray-edge-logrotate.timer
+        - /etc/systemd/system/xray-edge-logrotate.service
+        - /etc/xray-edge
+        - /var/lib/logrotate/xray-edge.status
+
+    - name: 重新加载 systemd
+      systemd:
+        daemon_reload: true
+
+    - name: 删除新实例目录（默认保留 keys）
+      file:
+        path: "{{ edge_root_dir }}/{{ item }}"
+        state: absent
+      loop: "{{ ['bin', 'state', 'conf.d', 'last-good', 'logs'] + (['keys'] if (edge_remove_keys | bool) else []) }}"
+
+    - name: 密钥也删除时移除根目录
+      file:
+        path: "{{ edge_root_dir }}"
+        state: absent
+      when: edge_remove_keys | bool
+
+    - name: 删除控制端测试订阅链接
+      delegate_to: localhost
+      become: false
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ query('fileglob', edge_subs_dir ~ '/*_' ~ inventory_hostname ~ '.txt') }}"

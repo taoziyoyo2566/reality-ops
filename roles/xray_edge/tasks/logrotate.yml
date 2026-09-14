@@ -1,0 +1,67 @@
+---
+- name: 安装 logrotate
+  package:
+    name: logrotate
+    state: present
+
+- name: 创建 xray_edge 配置目录
+  file:
+    path: /etc/xray-edge
+    state: directory
+    owner: "0"
+    group: "0"
+    mode: "0755"
+
+- name: 下发 xray_edge 日志轮转配置
+  template:
+    src: logrotate.conf.j2
+    dest: /etc/xray-edge/logrotate.conf
+    owner: "0"
+    group: "0"
+    mode: "0644"
+    validate: "{{ reality_logrotate_bin | default('/usr/sbin/logrotate') }} --debug %s"
+
+- name: 下发 xray_edge 日志轮转 service
+  copy:
+    dest: /etc/systemd/system/xray-edge-logrotate.service
+    owner: "0"
+    group: "0"
+    mode: "0644"
+    content: |
+      # {{ ansible_managed }}
+      [Unit]
+      Description=Rotate xray_edge logs
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ reality_logrotate_bin | default('/usr/sbin/logrotate') }} --state /var/lib/logrotate/xray-edge.status /etc/xray-edge/logrotate.conf
+      Nice=19
+      IOSchedulingClass=idle
+  register: edge_logrotate_service
+
+- name: 下发 xray_edge 日志轮转 timer
+  copy:
+    dest: /etc/systemd/system/xray-edge-logrotate.timer
+    owner: "0"
+    group: "0"
+    mode: "0644"
+    content: |
+      # {{ ansible_managed }}
+      [Unit]
+      Description=Check xray_edge log sizes on a fixed schedule
+
+      [Timer]
+      OnCalendar={{ edge_logrotate_on_calendar }}
+      RandomizedDelaySec=5min
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  register: edge_logrotate_timer
+
+- name: 启用 xray_edge 日志轮转 timer
+  systemd:
+    name: xray-edge-logrotate.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ edge_logrotate_service.changed or edge_logrotate_timer.changed }}"

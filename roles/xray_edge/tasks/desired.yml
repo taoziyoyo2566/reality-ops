@@ -1,0 +1,54 @@
+---
+# 只依赖控制端数据（用户档案、ACL 结果、SOCKS5 配置），便于在本地单独验证期望状态。
+- name: 组装新实例用户（ACL 结果 + 额外测试用户）
+  vars:
+    acl_names: "{{ reality_instances | map(attribute='name') | list }}"
+    all_names: "{{ all_raw_users | map(attribute='name') | list }}"
+  block:
+    - name: 校验额外用户与测试用户
+      assert:
+        that:
+          - edge_extra_users | difference(all_names) | length == 0
+          - edge_extra_users | intersect(acl_names) | length == 0
+          - edge_test_users | difference(acl_names + edge_extra_users) | length == 0
+          - not (edge_xhttp_enabled | bool) or (edge_xhttp_path | length > 0)
+        fail_msg: >-
+          edge_extra_users={{ edge_extra_users }} 必须存在于 users/ 且不在本节点 ACL 结果中；
+          edge_test_users={{ edge_test_users }} 必须是本节点新实例上的用户；
+          开启 XHTTP 时 vault_edge_xhttp_paths['{{ inventory_hostname }}'] 必须已设置。
+
+    - name: 计算新实例用户
+      set_fact:
+        edge_users: >-
+          {%- set out = [] -%}
+          {%- for u in reality_instances + (all_raw_users | selectattr('name', 'in', edge_extra_users) | list) -%}
+            {%- set _ = out.append({'name': u.name, 'uuid': u.uuid, 'short_id': u.short_id}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+- name: 计算本节点生效的 SOCKS5 profile（与旧模板相同的 D12 单一门控）
+  no_log: true
+  set_fact:
+    edge_socks5: >-
+      {%- set out = [] -%}
+      {%- set module = socks5_egress | default({}) -%}
+      {%- if module.enabled | default(false) | bool -%}
+        {%- set names = edge_users | map(attribute='name') | list -%}
+        {%- for p in (module.profiles | default({})) | dict2items -%}
+          {%- set prof = p.value -%}
+          {%- set route = prof.route | default({}) -%}
+          {%- set hosts = route.hosts | default([]) -%}
+          {%- set users = route.users | default([]) | select('in', names) | list -%}
+          {%- set complete = (prof.enabled | default(false) | bool) and (prof.address | default('') | length > 0) and ((prof.port | default(0) | int) > 0) -%}
+          {%- set host_ok = (hosts | length == 0) or (inventory_hostname in hosts) -%}
+          {%- set has_rule = (users | length > 0) or ((route.domains | default([])) | length > 0) or ((route.ips | default([])) | length > 0) or ((route.protocols | default([])) | length > 0) -%}
+          {%- if complete and host_ok and has_rule -%}
+            {%- set _ = out.append({'name': p.key, 'priority': prof.priority | default(100) | int,
+                  'address': prof.address, 'port': prof.port | int,
+                  'username': prof.username | default(''), 'password': prof.password | default(''),
+                  'users': users, 'domains': route.domains | default([]), 'ips': route.ips | default([]),
+                  'protocols': route.protocols | default([]), 'network': route.network | default('')}) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endif -%}
+      {{ out }}

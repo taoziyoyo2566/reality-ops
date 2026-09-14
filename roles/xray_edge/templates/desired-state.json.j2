@@ -1,0 +1,38 @@
+{#- 期望状态 schema v1（xray_edge_apply.py validate() 是其合同）。不含 REALITY 私钥。 -#}
+{
+  "schema": 1,
+  "node": {{ inventory_hostname | to_json }},
+  "reality": {
+    "target": {{ reality_dest | to_json }},
+    "server_names": {{ reality_server_names | to_json }}
+  },
+  "listen": {"port": {{ edge_listen_port | int }}},
+  "xhttp": {
+    "enabled": {{ edge_xhttp_enabled | bool | to_json }},
+    "path": {{ edge_xhttp_path | to_json }},
+    "mode": {{ edge_xhttp_mode | to_json }}
+  },
+  "users": [
+{% for u in edge_users | sort(attribute='name') %}
+    {"name": {{ u.name | to_json }}, "uuid": {{ u.uuid | to_json }}, "short_id": {{ u.short_id | string | to_json }}}{{ "," if not loop.last }}
+{% endfor %}
+  ],
+  "socks5": [
+{% for p in edge_socks5 %}
+    {
+      "name": {{ p.name | to_json }},
+      "priority": {{ p.priority | int }},
+      "address": {{ p.address | string | to_json }},
+      "port": {{ p.port | int }},
+      "username": {{ p.username | string | to_json }},
+      "password": {{ p.password | string | to_json }},
+      "users": {{ p.users | list | to_json }},
+      "domains": {{ p.domains | list | to_json }},
+      "ips": {{ p.ips | list | to_json }},
+      "protocols": {{ p.protocols | list | to_json }},
+      "network": {{ p.network | string | to_json }}
+    }{{ "," if not loop.last }}
+{% endfor %}
+  ],
+  "log": {"level": {{ edge_log_level | to_json }}}
+}

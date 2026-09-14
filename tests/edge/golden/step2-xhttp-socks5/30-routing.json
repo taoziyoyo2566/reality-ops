@@ -1,0 +1,46 @@
+{
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "inboundTag": [
+          "api"
+        ],
+        "outboundTag": "api",
+        "ruleTag": "api",
+        "type": "field"
+      },
+      {
+        "outboundTag": "blocked",
+        "protocol": [
+          "bittorrent"
+        ],
+        "ruleTag": "block-bt",
+        "type": "field"
+      },
+      {
+        "ip": [
+          "geoip:private"
+        ],
+        "outboundTag": "blocked",
+        "ruleTag": "block-private",
+        "type": "field"
+      },
+      {
+        "network": "tcp",
+        "outboundTag": "socks5-p1",
+        "ruleTag": "socks5-p1",
+        "type": "field",
+        "user": [
+          "alice.node1"
+        ]
+      },
+      {
+        "network": "tcp,udp",
+        "outboundTag": "direct",
+        "ruleTag": "default",
+        "type": "field"
+      }
+    ]
+  }
+}

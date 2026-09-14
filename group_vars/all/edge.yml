@@ -1,0 +1,41 @@
+# 新数据面 xray_edge（单实例 · 443 · XHTTP），与现有 single/multi 并行运行。
+# 实施合同：docs/reviews/data-plane-edge/plan-single-instance-443-2026-09-15.md
+# 只被 edge.yml / edge-remove.yml 使用；旧实现不读取任何 edge_* 变量。
+
+# 允许运行新实例的节点；edge.yml 对未列出的节点直接失败。
+edge_nodes: ["dzire", "usca"]
+
+# 只加入新实例、不改用户档案的额外用户（canary 测试账号）。不得与该节点的 ACL 结果重复。
+edge_extra_users: ["test"]
+# 在控制端生成测试订阅链接的用户；必须是该节点新实例上的用户。
+edge_test_users: ["test"]
+
+# 固定 digest：v26.3.27（amd64/arm64 index），2026-09-15 于 Docker Hub 核对。
+edge_xray_image: "taoziyoyo2566/xray-docker@sha256:fd502666d1a9ca7ea772e2c1638bb83e79bdc12c97cddd5e3755edc7485b3ec7"
+
+edge_root_dir: "/opt/xray-edge"
+edge_container_name: "xray_edge"
+edge_listen_port: 443
+edge_log_level: "warning"
+
+# 第二步（XHTTP）开关；path 每节点随机生成，保存在 vault 的 vault_edge_xhttp_paths。
+edge_xhttp_enabled: false
+edge_xhttp_path: "{{ (vault_edge_xhttp_paths | default({})).get(inventory_hostname, '') }}"
+edge_xhttp_mode: "auto"
+
+# 容器资源与日志上界
+edge_memory_limit: "300m"
+edge_memory_reservation: "200m"
+edge_memory_swap: "1g"
+edge_docker_log_max_size: "10m"
+edge_docker_log_max_file: "3"
+edge_log_rotate_keep: 14
+edge_log_rotate_maxsize: "50M"
+# logrotate 的 maxsize 只在运行时检查；专用 timer 按此频率运行，不依赖系统每日任务。
+edge_logrotate_on_calendar: "hourly"
+
+# 新实例用户集合与旧实例不一致时停止；仅在节点尚无旧实例时才可设为 true。
+edge_skip_drift_check: false
+
+# 测试订阅链接写到控制端此目录（不在仓库内；目录 0700、文件 0600）。
+edge_subs_dir: "{{ lookup('env', 'HOME') }}/.local/share/reality-ops/edge-subs"

@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# xray_edge 访问与错误日志轮转，由 xray-edge-logrotate.timer 按 {{ edge_logrotate_on_calendar }} 调用，
+# 使用独立 state 文件，不放入 /etc/logrotate.d，避免被系统每日任务重复处理。
+# copytruncate：Xray 以只读根文件系统和 cap_drop ALL 运行，改名后仍会写旧 fd；
+# 拷贝与截断之间有极小丢行窗口，对 IP 审计可以接受。
+{{ edge_root_dir }}/logs/*.log {
+    daily
+    rotate {{ edge_log_rotate_keep }}
+    maxsize {{ edge_log_rotate_maxsize }}
+    compress
+    copytruncate
+    notifempty
+    missingok
+    nocreate
+}

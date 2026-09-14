@@ -1,6 +1,6 @@
 # 新数据面：单实例 · 443 · XHTTP（并行新增实现）
 
-Status: **DRAFT — 待操作者评审；不授权实现、部署、Git 发布或任何外部变更。**
+Status: **APPROVED — 2026-09-15 操作者确认端口、测试用户与 XHTTP path 方案；仅授权工作树内实现与 §6.1 本地验证（§9）。**
 
 Created: 2026-09-15 JST
 
@@ -49,7 +49,7 @@ Created: 2026-09-15 JST
 | 路径 | 作用 |
 |---|---|
 | `edge.yml` | 新 playbook；只对 `edge_nodes` 中的主机执行，未列入则断言失败 |
-| `group_vars/all/edge.yml` | `edge_nodes`、`edge_xray_image`（digest）、端口、日志上界、XHTTP 开关等新变量 |
+| `group_vars/all/edge.yml` | `edge_nodes`、`edge_extra_users`、`edge_test_users`、`edge_xray_image`（digest）、端口、日志上界、XHTTP 开关等新变量 |
 | `roles/xray_edge/tasks/acl.yml` | 用户加载、校验与 ACL 计算（复制自 `deploy.yml` pre_tasks，见 §3.4） |
 | `roles/xray_edge/tasks/main.yml` | 目录、镜像、期望状态下发、调用节点应用器、容器、日志轮转 |
 | `roles/xray_edge/files/xray_edge_apply.py` | 节点端应用器（仅 Python 标准库），见 §3.2 |
@@ -84,7 +84,7 @@ Created: 2026-09-15 JST
   "generated_at": "<ISO8601>",
   "reality": { "target": "www.flipkart.com:443", "server_names": ["www.flipkart.com"] },
   "listen": { "port": 443 },
-  "xhttp": { "enabled": false, "path": "/<node-path>", "mode": "auto" },
+  "xhttp": { "enabled": false, "path": "<vault_edge_xhttp_paths[node]>", "mode": "auto" },
   "users": [ { "name": "<user>", "uuid": "<uuid>", "short_id": "<sid>" } ],
   "socks5": [ /* 本节点生效 profile：address/port/user/pass/priority/route，按 D12 单一门控 */ ],
   "log": { "level": "warning" }
@@ -133,7 +133,9 @@ abstract socket 与 `127.0.0.1:<port>` 的选择、`xver`）必须先通过 §6.
 - `acl.yml` 复制 `deploy.yml` pre_tasks 的用户加载、三项格式校验、dest/serverNames 配套校验与 ACL 计算，
   得出与旧实现相同的 `reality_instances`；文件头注明来源提交与“随旧实现一起删除”。选择复制而不是抽共享文件，
   是为了满足决定 7（不改旧文件）。
-- 漂移检查：`edge.yml` 在收敛前比较两组用户集合——期望状态中的用户名集合与节点旧实例的实际用户集合
+- 额外用户：`edge_extra_users`（canary 期间为 `["test"]`）只加入新实例的 `clients`，不改用户档案，也不影响旧实例。
+  额外用户必须存在于 `users/`，且不得与 ACL 结果重复。
+- 漂移检查：`edge.yml` 在收敛前比较两组用户集合——期望状态中的用户名集合**去掉 `edge_extra_users`** 后与节点旧实例的实际用户集合
   （multi：`reality_*` 容器名；single：`reality_core` 的入站 tag `user-<name>`，经 Xray API 列出，不读配置文件；
   所用 API 子命令在 v26.3.27 上的可用性于 §6.1 确认，不可用时改为只比较容器内配置文件中 email 集合的 hash 摘要）。
   不一致时停止，避免新旧实例授权范围不同。
@@ -153,7 +155,7 @@ abstract socket 与 `127.0.0.1:<port>` 的选择、`xver`）必须先通过 §6.
 
 ### 3.7 订阅输出（仅测试用户）
 
-canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`edge.yml` 仅为 `edge_test_users` 中的用户
+canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`edge.yml` 仅为 `edge_test_users`（canary 期间为 `["test"]`）中的用户
 在控制端写 `~/.local/share/reality-ops/edge-subs/<user>_<node>.txt`（目录 0700、文件 0600，不在仓库内），内容：
 
 - 第一步：`vless://<uuid>@<node_endpoint>:443?encryption=none&security=reality&type=tcp&sni=<sni>&fp=chrome&pbk=<节点公钥>&sid=<用户 sid>&flow=xtls-rprx-vision#<user>.<node>-edge`
@@ -230,9 +232,10 @@ canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`e
 ## 8. 待操作者确认
 
 1. ~~业务端口~~：2026-09-15 操作者确认使用 **443**（两台 canary 的 443 均空闲，不影响旧实例）。
-2. `edge_test_users`：canary 期间导入测试链接的用户（须是该节点已授权用户）。
-3. XHTTP `path` 的生成与保管方式（建议每节点随机生成、写入 vault 变量）。
-4. 实际使用的客户端清单（决定 XHTTP 与 Vision 兼容性测试范围）。
+2. ~~`edge_test_users`~~：2026-09-15 确认为 `test`。`test` 在 `dzire`/`usca` 上无 ACL 授权，按操作者选择经 `edge_extra_users`
+   只加入新实例（§3.4）。
+3. ~~XHTTP `path`~~：2026-09-15 确认每节点随机生成，保存在 vault 变量 `vault_edge_xhttp_paths`（按节点名索引）。
+4. 实际使用的客户端清单（决定 XHTTP 与 Vision 兼容性测试范围）。未答复；只阻塞 §6.3 的客户端测试，不阻塞实现与 §6.1。
 5. `jp05` 等 469MB 内存节点是否需要在后续迁移前单独评估。
 
 ## 9. 授权边界

@@ -1,0 +1,24 @@
+{
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "settings": {},
+      "tag": "direct"
+    },
+    {
+      "protocol": "blackhole",
+      "settings": {},
+      "tag": "blocked"
+    },
+    {
+      "protocol": "socks",
+      "settings": {
+        "address": "192.0.2.1",
+        "pass": "p",
+        "port": 1080,
+        "user": "u"
+      },
+      "tag": "socks5-p1"
+    }
+  ]
+}

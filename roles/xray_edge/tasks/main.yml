@@ -1,0 +1,151 @@
+---
+# xray_edge：与旧 single/multi 并行的单实例数据面。只新增，不修改旧实例、旧目录或旧端口。
+# 合同：docs/reviews/data-plane-edge/plan-single-instance-443-2026-09-15.md
+
+- name: 只允许在 edge_nodes 列出的节点运行
+  assert:
+    that:
+      - inventory_hostname in edge_nodes
+      - ansible_limit is defined
+    fail_msg: >-
+      {{ inventory_hostname }} 不在 edge_nodes={{ edge_nodes }} 中，或未用 --limit 指定目标。
+      新实例只按节点逐台部署。
+
+- name: 用户加载、校验与 ACL（与 deploy.yml 相同的计算）
+  import_tasks: acl.yml
+
+- name: 计算新实例用户与 SOCKS5（只依赖控制端数据）
+  import_tasks: desired.yml
+
+- name: 读取旧实例的用户集合（只输出用户名，不输出配置）
+  shell: |
+    set -euo pipefail
+    if [ '{{ reality_mode | default("single") }}' = multi ]; then
+      docker ps -a --format '{% raw %}{{.Names}}{% endraw %}' \
+        | python3 -c 'import sys, json; print(json.dumps(sorted(n[len("reality_"):] for n in sys.stdin.read().split() if n.startswith("reality_") and n != "reality_core")))'
+    else
+      # lsi 返回完整入站配置（含用户 id 与密钥），只在节点上解析出 tag。
+      docker exec reality_core xray api lsi -s 127.0.0.1:10085 \
+        | python3 -c 'import sys, json; print(json.dumps(sorted(i["tag"][len("user-"):] for i in json.load(sys.stdin).get("inbounds", []) if i.get("tag", "").startswith("user-"))))'
+    fi
+  args:
+    executable: /bin/bash
+  register: edge_old_users
+  changed_when: false
+  when: not (edge_skip_drift_check | bool)
+
+- name: 新实例用户集合必须与旧实例一致（不计额外用户）
+  vars:
+    old_names: "{{ edge_old_users.stdout | from_json | sort }}"
+    new_names: "{{ reality_instances | map(attribute='name') | sort }}"
+  assert:
+    that:
+      - old_names == new_names
+    fail_msg: >-
+      新旧实例授权范围不一致，停止部署。仅旧实例有：{{ old_names | difference(new_names) }}；
+      仅新实例有：{{ new_names | difference(old_names) }}。先确认用户档案是否已部署到旧实例。
+  when: not (edge_skip_drift_check | bool)
+
+- name: 创建新实例目录
+  file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ edge_root_dir }}", owner: "0", group: "0", mode: "0755" }
+    - { path: "{{ edge_root_dir }}/bin", owner: "0", group: "0", mode: "0700" }
+    - { path: "{{ edge_root_dir }}/state", owner: "0", group: "0", mode: "0700" }
+    - { path: "{{ edge_root_dir }}/keys", owner: "0", group: "0", mode: "0700" }
+    - { path: "{{ edge_root_dir }}/conf.d", owner: "0", group: "10000", mode: "0750" }
+    - { path: "{{ edge_root_dir }}/logs", owner: "10000", group: "10000", mode: "0750" }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: 检查固定 digest 镜像是否已存在
+  community.docker.docker_image_info:
+    name: "{{ edge_xray_image }}"
+  register: edge_image_info
+
+- name: 拉取固定 digest 镜像（digest 不可变，本地已有则无需重拉）
+  community.docker.docker_image:
+    name: "{{ edge_xray_image }}"
+    source: pull
+  when: (edge_image_info.images | default([])) | length == 0
+
+- name: 下发节点应用器
+  copy:
+    src: xray_edge_apply.py
+    dest: "{{ edge_root_dir }}/bin/xray_edge_apply.py"
+    owner: "0"
+    group: "0"
+    mode: "0700"
+
+- name: 下发期望状态（不含 REALITY 私钥）
+  template:
+    src: desired-state.json.j2
+    dest: "{{ edge_root_dir }}/state/desired.json"
+    owner: "0"
+    group: "0"
+    mode: "0600"
+  diff: false
+
+- name: 应用期望状态（节点本地密钥、conf.d 校验与替换、API 或重启）
+  command: >-
+    python3 {{ edge_root_dir }}/bin/xray_edge_apply.py apply
+    --root {{ edge_root_dir }} --container {{ edge_container_name }} --image {{ edge_xray_image }}
+  register: edge_apply
+  changed_when: (edge_apply.stdout_lines | last | default('{}') | from_json).changed | default(false)
+  failed_when: edge_apply.rc != 0
+
+- name: 运行新实例容器
+  community.docker.docker_container:
+    name: "{{ edge_container_name }}"
+    image: "{{ edge_xray_image }}"
+    state: started
+    restart_policy: unless-stopped
+    network_mode: bridge
+    user: "10000:10000"
+    ports: >-
+      {{ ['0.0.0.0:' ~ edge_listen_port ~ ':' ~ edge_listen_port]
+         + ((['[' ~ global_ipv6 ~ ']:' ~ edge_listen_port ~ ':' ~ edge_listen_port]) if (global_ipv6 | length > 0) else []) }}
+    volumes:
+      - "{{ edge_root_dir }}/conf.d:/etc/xray/conf.d:ro"
+      - "{{ edge_root_dir }}/logs:/var/log/xray"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+    cap_drop:
+      - ALL
+    security_opts:
+      - no-new-privileges:true
+    pids_limit: 256
+    memory: "{{ edge_memory_limit }}"
+    memory_reservation: "{{ edge_memory_reservation }}"
+    memory_swap: "{{ edge_memory_swap }}"
+    # 单实例承载本节点全部用户，句柄上限按全部连接计，不沿用旧的每用户容器值。
+    ulimits:
+      - "nofile:65535:65535"
+    log_driver: json-file
+    log_options:
+      max-size: "{{ edge_docker_log_max_size }}"
+      max-file: "{{ edge_docker_log_max_file }}"
+
+- name: 核对运行中的用户与期望状态一致
+  command: >-
+    python3 {{ edge_root_dir }}/bin/xray_edge_apply.py verify
+    --root {{ edge_root_dir }} --container {{ edge_container_name }} --image {{ edge_xray_image }}
+  register: edge_verify
+  changed_when: false
+
+- name: 记录节点公钥（非秘密，用于订阅）
+  set_fact:
+    edge_public_key: "{{ (edge_verify.stdout_lines | last | from_json).public_key }}"
+
+- name: 日志轮转
+  import_tasks: logrotate.yml
+
+- name: 生成测试订阅链接（控制端，仅 edge_test_users）
+  import_tasks: subs.yml
