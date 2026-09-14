@@ -17,6 +17,8 @@ monitor_venv/
 __pycache__/
 .python-version
 users/*.json
+# Local rendered Xray configs; they contain REALITY private keys
+template/
 .vault_pass
 scripts
 .understand-anything

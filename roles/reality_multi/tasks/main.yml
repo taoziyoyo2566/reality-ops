@@ -121,112 +121,109 @@
 # 2. [极致优化] 本地构建阶段 (Local Build)
 #    在控制端本机生成所有文件，不再去远程服务器循环
 # ==============================================================================
-- name: 确保本地构建根目录存在
+# 渲染出的 config.json 含 REALITY 私钥：每台主机使用独立的 0700 临时目录，
+# 文件 0600，同步结束后无论成功失败都删除，控制端不留明文残留。
+- name: 创建当前主机的私有本地构建目录
   delegate_to: localhost
   become: false
-  when: inventory_hostname == (ansible_play_hosts_all | first)
-  file:
-    path: "/tmp/reality_build"
+  check_mode: false
+  tempfile:
     state: directory
-    mode: '0755'
-  tags: ['users']
-
-- name: 清理当前主机的本地构建目录
-  delegate_to: localhost
-  become: false
-  file:
-    path: "/tmp/reality_build/{{ inventory_hostname }}"
-    state: absent
-  tags: ['users']
-
-- name: 确保当前主机本地构建目录存在
-  delegate_to: localhost
-  become: false
-  file:
-    path: "/tmp/reality_build/{{ inventory_hostname }}/data"
-    state: directory
-    mode: '0755'
-  tags: ['users']
-
-- name: 创建本地构建目录结构
-  delegate_to: localhost
-  become: false
-  file:
-    path: "/tmp/reality_build/{{ inventory_hostname }}/data/{{ item.name }}"
-    state: directory
-    mode: '0755'
-  loop: "{{ reality_instances }}"
-  tags: ['users']
-
-- name: 本地生成用户配置文件 (config.json)
-  delegate_to: localhost
-  become: false
-  template:
-    src: config.json.j2
-    dest: "/tmp/reality_build/{{ inventory_hostname }}/data/{{ item.name }}/config.json"
-    mode: '0644'
-  loop: "{{ reality_instances }}"
+    prefix: "reality_build_{{ inventory_hostname }}_"
+  register: reality_build
   tags: ['users', 'config']
 
-- name: 本地生成 Docker Compose 文件
-  delegate_to: localhost
-  become: false
-  template:
-    src: docker-compose.yml.j2
-    dest: "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml"
-    mode: '0644'
-  tags: ['users', 'config']
+- name: 构建并同步配置
+  block:
+    - name: 创建本地构建目录结构
+      delegate_to: localhost
+      become: false
+      file:
+        path: "{{ reality_build.path }}/data/{{ item.name }}"
+        state: directory
+        mode: '0700'
+      loop: "{{ reality_instances }}"
+      tags: ['users', 'config']
 
-- name: 校验 Docker Compose 文件语法 (本地)
-  delegate_to: localhost
-  become: false
-  command: docker compose -f "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml" config
-  changed_when: false
-  tags: ['users', 'config']
+    - name: 本地生成用户配置文件 (config.json)
+      delegate_to: localhost
+      become: false
+      template:
+        src: config.json.j2
+        dest: "{{ reality_build.path }}/data/{{ item.name }}/config.json"
+        mode: '0600'
+      loop: "{{ reality_instances }}"
+      tags: ['users', 'config']
 
-# ==============================================================================
-# 3. [极速同步] 批量部署 (Synchronize)
-#    一次性将所有配置推送到服务器
-# ==============================================================================
-- name: 确保远程基础目录存在
-  file:
-    path: "{{ item }}"
-    state: directory
-    mode: '0755'
-  loop:
-    - "{{ reality_data_dir }}"
-    - "{{ reality_logs_dir }}"
-  tags: ['users']
+    - name: 本地生成 Docker Compose 文件
+      delegate_to: localhost
+      become: false
+      template:
+        src: docker-compose.yml.j2
+        dest: "{{ reality_build.path }}/docker-compose.yml"
+        mode: '0600'
+      tags: ['users', 'config']
 
-- name: 检查远端 rsync 是否已安装（users 快速路径）
-  command: which rsync
-  register: rsync_check
-  changed_when: false
-  failed_when: false
-  tags: ['users']
+    - name: 校验 Docker Compose 文件语法 (本地)
+      delegate_to: localhost
+      become: false
+      command: docker compose -f "{{ reality_build.path }}/docker-compose.yml" config
+      changed_when: false
+      tags: ['users', 'config']
 
-- name: 提示安装 rsync 后再运行 --tags users
-  fail:
-    msg: "目标主机 {{ inventory_hostname }} 缺少 rsync。请先在该主机安装 rsync（如：sudo apt-get update && sudo apt-get install -y rsync），或先执行带 system/docker 标签的部署。"
-  when: rsync_check.rc != 0
-  tags: ['users']
+    # ==========================================================================
+    # 3. [极速同步] 批量部署 (Synchronize)
+    #    一次性将所有配置推送到服务器
+    # ==========================================================================
+    - name: 确保远程基础目录存在
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ reality_data_dir }}"
+        - "{{ reality_logs_dir }}"
+      tags: ['users']
 
-- name: 同步配置数据到服务器 (Local -> Remote)
-  synchronize:
-    src: "/tmp/reality_build/{{ inventory_hostname }}/data/"
-    dest: "{{ reality_data_dir }}/"
-    archive: yes
-    delete: no # 保持增量更新，不误删
-    recursive: yes
-  # 注意：这步会把 data/user/config.json 推过去
-  tags: ['users']
+    - name: 检查远端 rsync 是否已安装（users 快速路径）
+      command: which rsync
+      register: rsync_check
+      changed_when: false
+      failed_when: false
+      tags: ['users']
 
-- name: 同步 Docker Compose 文件
-  copy: # 单个文件用 copy 也很快，或者用 synchronize 也可以
-    src: "/tmp/reality_build/{{ inventory_hostname }}/docker-compose.yml"
-    dest: "{{ reality_data_dir }}/docker-compose.yml"
-    mode: '0644'
-  tags: ['users']
+    - name: 提示安装 rsync 后再运行 --tags users
+      fail:
+        msg: "目标主机 {{ inventory_hostname }} 缺少 rsync。请先在该主机安装 rsync（如：sudo apt-get update && sudo apt-get install -y rsync），或先执行带 system/docker 标签的部署。"
+      when: rsync_check.rc != 0
+      tags: ['users']
+
+    - name: 同步配置数据到服务器 (Local -> Remote)
+      synchronize:
+        src: "{{ reality_build.path }}/data/"
+        dest: "{{ reality_data_dir }}/"
+        archive: yes
+        delete: no # 保持增量更新，不误删
+        recursive: yes
+      # 注意：这步会把 data/user/config.json 推过去
+      tags: ['users']
+
+    - name: 同步 Docker Compose 文件
+      copy: # 单个文件用 copy 也很快，或者用 synchronize 也可以
+        src: "{{ reality_build.path }}/docker-compose.yml"
+        dest: "{{ reality_data_dir }}/docker-compose.yml"
+        mode: '0644'
+      tags: ['users']
+  always:
+    - name: 删除当前主机的本地构建目录
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      file:
+        path: "{{ reality_build.path }}"
+        state: absent
+      when: reality_build.path is defined
+      tags: ['users', 'config']
 
 - name: 修正数据目录权限 (确保 UID 10000 可读)
   file:
