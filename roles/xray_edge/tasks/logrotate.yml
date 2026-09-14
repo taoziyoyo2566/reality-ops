@@ -19,7 +19,12 @@
     owner: "0"
     group: "0"
     mode: "0644"
-    validate: "{{ reality_logrotate_bin | default('/usr/sbin/logrotate') }} --debug %s"
+
+# 不用 template 的 validate：它校验的是属主为 SSH 用户的上传临时文件，logrotate 3.22 会以
+# "file owner is wrong" 拒绝；因此落盘为 root 所有后再校验，失败则不启用 timer。
+- name: 校验 xray_edge 日志轮转配置
+  command: "{{ reality_logrotate_bin | default('/usr/sbin/logrotate') }} --debug --state /dev/null /etc/xray-edge/logrotate.conf"
+  changed_when: false
 
 - name: 下发 xray_edge 日志轮转 service
   copy:
