@@ -68,6 +68,8 @@ class ValidationTest(unittest.TestCase):
         cases = [
             ({"schema": 2}, "unsupported schema"),
             ({"reality": {"target": "www.example.com", "server_names": ["www.example.com"]}}, "host:port"),
+            ({"reality": {"target": "www.example.com:99999", "server_names": ["www.example.com"]}}, "target port"),
+            ({"reality": {"target": "www.example.com:0", "server_names": ["www.example.com"]}}, "target port"),
             ({"reality": {"target": "www.example.com:443", "server_names": []}}, "must not be empty"),
             ({"listen": {"port": 0}}, "listen.port"),
             ({"xhttp": {"enabled": True, "path": ""}}, "xhttp.path"),

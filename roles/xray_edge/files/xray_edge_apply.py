@@ -65,6 +65,8 @@ def validate(desired):
     reality = desired.get("reality") or {}
     _require(isinstance(reality.get("target"), str) and HOST_PORT_RE.match(reality["target"]),
              "reality.target must be host:port")
+    # xray run -test accepts an out-of-range port here, which silently breaks the REALITY fallback.
+    _require(1 <= int(reality["target"].rsplit(":", 1)[1]) <= 65535, "reality.target port must be 1-65535")
     names = _str_list(reality.get("server_names"), "reality.server_names")
     _require(len(names) > 0, "reality.server_names must not be empty")
 
@@ -313,8 +315,10 @@ KEY_LIKE_RE = re.compile(r"[A-Za-z0-9_+/=-]{40,}")
 def _run(cmd, *, input_text=None, check=True, timeout=120):
     proc = subprocess.run(cmd, input=input_text, capture_output=True, text=True, timeout=timeout)
     if check and proc.returncode != 0:
-        # Config parse errors can quote fragments of the file; mask anything key-shaped.
-        tail = " | ".join((proc.stderr or proc.stdout).strip().splitlines()[-3:])
+        # Keep the lines that say why it failed; config errors can quote the file, so mask anything key-shaped.
+        lines = [l for l in (proc.stdout + "\n" + proc.stderr).strip().splitlines() if l.strip()]
+        reasons = [l for l in lines if re.search(r"fail|error|invalid", l, re.I)]
+        tail = " | ".join((reasons or lines)[-3:])
         raise ApplyError(f"{cmd[0]} {cmd[1] if len(cmd) > 1 else ''} failed: {KEY_LIKE_RE.sub('<redacted>', tail)}")
     return proc
 
