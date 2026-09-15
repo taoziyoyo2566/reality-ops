@@ -1,6 +1,8 @@
 # 新数据面：单实例 · 443 · XHTTP（并行新增实现）
 
-Status: **APPROVED — 2026-09-15 操作者确认端口、测试用户与 XHTTP path 方案；仅授权工作树内实现与 §6.1 本地验证（§9）。**
+Status: **APPROVED；canary 验收完成（2026-09-15，`dzire`、`usca`、`legend`）。剩余缺口见路线图 §7“S3 验收状态”。**
+
+2026-09-15 操作者确认端口、测试用户与 XHTTP path 方案；本文批准只授权工作树内实现与 §6.1 本地验证，各节点动作另行授权（§9）。
 
 Created: 2026-09-15 JST
 
@@ -237,7 +239,7 @@ canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`e
 2. ~~`edge_test_users`~~：2026-09-15 确认为 `test`。`test` 在 `dzire`/`usca` 上无 ACL 授权，按操作者选择经 `edge_extra_users`
    只加入新实例（§3.4）。
 3. ~~XHTTP `path`~~：2026-09-15 确认每节点随机生成，保存在 vault 变量 `vault_edge_xhttp_paths`（按节点名索引）。
-4. 实际使用的客户端清单（决定 XHTTP 与 Vision 兼容性测试范围）。未答复；只阻塞 §6.3 的客户端测试，不阻塞实现与 §6.1。
+4. ~~实际使用的客户端清单~~：2026-09-15 确认为 v2rayN、Shadowrocket 与主流 Clash（Mihomo）客户端；Clash 真实设备测试按操作者决定暂缓。
 5. `jp05` 等 469MB 内存节点是否需要在后续迁移前单独评估。
 
 ## 9. 授权边界
@@ -254,3 +256,6 @@ canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`e
   `jp10`、`kagoya`、`netcup`、`legend` 各有两个公网 IPv6，AAAA 指向另一个时经域名的 IPv6 连接会失败。
   操作者决定：有全局 IPv6 的节点改为发布 `[::]:443`；测试链接只保留域名一条。节点出站地址族策略保持默认，不在本计划调整。
   影响：`usca` 重新部署时容器因端口映射变化而重建；`dzire` 无全局 IPv6，不受影响。
+- **2026-09-15 · 第三台 canary `legend` 与出站竞速。** 操作者授权将 `legend`（原 single，有 IPv6，操作者认为 IPv6 质量较好）
+  纳入 canary，只开 RAW+Vision；同时在 `usca`、`legend` 启用路线图 S8 的出站 IPv4/IPv6 竞速（`happyEyeballs` 推荐值）。
+  竞速属 S8 独立功能，不是本合同的验收项；按 `edge_happy_eyeballs_nodes` 逐节点开关，默认关闭。

@@ -164,6 +164,16 @@ Live truth is the node; re-check with the commands below instead of trusting thi
 - `[操作者实测]` 2026-09-15: the operator imported the usca and legend test links by QR code
   on a device and reported that both connect. The report does not say which usca link
   (Vision or XHTTP) was tested, and it includes no IPv4-versus-IPv6 comparison for legend.
+- `[实测]` 2026-09-15 about 18:00 JST read-only summary of the three nodes: running, restart
+  count 0, not OOM-killed, 15-26 MiB; `json-file` `max-size 10m`/`max-file 3`, read-only root
+  filesystem, `cap_drop ALL`. Accepted connections: dzire 841, usca 2328, legend 252, almost
+  all `test` (no real users migrated). `error.log` holds only startup lines. usca's 13
+  `blocked` entries were UDP 1900/5353 device LAN discovery hitting `block-private`. The
+  logrotate status files record 2026-09-15; logs are 38-355 KB, so no rotation has run
+  yet. Edge log timestamps are UTC+8 (container zone), unlike the hosts (UTC, JST, EDT).
+  On legend, `sudo` warns `unable to resolve host legend` (host file issue, not changed).
+- S3 close-out status and remaining gaps (last-good recovery, API user modify, SOCKS5
+  membership change on a node, first real rotation) are in the roadmap §7 "S3 验收状态".
 - Not yet done: forced IPv4-versus-IPv6 comparison on the client-to-legend leg; long-term
   observation of whether Happy Eyeballs ever selects IPv6 for dual-stack destinations; an
   actual size- or daily-triggered rotation of edge logs.

@@ -387,8 +387,8 @@ monitor 数据库的 `subscription_logs`，当前账号无权限）。
 - 已补（2026-09-15，`xray_edge` canary）：bridge 网络下 IPv6 客户端源地址**被保留**——`usca` 新实例
   发布 `[v6]:443`，控制端经 IPv6 与 IPv4 各自连接后，访问日志记录的来源分别等于控制端公网 IPv6 与
   IPv4，无 Docker 网关或 ULA 地址；新旧实例并行资源：`usca`（1 核）新实例约 10MiB、旧 `reality_core`
-  约 75MiB，`dzire` 新实例约 15MiB。真实客户端：操作者已在 `dzire` 以 RAW+Vision 链接实测正常。
-- `[缺口]` `ali` 的 443 占用、Docker 版本与资源余量；XHTTP 的真实客户端兼容；删除用户后旧连接的
+  约 75MiB，`dzire` 新实例约 15MiB。真实客户端：操作者已在 `dzire` 以 RAW+Vision 链接实测正常；XHTTP 真实设备兼容已于同日补测（§7 S3 验收状态）。
+- `[缺口]` `ali` 的 443 占用、Docker 版本与资源余量；删除用户后旧连接的
   保持行为；客户端订阅刷新频率与长期不拉取订阅的用户数量（需读取 `spt` 上 monitor 数据库，当前
   账号无权限）。以上均未实测。
   Vision 回落 XHTTP 按决定 4 在新实例第二步验证。
@@ -502,6 +502,25 @@ S2 控制面与 agent 完成后接管同一配置合同。下表进入条件已�
 | S6 遥测与运维 | 流量/IP/健康并入认证通道；建立项目期望镜像与节点实际运行镜像的持续对账；补升级、备份、恢复与告警 | S3–S5 稳定；镜像状态字段和 Registry 查询来源已冻结 | 监控不成为授权依据；每个节点报告容器镜像引用、Image ID/RepoDigest、Xray 版本、运行状态、重启次数和检查时间；tag 相同但 digest 不同能标记为 `stale`；错误仓库、版本不符、不可达和数据不完整不会误报为 `current`；控制面恢复演练和 agent 回滚通过 |
 | S7 现网迁移 | 按 §7.1 并行变更逐台接管节点，轮换全部旧密钥和订阅凭据；按对账结果分批迁移旧镜像节点 | C01–C12 的迁移阻塞项关闭；目标镜像 digest、回滚 digest 和告警规则已记录；回滚与用户通知批准 | 原 single 与原 multi 节点各至少一台完成 canary；所有节点完成 contract；旧 single/multi 代码与配置已从仓库删除；33 用户完成迁移；旧仓库运行实例为 0；所有可达节点为 `current`；不可达节点仍明确列为 gap；旧凭据、旧 Gist 和旧控制链路失效 |
 | S8 功能演进 | Mihomo、IPv4/IPv6、target、metrics、VLESS Encryption（XHTTP 已按决定 4 移入 S3） | S7 稳定；每项独立批准 | 按真实客户端/core 矩阵逐项验收；不得用解析成功代替真实连接 |
+
+**S3 验收状态（2026-09-15 收尾）**：canary 验收完成，S4 设计可以开始；下表 `[缺口]` 项不阻塞 S4，但须在 S7 批量迁移前关闭。
+逐项证据见 [`docs/project-memory.md`](../project-memory.md) “xray_edge Canary State”。
+
+| 退出门槛 | 状态 | 依据 |
+|---|---|---|
+| 配置检查、坏配置 | `[实测]` | `dzire`：无效 SOCKS5 路由被 `xray run -test` 拒绝，`conf.d` 与容器不变；本地 e2e 覆盖且错误输出屏蔽私钥 |
+| 起停、重启、回滚 | `[实测]` | `dzire`、`usca`：容器重启后用户一致；`edge-remove.yml`（保留密钥）后重新部署，公钥与 `conf.d` 相同 |
+| last-good 自动恢复 | `[缺口]` | 应用器在重启后校验失败时恢复 `last-good/` 并重启；该路径本地与节点均未演练（坏配置在 `-test` 阶段即被拒，未进入此路径） |
+| 与旧实例并行、旧实例无变化 | `[实测]` | `dzire`（原 multi）、`usca`（原 single）、`legend`（原 single）部署前后旧实例指纹一致 |
+| API 增删用户、不重启 | `[实测]` | `dzire`、`usca`：33 → 34 → 33 经 API，`conf.d` 恢复逐字节一致；本地 e2e 验证被删用户连接失败 |
+| API 改用户（UUID/short_id 变更） | `[代码]` | 仅单元测试（UUID 变更为先删后加、新 short_id 需重启）；本地 e2e 与节点未演练 |
+| SOCKS5 成员变更 | `[代码]` | 仅单元测试（SOCKS5 门控、出站与规则同进同出）；三台 canary 无 SOCKS5 路由，有效成员变更未在节点执行 |
+| 日志轮转与 Docker 日志上界 | 部分 `[实测]` | 三台 `json-file` `max-size 10m`/`max-file 3`、只读根文件系统、`cap_drop ALL`；轮转服务手动与定时运行成功；`[缺口]` 首次实际按天/按大小轮转与压缩待 2026-09-16 检查 |
+| 固定 digest | `[实测]` | 三台镜像均为 `fd502666` |
+| XHTTP 真实客户端 | `[实测]` | `dzire` XHTTP 设备实测（ipleak 无泄漏）；`usca` 控制端 Xray/Mihomo 6/6；操作者设备导入 `usca`、`legend` 链接可连 |
+
+其他已确认：bridge 网络保留 IPv4/IPv6 客户端源地址；`usca` 1 核下新实例约 10–24MiB；2026-09-15 约 18:00 JST 只读日志汇总三台
+重启 0、错误日志仅启动记录，流量全部来自 `test`（真实用户尚未迁移）。
 
 ### 7.1 数据面切换方式（C00 决定 3）
 
@@ -617,7 +636,10 @@ STUN 经节点返回节点公网地址；分流模式下行为与说明一致。
   `interleave`）；采用推荐值 `tryDelayMs 250`、`prioritizeIPv6 false`、`interleave 1`、`maxConcurrentTry 4`。默认 `AsIs`
   下 Go 按 RFC 6724 排序，容器 ULA IPv6 使 IPv4 恒排第一、300ms 后才尝试 IPv6。
 - 实现：`group_vars/all/edge.yml` `edge_happy_eyeballs_nodes` 按节点开关，期望状态 `egress.happy_eyeballs`，
-  `direct` 出站加 `sockopt`；属 `20-outbounds` 变更，应用时重启。canary 节点 `usca`（有 IPv6 出口）。
+  `direct` 出站加 `sockopt`；属 `20-outbounds` 变更，应用时重启。canary 节点 `usca`、`legend`（均有 IPv6 出口；操作者认为 `legend` 的 IPv6 质量优于 IPv4）。
+- `[实测]` 2026-09-15 节点：`usca`、`legend` 已启用，经节点 IPv4-only、IPv6-only 目标分别走对应地址族，双栈目标 `usca` 4/4、
+  `legend` 6/6 选 IPv4；`legend` 部署前自测两族到常见站点连接均 0–3ms，节点侧看不出 IPv6 优势，操作者感知的差异可能在客户端到节点一段。
+  `[缺口]` 日志级别 `warning` 不记录出站地址族，“IPv4 变慢时选 IPv6”仍未观察到，需要另定观察方法。
 - `[实测]` 本地：`xray run -test` 通过；A/B 在仅 IPv4 与开启 IPv6 的 Docker 网络中，开启后 IPv4-only、IPv6-only、
   双栈目标行为与关闭时一致，双栈在两族均快时选 IPv4。`[缺口]` “IPv4 变慢时选 IPv6”需节点侧长期观察，本地未模拟。
 - 风险：同一用户对同一网站的出口地址族可能变化，部分网站会话与 IP 绑定；只对有 IPv6 出口节点有意义。
