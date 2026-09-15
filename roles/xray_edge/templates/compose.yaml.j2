@@ -1,0 +1,74 @@
+# {{ ansible_managed | default('managed by reality-ops') }}
+# xray_edge compose 项目。合同：docs/reviews/data-plane-edge/plan-edge-compose-2026-09-15.md §3.2
+# xray 服务的运行参数与 S3 形态（docker_container）逐项相同，由 tests/edge/test_compose.py 核对。
+{% set dns = (edge_container_dns | default({})).get(edge_node_name, {}) %}
+{% set logging = {"driver": "json-file", "options": {"max-size": edge_docker_log_max_size | string, "max-file": edge_docker_log_max_file | string}} %}
+name: {{ edge_compose_project | to_json }}
+
+services:
+  xray:
+    image: {{ edge_xray_image | to_json }}
+    container_name: {{ edge_container_name | to_json }}
+    restart: unless-stopped
+    # 必须使用守护进程默认 bridge：其 IPv6（fixed-cidr-v6）提供出站 IPv6；compose 项目网络默认没有 IPv6。
+    network_mode: bridge
+    user: "10000:10000"
+{% if edge_published_ports | length > 0 %}
+    ports: {{ edge_published_ports | to_json }}
+{% endif %}
+{% if dns.get('servers') %}
+    dns: {{ dns.servers | to_json }}
+{% endif %}
+{% if dns.get('options') %}
+    dns_opt: {{ dns.options | to_json }}
+{% endif %}
+    volumes:
+      - {{ (edge_root_dir ~ '/conf.d:/etc/xray/conf.d:ro') | to_json }}
+      - {{ (edge_root_dir ~ '/logs:/var/log/xray') | to_json }}
+    read_only: true
+    tmpfs: ["/tmp", "/run"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: {{ edge_memory_limit | to_json }}
+    mem_reservation: {{ edge_memory_reservation | to_json }}
+    memswap_limit: {{ edge_memory_swap | to_json }}
+    # 单实例承载本节点全部用户，句柄上限按全部连接计。
+    ulimits:
+      nofile: {soft: 65535, hard: 65535}
+    logging: {{ logging | to_json }}
+
+  logrotate:
+    image: {{ edge_tools_image | to_json }}
+    container_name: {{ (edge_container_name ~ '_logrotate') | to_json }}
+    restart: unless-stopped
+    network_mode: none
+    user: "10000:10000"
+    command: ["logrotate-loop", "/rotate/logrotate.conf", "/rotate/state/status", {{ edge_logrotate_interval | int | string | to_json }}]
+    volumes:
+      - {{ (edge_root_dir ~ '/logs:/var/log/xray') | to_json }}
+      - {{ (edge_root_dir ~ '/rotate/logrotate.conf:/rotate/logrotate.conf:ro') | to_json }}
+      - {{ (edge_root_dir ~ '/rotate/state:/rotate/state') | to_json }}
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 32
+    mem_limit: "32m"
+    logging: {{ logging | to_json }}
+
+  # 一次性运行：docker compose run --rm applier apply|verify ...；up 不启动。
+  # 应用器以 docker run -v 挂载候选目录，路径由宿主机 Docker 解析，所以根目录必须同路径挂载。
+  applier:
+    image: {{ edge_tools_image | to_json }}
+    profiles: ["tools"]
+    network_mode: none
+    user: "0:0"
+    entrypoint: ["python3", "/usr/local/bin/xray_edge_apply.py"]
+    volumes:
+      - {{ (edge_root_dir ~ ':' ~ edge_root_dir) | to_json }}
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    logging: {{ logging | to_json }}

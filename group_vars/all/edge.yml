@@ -15,6 +15,17 @@ edge_xray_image: "taoziyoyo2566/xray-docker@sha256:fd502666d1a9ca7ea772e2c1638bb
 
 edge_root_dir: "/opt/xray-edge"
 edge_container_name: "xray_edge"
+# compose 项目名；容器名仍为 edge_container_name（应用器与核对命令依赖它）。
+edge_compose_project: "xray-edge"
+edge_node_name: "{{ inventory_hostname }}"
+
+# 工具镜像（应用器 + 日志轮转），合同 plan-edge-compose §3.3。canary 按 D-E1 B 在控制端构建后 docker save/load 分发，
+# 以镜像 ID 核对；标签取构建输入的哈希（tasks/tools_image.yml）。
+edge_tools_repository: "reality-edge-tools"
+# 工具镜像构建上下文（仓库根目录）。
+edge_repo_dir: "{{ playbook_dir }}"
+# 控制端导出镜像的私有目录（不在仓库内）。
+edge_tools_export_dir: "{{ lookup('env', 'HOME') }}/.local/share/reality-ops/edge-images"
 edge_listen_port: 443
 edge_log_level: "warning"
 
@@ -46,8 +57,8 @@ edge_docker_log_max_size: "10m"
 edge_docker_log_max_file: "3"
 edge_log_rotate_keep: 14
 edge_log_rotate_maxsize: "50M"
-# logrotate 的 maxsize 只在运行时检查；专用 timer 按此频率运行，不依赖系统每日任务。
-edge_logrotate_on_calendar: "hourly"
+# logrotate 的 maxsize 只在运行时检查；compose 内 logrotate 容器按此间隔（秒）运行。
+edge_logrotate_interval: 3600
 
 # 新实例用户集合与旧实例不一致时停止；仅在节点尚无旧实例时才可设为 true。
 edge_skip_drift_check: false

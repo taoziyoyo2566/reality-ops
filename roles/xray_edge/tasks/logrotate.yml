@@ -1,48 +1,12 @@
 ---
-- name: 安装 logrotate
-  package:
-    name: logrotate
-    state: present
-
-- name: 创建 xray_edge 配置目录
-  file:
-    path: /etc/xray-edge
-    state: directory
-    owner: "0"
-    group: "0"
-    mode: "0755"
-
+# 日志轮转由 compose 服务 logrotate 执行；这里只渲染配置并在工具镜像中校验（plan-edge-compose §3.4）。
 - name: 下发 xray_edge 日志轮转配置
   template:
     src: logrotate.conf.j2
-    dest: /etc/xray-edge/logrotate.conf
+    dest: "{{ edge_root_dir }}/rotate/logrotate.conf"
     owner: "0"
     group: "0"
     mode: "0644"
-    validate: "{{ reality_logrotate_bin | default('/usr/sbin/logrotate') }} --debug %s"
-
-# unit 文件用 template 而不是 copy content：ansible_managed 只在 template 渲染时定义。
-- name: 下发 xray_edge 日志轮转 service
-  template:
-    src: xray-edge-logrotate.service.j2
-    dest: /etc/systemd/system/xray-edge-logrotate.service
-    owner: "0"
-    group: "0"
-    mode: "0644"
-  register: edge_logrotate_service
-
-- name: 下发 xray_edge 日志轮转 timer
-  template:
-    src: xray-edge-logrotate.timer.j2
-    dest: /etc/systemd/system/xray-edge-logrotate.timer
-    owner: "0"
-    group: "0"
-    mode: "0644"
-  register: edge_logrotate_timer
-
-- name: 启用 xray_edge 日志轮转 timer
-  systemd:
-    name: xray-edge-logrotate.timer
-    enabled: true
-    state: started
-    daemon_reload: "{{ edge_logrotate_service.changed or edge_logrotate_timer.changed }}"
+    validate: >-
+      docker run --rm --network none --user 10000:10000 -v %s:/rotate/logrotate.conf:ro
+      {{ edge_tools_image }} logrotate --debug --state /tmp/status /rotate/logrotate.conf

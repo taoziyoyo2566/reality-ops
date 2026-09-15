@@ -1,0 +1,83 @@
+---
+# 工具镜像：控制端构建，按镜像 ID 核对后 docker save/load 分发到节点（plan-edge-compose §3.3、D-E1 B）。
+# 标签取构建输入的哈希：buildx 每次构建都会写入新的创建时间，镜像 ID 不能用来判断输入是否变化。
+# 构建上下文为仓库根目录，只放行 docker/edge-tools/Dockerfile.dockerignore 列出的文件。
+- name: 按构建输入计算工具镜像标签（输入不变则标签不变，不重复构建或分发）
+  set_fact:
+    edge_tools_image: >-
+      {{ edge_tools_repository }}:{{ ((
+           lookup('file', edge_repo_dir ~ '/docker/edge-tools/Dockerfile')
+           ~ lookup('file', edge_repo_dir ~ '/docker/edge-tools/Dockerfile.dockerignore')
+           ~ lookup('file', edge_repo_dir ~ '/docker/edge-tools/logrotate-loop.sh')
+           ~ lookup('file', edge_repo_dir ~ '/roles/xray_edge/files/xray_edge_apply.py')
+         ) | hash('sha256'))[:12] }}
+
+- name: 在控制端构建工具镜像（该标签不存在时）
+  delegate_to: localhost
+  become: false
+  run_once: true
+  community.docker.docker_image_build:
+    name: "{{ edge_tools_image.split(':')[0] }}"
+    tag: "{{ edge_tools_image.split(':')[1] }}"
+    path: "{{ edge_repo_dir }}"
+    dockerfile: docker/edge-tools/Dockerfile
+    rebuild: never
+
+- name: 读取控制端工具镜像 ID
+  delegate_to: localhost
+  become: false
+  run_once: true
+  community.docker.docker_image_info:
+    name: "{{ edge_tools_image }}"
+  register: edge_tools_control
+
+- name: 记录工具镜像 ID
+  set_fact:
+    edge_tools_image_id: "{{ edge_tools_control.images[0].Id }}"
+
+- name: 读取节点上的工具镜像
+  community.docker.docker_image_info:
+    name: "{{ edge_tools_image }}"
+  register: edge_tools_node
+
+- name: 分发工具镜像
+  when: (edge_tools_node.images | default([]) | map(attribute='Id') | first | default('')) != edge_tools_image_id
+  block:
+    - name: 创建控制端导出目录
+      delegate_to: localhost
+      become: false
+      file:
+        path: "{{ edge_tools_export_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: 在控制端导出工具镜像
+      delegate_to: localhost
+      become: false
+      community.docker.docker_image_export:
+        names: ["{{ edge_tools_image }}"]
+        path: "{{ edge_tools_export_dir }}/{{ edge_tools_image | replace(':', '_') }}.tar"
+
+    - name: 复制工具镜像到节点
+      copy:
+        src: "{{ edge_tools_export_dir }}/{{ edge_tools_image | replace(':', '_') }}.tar"
+        dest: "{{ edge_root_dir }}/.tools-image.tar"
+        owner: "0"
+        group: "0"
+        mode: "0600"
+
+    - name: 在节点载入工具镜像
+      community.docker.docker_image_load:
+        path: "{{ edge_root_dir }}/.tools-image.tar"
+
+  always:
+    - name: 删除节点上的镜像文件
+      file:
+        path: "{{ edge_root_dir }}/.tools-image.tar"
+        state: absent
+
+- name: 核对节点工具镜像 ID
+  community.docker.docker_image_info:
+    name: "{{ edge_tools_image }}"
+  register: edge_tools_check
+  failed_when: (edge_tools_check.images | default([]) | map(attribute='Id') | first | default('')) != edge_tools_image_id

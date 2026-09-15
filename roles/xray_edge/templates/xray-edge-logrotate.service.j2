@@ -1,9 +1,0 @@
-# {{ ansible_managed }}
-[Unit]
-Description=Rotate xray_edge logs
-
-[Service]
-Type=oneshot
-ExecStart={{ reality_logrotate_bin | default('/usr/sbin/logrotate') }} --state /var/lib/logrotate/xray-edge.status /etc/xray-edge/logrotate.conf
-Nice=19
-IOSchedulingClass=idle

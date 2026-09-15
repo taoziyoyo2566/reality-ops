@@ -1,0 +1,27 @@
+---
+# 从 S3 形态（宿主机 systemd timer + 宿主机 logrotate + 宿主机应用器脚本）迁移后清理残留（plan-edge-compose §3.4）。
+# 在 compose 项目运行之后执行；对从未有过 S3 形态的节点无操作。
+- name: 停用 S3 形态的日志轮转 timer
+  systemd:
+    name: xray-edge-logrotate.timer
+    enabled: false
+    state: stopped
+  register: edge_s3_timer
+  failed_when: false
+
+- name: 删除 S3 形态的宿主机文件
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/xray-edge-logrotate.timer
+    - /etc/systemd/system/xray-edge-logrotate.service
+    - /etc/xray-edge
+    - /var/lib/logrotate/xray-edge.status
+    - "{{ edge_root_dir }}/bin"
+  register: edge_s3_files
+
+- name: 重新加载 systemd
+  systemd:
+    daemon_reload: true
+  when: edge_s3_files.changed

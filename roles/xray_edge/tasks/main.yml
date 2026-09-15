@@ -1,6 +1,7 @@
 ---
 # xray_edge：与旧 single/multi 并行的单实例数据面。只新增，不修改旧实例、旧目录或旧端口。
-# 合同：docs/reviews/data-plane-edge/plan-single-instance-443-2026-09-15.md
+# 合同：docs/reviews/data-plane-edge/plan-single-instance-443-2026-09-15.md；
+# compose 形态：docs/reviews/data-plane-edge/plan-edge-compose-2026-09-15.md（节点上只有 Docker + edge_root_dir）。
 
 - name: 只允许在 edge_nodes 列出的节点运行
   assert:
@@ -55,11 +56,12 @@
     mode: "{{ item.mode }}"
   loop:
     - { path: "{{ edge_root_dir }}", owner: "0", group: "0", mode: "0755" }
-    - { path: "{{ edge_root_dir }}/bin", owner: "0", group: "0", mode: "0700" }
     - { path: "{{ edge_root_dir }}/state", owner: "0", group: "0", mode: "0700" }
     - { path: "{{ edge_root_dir }}/keys", owner: "0", group: "0", mode: "0700" }
     - { path: "{{ edge_root_dir }}/conf.d", owner: "0", group: "10000", mode: "0750" }
     - { path: "{{ edge_root_dir }}/logs", owner: "10000", group: "10000", mode: "0750" }
+    - { path: "{{ edge_root_dir }}/rotate", owner: "0", group: "0", mode: "0755" }
+    - { path: "{{ edge_root_dir }}/rotate/state", owner: "10000", group: "10000", mode: "0700" }
   loop_control:
     label: "{{ item.path }}"
 
@@ -74,13 +76,8 @@
     source: pull
   when: (edge_image_info.images | default([])) | length == 0
 
-- name: 下发节点应用器
-  copy:
-    src: xray_edge_apply.py
-    dest: "{{ edge_root_dir }}/bin/xray_edge_apply.py"
-    owner: "0"
-    group: "0"
-    mode: "0700"
+- name: 工具镜像（应用器与日志轮转）
+  import_tasks: tools_image.yml
 
 - name: 下发期望状态（不含 REALITY 私钥）
   template:
@@ -91,54 +88,56 @@
     mode: "0600"
   diff: false
 
+- name: 计算发布端口
+  set_fact:
+    # [::] 接收本机全部 IPv6 地址：节点有多个公网 IPv6 时，不依赖 AAAA 恰好指向 Ansible 选中的那一个。
+    edge_published_ports: >-
+      {{ ['0.0.0.0:' ~ edge_listen_port ~ ':' ~ edge_listen_port]
+         + ((['[::]:' ~ edge_listen_port ~ ':' ~ edge_listen_port]) if (global_ipv6 | length > 0) else []) }}
+
+- name: 下发 compose 项目定义
+  template:
+    src: compose.yaml.j2
+    dest: "{{ edge_root_dir }}/compose.yaml"
+    owner: "0"
+    group: "0"
+    mode: "0644"
+    validate: "docker compose -f %s config --quiet"
+
+- name: 日志轮转配置
+  import_tasks: logrotate.yml
+
 - name: 应用期望状态（节点本地密钥、conf.d 校验与替换、API 或重启）
   command: >-
-    python3 {{ edge_root_dir }}/bin/xray_edge_apply.py apply
+    docker compose -f {{ edge_root_dir }}/compose.yaml run --rm -T --pull never applier apply
     --root {{ edge_root_dir }} --container {{ edge_container_name }} --image {{ edge_xray_image }}
   register: edge_apply
   changed_when: (edge_apply.stdout_lines | last | default('{}') | from_json).changed | default(false)
   failed_when: edge_apply.rc != 0
 
-- name: 运行新实例容器
+- name: 读取现有新实例容器
+  community.docker.docker_container_info:
+    name: "{{ edge_container_name }}"
+  register: edge_existing
+
+- name: 接管 S3 形态容器（无 compose 标签时先删除，keys 与 conf.d 保留）
   community.docker.docker_container:
     name: "{{ edge_container_name }}"
-    image: "{{ edge_xray_image }}"
-    state: started
-    restart_policy: unless-stopped
-    network_mode: bridge
-    dns_servers: "{{ (edge_container_dns | default({})).get(inventory_hostname, {}).get('servers') or omit }}"
-    dns_opts: "{{ (edge_container_dns | default({})).get(inventory_hostname, {}).get('options') or omit }}"
-    user: "10000:10000"
-    # [::] 接收本机全部 IPv6 地址：节点有多个公网 IPv6 时，不依赖 AAAA 恰好指向 Ansible 选中的那一个。
-    ports: >-
-      {{ ['0.0.0.0:' ~ edge_listen_port ~ ':' ~ edge_listen_port]
-         + ((['[::]:' ~ edge_listen_port ~ ':' ~ edge_listen_port]) if (global_ipv6 | length > 0) else []) }}
-    volumes:
-      - "{{ edge_root_dir }}/conf.d:/etc/xray/conf.d:ro"
-      - "{{ edge_root_dir }}/logs:/var/log/xray"
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /run
-    cap_drop:
-      - ALL
-    security_opts:
-      - no-new-privileges:true
-    pids_limit: 256
-    memory: "{{ edge_memory_limit }}"
-    memory_reservation: "{{ edge_memory_reservation }}"
-    memory_swap: "{{ edge_memory_swap }}"
-    # 单实例承载本节点全部用户，句柄上限按全部连接计，不沿用旧的每用户容器值。
-    ulimits:
-      - "nofile:65535:65535"
-    log_driver: json-file
-    log_options:
-      max-size: "{{ edge_docker_log_max_size }}"
-      max-file: "{{ edge_docker_log_max_file }}"
+    state: absent
+  when:
+    - edge_existing.exists
+    - (edge_existing.container.Config.Labels | default({}, true)).get('com.docker.compose.project') != edge_compose_project
+
+- name: 运行 compose 项目（xray 与 logrotate）
+  community.docker.docker_compose_v2:
+    project_src: "{{ edge_root_dir }}"
+    state: present
+    pull: never
+    remove_orphans: true
 
 - name: 核对运行中的用户与期望状态一致
   command: >-
-    python3 {{ edge_root_dir }}/bin/xray_edge_apply.py verify
+    docker compose -f {{ edge_root_dir }}/compose.yaml run --rm -T --pull never applier verify
     --root {{ edge_root_dir }} --container {{ edge_container_name }} --image {{ edge_xray_image }}
   register: edge_verify
   changed_when: false
@@ -147,8 +146,8 @@
   set_fact:
     edge_public_key: "{{ (edge_verify.stdout_lines | last | from_json).public_key }}"
 
-- name: 日志轮转
-  import_tasks: logrotate.yml
+- name: 清理 S3 形态的宿主机残留
+  import_tasks: migrate_s3.yml
 
 - name: 生成测试订阅链接（控制端，仅 edge_test_users）
   import_tasks: subs.yml

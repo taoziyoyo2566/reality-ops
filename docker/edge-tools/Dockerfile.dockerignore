@@ -1,0 +1,4 @@
+# 以仓库根目录为构建上下文时只放行镜像需要的文件，避免把用户档案、vault 或 venv 送入构建。
+*
+!roles/xray_edge/files/xray_edge_apply.py
+!docker/edge-tools/logrotate-loop.sh
