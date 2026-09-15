@@ -161,9 +161,12 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   own TCP connects to google, cloudflare, youtube, facebook and netflix took 0-3 ms over both
   families with no failures, so any IPv6 advantage is not visible at connect time from the
   node. Test files: `test_legend.txt`, `test_legend.clash.yaml`.
-- Not yet done: operator device tests of usca XHTTP and legend; long-term observation of
-  whether Happy Eyeballs ever selects IPv6 for dual-stack destinations; an actual size- or
-  daily-triggered rotation of edge logs.
+- `[操作者实测]` 2026-09-15: the operator imported the usca and legend test links by QR code
+  on a device and reported that both connect. The report does not say which usca link
+  (Vision or XHTTP) was tested, and it includes no IPv4-versus-IPv6 comparison for legend.
+- Not yet done: forced IPv4-versus-IPv6 comparison on the client-to-legend leg; long-term
+  observation of whether Happy Eyeballs ever selects IPv6 for dual-stack destinations; an
+  actual size- or daily-triggered rotation of edge logs.
 
 ```bash
 ssh dzire "docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.Image}}' xray_edge; systemctl is-active xray-edge-logrotate.timer"
