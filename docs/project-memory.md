@@ -152,8 +152,18 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   33 users. Via usca: IPv4-only -> IPv4, IPv6-only -> IPv6, dual-stack 4/4 -> IPv4 (IPv4
   connects well within 250 ms from usca); XHTTP connects. Selecting IPv6 when IPv4 is slow
   is not yet observed.
-- Not yet done: operator device test of usca XHTTP; an actual size- or daily-triggered
-  rotation of edge logs on either node; legend as a new edge and Happy Eyeballs canary.
+- `[实测]` 2026-09-15 `legend` (target `shopee.sg`): first `xray_edge` deploy at
+  `ops@c19fe80` with Vision and Happy Eyeballs egress (no XHTTP; no vault path yet). Old
+  `reality_core` fingerprint unchanged; container running, image `fd502666`, `0.0.0.0:443`
+  and `[::]:443`, 30 users (29 ACL + `test`), timer active. The node domain has A and AAAA;
+  plain TLS probes over IPv4 and IPv6 return the real `*.shopee.sg` certificate. Via legend:
+  IPv4-only -> IPv4, IPv6-only -> IPv6, dual-stack 6/6 -> IPv4. Before deploy, legend's
+  own TCP connects to google, cloudflare, youtube, facebook and netflix took 0-3 ms over both
+  families with no failures, so any IPv6 advantage is not visible at connect time from the
+  node. Test files: `test_legend.txt`, `test_legend.clash.yaml`.
+- Not yet done: operator device tests of usca XHTTP and legend; long-term observation of
+  whether Happy Eyeballs ever selects IPv6 for dual-stack destinations; an actual size- or
+  daily-triggered rotation of edge logs.
 
 ```bash
 ssh dzire "docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.Image}}' xray_edge; systemctl is-active xray-edge-logrotate.timer"
