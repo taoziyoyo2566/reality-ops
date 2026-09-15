@@ -19,7 +19,7 @@ edge_listen_port: 443
 edge_log_level: "warning"
 
 # 第二步（XHTTP）：列入 edge_xhttp_nodes 的节点开启；path 每节点随机生成，保存在 vault 的 vault_edge_xhttp_paths。
-edge_xhttp_nodes: ["dzire"]
+edge_xhttp_nodes: ["dzire", "usca"]
 edge_xhttp_enabled: "{{ inventory_hostname in edge_xhttp_nodes }}"
 edge_xhttp_path: "{{ (vault_edge_xhttp_paths | default({})).get(inventory_hostname, '') }}"
 edge_xhttp_mode: "auto"
