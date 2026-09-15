@@ -118,6 +118,10 @@ Ansible 保留为 bootstrap、操作系统/基础依赖维护和 break-glass 恢
   `[推论]` 经典镜像存储以配置 digest 作为镜像 ID，containerd 镜像存储以 index digest 作为 ID，
   因此 `ams`/`dcc` 的 ID 不同但 RepoDigest 与其余节点一致；两台所用存储类型未直接查询。全部可达节点 Xray 版本为
   26.3.27，容器重启计数为 0。除 `jp05` 设有 `max-size 5m` 外，容器均未设 Docker 日志上界。
+- `[实测]` 2026-09-15：`dzire` 宿主机 `resolv.conf` 首个 DNS `4.2.2.4` 丢包 50–70%，REALITY 每次握手解析
+  target 时 Go 解析器等待 5 秒，旧 multi 与新实例的新连接握手均约 5.3 秒。新实例已按节点固定容器 DNS
+  修复（`group_vars/all/edge.yml` `edge_container_dns`）；**旧实例与宿主机 DNS 未改**，按决定 9 迁移前
+  只观察，如需修复宿主机 DNS 另行评估。其余 11 台可达节点 DNS 无丢包。
 - `[缺口]` `ali` 未探测；容器 json 日志实际大小、monitor agent crontab 需 root 读取，未取得；
   DNS、客户端兼容与订阅行为未刷新。
 

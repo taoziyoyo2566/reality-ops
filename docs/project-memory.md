@@ -100,8 +100,29 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   users with `0.0.0.0:443` and `[::]:443` listening; `edge-remove.yml` (keys kept) then
   `edge.yml` restored the same public key and conf.d. Current container `ea66b872264a`.
   Bad-config rejection and the manual logrotate run were covered on `dzire` only.
-- Not yet done: an actual size- or daily-triggered rotation of edge logs on either node;
-  XHTTP (§6.3), which still needs the operator's client list.
+- `[实测]` 2026-09-15 `dzire` XHTTP (plan §6.3), `ops@fb64bc2` then `ops@10f368f`:
+  `edge_xhttp_nodes: ["dzire"]` added the `@xray-edge-xhttp` fallback (`xver: 1`) and the
+  `vless-xhttp` inbound (33 users each); the plain TLS probe still returns the real
+  `www.flipkart.com` certificate. Test files: `test_dzire.txt` (Vision + XHTTP links) and
+  `test_dzire.clash.yaml` (Mihomo Vision + XHTTP `stream-one`).
+- `[实测]` dzire REALITY handshakes (old multi and new instance alike) took about 5.3 s:
+  REALITY resolves the target on every handshake, the first resolver in dzire's host
+  `resolv.conf` (`4.2.2.4`) dropped 50-70% of queries, and Go waits 5 s per unanswered
+  server. Mihomo's 5 s dial timeout made it fail (Vision 2/5, XHTTP 1/5). `10f368f` pins
+  the edge container DNS on dzire to `8.8.8.8`/`1.1.1.1` with `timeout:1 attempts:2`
+  (container recreated as `0886271dadee`); handshakes dropped to 0.3 s and Xray and Mihomo
+  Vision and XHTTP all connected 5/5 at about 1 s. The dzire host resolver and the old
+  multi instance are unchanged and still affected.
+- Local compatibility (`tests/edge/client_compat_local.py`, 9/9): Xray-core (v2rayN's core)
+  Vision and XHTTP auto/packet-up/stream-up/stream-one, Mihomo v1.19.31 Vision and XHTTP
+  stream-one/stream-up/packet-up. v2rayN 7.24.9 parses `type=xhttp` links; Shadowrocket
+  2.2.92 lists XHTTP support since 2.2.67 but not REALITY with XHTTP explicitly, so it needs
+  a device test.
+- `[实测]` 2026-09-15 host DNS survey (12 reachable nodes, `ali` not reachable): only dzire
+  has a lossy resolver. netcup, legend, jp10 and kagoya use Tailscale `100.100.100.100`,
+  which is also reachable from their `reality_core` container network.
+- Not yet done: operator device tests of dzire XHTTP with v2rayN, Shadowrocket and a Clash
+  client; XHTTP on `usca`; an actual size- or daily-triggered rotation of edge logs.
 
 ```bash
 ssh dzire "docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.Image}}' xray_edge; systemctl is-active xray-edge-logrotate.timer"
