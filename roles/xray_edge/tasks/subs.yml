@@ -13,19 +13,17 @@
   become: false
   vars:
     sni: "{{ reality_server_names[0] }}"
-    addresses: "{{ [node_endpoint] + ((['[' ~ global_ipv6 ~ ']']) if (global_ipv6 | length > 0) else []) }}"
+    label: "{{ item.name ~ '.' ~ inventory_hostname ~ '-edge' }}"
     common: "encryption=none&security=reality&sni={{ sni | urlencode }}&fp=chrome&pbk={{ edge_public_key | urlencode }}&sid={{ item.short_id }}"
   copy:
     dest: "{{ edge_subs_dir }}/{{ item.name }}_{{ inventory_hostname }}.txt"
     mode: "0600"
+    # 只输出域名地址：域名同时有 A/AAAA 时由客户端（Happy Eyeballs）选择 IPv4 或 IPv6。
     content: |
-      {% for addr in addresses %}
-      {% set label = item.name ~ '.' ~ inventory_hostname ~ '-edge' ~ ('-v6' if addr.startswith('[') else '') %}
-      vless://{{ item.uuid }}@{{ addr }}:{{ edge_listen_port }}?{{ common }}&type=tcp&flow=xtls-rprx-vision#{{ label | urlencode }}
+      vless://{{ item.uuid }}@{{ node_endpoint }}:{{ edge_listen_port }}?{{ common }}&type=tcp&flow=xtls-rprx-vision#{{ label | urlencode }}
       {% if edge_xhttp_enabled | bool %}
-      vless://{{ item.uuid }}@{{ addr }}:{{ edge_listen_port }}?{{ common }}&type=xhttp&path={{ edge_xhttp_path | urlencode | replace('/', '%2F') }}&mode={{ edge_xhttp_mode }}#{{ (label ~ '-xhttp') | urlencode }}
+      vless://{{ item.uuid }}@{{ node_endpoint }}:{{ edge_listen_port }}?{{ common }}&type=xhttp&path={{ edge_xhttp_path | urlencode | replace('/', '%2F') }}&mode={{ edge_xhttp_mode }}#{{ (label ~ '-xhttp') | urlencode }}
       {% endif %}
-      {% endfor %}
   loop: "{{ edge_users | selectattr('name', 'in', edge_test_users) | list }}"
   loop_control:
     label: "{{ item.name }}"

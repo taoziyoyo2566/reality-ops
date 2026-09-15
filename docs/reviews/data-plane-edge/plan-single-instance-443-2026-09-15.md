@@ -64,7 +64,7 @@ Created: 2026-09-15 JST
 | 容器名 | `xray_edge` | 不以 `reality_` 开头 |
 | 根目录 | `/opt/xray-edge/{conf.d,last-good,state,keys,logs}` | 不在 `/opt/reality` 下，不属于任何 compose 项目 |
 | 编排 | `community.docker.docker_container`（单容器，不用 compose） | 不受 `remove_orphans` 影响 |
-| 业务端口 | 宿主机 `0.0.0.0:443` 与（有全局 IPv6 时）`[v6]:443` → 容器 443 | 旧实例用每用户高位端口 |
+| 业务端口 | 宿主机 `0.0.0.0:443` 与（有全局 IPv6 时）`[::]:443` → 容器 443（2026-09-15 变更，见 §10） | 旧实例用每用户高位端口 |
 | API | 容器内 `127.0.0.1:10085`，**不发布到宿主机**；经 `docker exec xray_edge xray api ... -s 127.0.0.1:10085` 调用 | 不占宿主机 `127.0.0.1:10085` |
 | 日志轮转 | `/etc/xray-edge/logrotate.conf` + `xray-edge-logrotate.{service,timer}` | 不改 `/etc/logrotate.d/reality-xray` |
 | 网络 | bridge（决定 5） | — |
@@ -158,8 +158,10 @@ abstract socket 与 `127.0.0.1:<port>` 的选择、`xver`）必须先通过 §6.
 canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`edge.yml` 仅为 `edge_test_users`（canary 期间为 `["test"]`）中的用户
 在控制端写 `~/.local/share/reality-ops/edge-subs/<user>_<node>.txt`（目录 0700、文件 0600，不在仓库内），内容：
 
+每个用户只输出以 `node_endpoint` 域名为地址的链接（2026-09-15 变更，见 §10）；域名同时有 A/AAAA 时由客户端选择地址族。
+
 - 第一步：`vless://<uuid>@<node_endpoint>:443?encryption=none&security=reality&type=tcp&sni=<sni>&fp=chrome&pbk=<节点公钥>&sid=<用户 sid>&flow=xtls-rprx-vision#<user>.<node>-edge`
-- 第二步追加：`type=xhttp&path=<path>&mode=auto`，无 `flow`。
+- 第二步追加一条同样以域名为地址的链接：`type=xhttp&path=<path>&mode=auto`，无 `flow`。
 
 链接由操作者手工导入测试客户端。正式迁移时的订阅输出属于 §7.1 migrate，另行设计。
 
@@ -242,3 +244,13 @@ canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`e
 
 本文为 DRAFT。批准后仅授权工作树内实现与 §6.1 本地验证。以下各自单独授权：Git 发布；对 `dzire`、`usca` 的每次部署、
 移除或重启；从控制端对节点的主动连通测试之外的任何节点变更；订阅、Gist、DNS、云安全组与用户通知。
+
+## 10. 已批准的变更
+
+- **2026-09-15 · IPv6 监听与测试链接地址。** 起因：`usca` canary 实测时，测试链接同时给出域名和 IPv6 地址两条，
+  而 `usca` 的节点域名已有指向同一地址的 AAAA。调查（Xray-docs-next `7aa9bea` `sockopt.md`；Go `net/addrselect.go`
+  RFC 6724 排序）表明：客户端连接同时有 A/AAAA 的域名时，Xray 内核默认 `AsIs` 使用 Go Happy Eyeballs 选择地址族；
+  ipinfo 看到的是节点出站地址，与所用链接无关。同时发现新实例绑定的是 Ansible 选出的第一个公网 IPv6，而
+  `jp10`、`kagoya`、`netcup`、`legend` 各有两个公网 IPv6，AAAA 指向另一个时经域名的 IPv6 连接会失败。
+  操作者决定：有全局 IPv6 的节点改为发布 `[::]:443`；测试链接只保留域名一条。节点出站地址族策略保持默认，不在本计划调整。
+  影响：`usca` 重新部署时容器因端口映射变化而重建；`dzire` 无全局 IPv6，不受影响。

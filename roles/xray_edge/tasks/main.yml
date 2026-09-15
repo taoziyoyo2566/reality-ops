@@ -107,9 +107,10 @@
     restart_policy: unless-stopped
     network_mode: bridge
     user: "10000:10000"
+    # [::] 接收本机全部 IPv6 地址：节点有多个公网 IPv6 时，不依赖 AAAA 恰好指向 Ansible 选中的那一个。
     ports: >-
       {{ ['0.0.0.0:' ~ edge_listen_port ~ ':' ~ edge_listen_port]
-         + ((['[' ~ global_ipv6 ~ ']:' ~ edge_listen_port ~ ':' ~ edge_listen_port]) if (global_ipv6 | length > 0) else []) }}
+         + ((['[::]:' ~ edge_listen_port ~ ':' ~ edge_listen_port]) if (global_ipv6 | length > 0) else []) }}
     volumes:
       - "{{ edge_root_dir }}/conf.d:/etc/xray/conf.d:ro"
       - "{{ edge_root_dir }}/logs:/var/log/xray"
