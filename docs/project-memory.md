@@ -47,6 +47,40 @@ and in this file's git history; current publisher state is authoritative in the
 new repository. Planning lives in
 [`roadmap-unified-2026-08-27.md`](reviews/roadmap-unified-2026-08-27.md).
 
+## xray_edge Canary State
+
+Last updated: 2026-09-15 JST. Contract:
+[`plan-single-instance-443-2026-09-15.md`](reviews/data-plane-edge/plan-single-instance-443-2026-09-15.md).
+Live truth is the node; re-check with the commands below instead of trusting this record.
+
+- `[实测]` `dzire`: `xray_edge` runs from `edge.yml` at `ops@de2b4b4`. First deployed
+  2026-09-15 01:11 JST; the unit-file failures of the first two runs were fixed by
+  `1ce07d4`. Current container `5a18c7d30da8` (recreated by the remove/redeploy drill),
+  image `fd502666`, restart count 0, host port 443 only (API not published), 33 users
+  (32 ACL users + `test`), XHTTP disabled, `xray-edge-logrotate.timer` active.
+- The old `reality_*` multi instance on `dzire` was fingerprinted before the first run
+  (32 containers: ids, creation, restarts, config file list) and stayed identical through
+  every run and drill below.
+- From the control host: a plain TLS probe to `dzire:443` returns the real
+  `www.flipkart.com` certificate; the `test` Vision link connects and egresses from
+  dzire's IP. The operator imported the link into a real client and confirmed normal use
+  (about 11.7 MB down / 4.1 MB up counted for `test.dzire`).
+- Plan §6.2 drills, 2026-09-15 08:47-08:59 JST, all as expected: applier user add and
+  remove went through the API without a restart (33 -> 34 -> 33, conf.d restored
+  byte-identical); a SOCKS5 route with an invalid IP was rejected by `xray run -test`
+  with conf.d and the container unchanged; a container restart kept 33 users; a manual
+  `xray-edge-logrotate.service` run succeeded; `edge-remove.yml` (keys kept) removed the
+  container, units and files, and the redeploy restored the same public key and conf.d.
+- The node REALITY key lives only in `/opt/xray-edge/keys` on `dzire`. The operator's
+  test link is `~/.local/share/reality-ops/edge-subs/test_dzire.txt` on `spt` (0600).
+- Not yet observed: an actual size- or daily-triggered rotation and compression of the
+  edge logs (logs were still small). XHTTP (§6.3) and `usca` (§6.4) not started; §6.3
+  still needs the operator's client list.
+
+```bash
+ssh dzire "docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.Image}}' xray_edge; systemctl is-active xray-edge-logrotate.timer"
+```
+
 ## Production State
 
 - Monitor server runs on `spt`.
