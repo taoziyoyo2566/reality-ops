@@ -83,7 +83,17 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   `www.costco.com` certificate; the `test` IPv4 and IPv6 links both connect. The access
   log recorded the control host's real public IPv4 and IPv6 as sources, so bridge
   networking preserves IPv6 client addresses. Memory: edge about 10 MiB, old
-  `reality_core` about 75 MiB. Test link file: `test_usca.txt` (IPv4 and IPv6 lines).
+  `reality_core` about 75 MiB. The operator confirmed both links work in a real client.
+- 2026-09-15 09:03 JST, `ops@df5e7b9`: `usca` redeployed to publish IPv6 on `[::]:443`
+  (container recreated as `bd5ec11bc3e2`; public key, conf.d and 33 users unchanged; old
+  `reality_core` unchanged). The node domain has A and AAAA records pointing at usca. The
+  test link file now holds one domain link. Through that domain, forced IPv4 and forced
+  IPv6 both connect, and an unforced Xray client on a dual-stack host chose IPv6.
+- Address-family findings (see the plan §10): which link a client uses only decides the
+  client-to-node family. Sites such as ipinfo see the node's own egress: inside the bridge
+  container IPv6 is a ULA (`fd00::`) masqueraded to the node's global IPv6, so Go's
+  RFC 6724 ordering prefers IPv4 for dual-stack destinations while IPv6-only
+  destinations still work; that is why ipinfo shows IPv4 and reports IPv6 as detected.
 - Not yet done: plan §6.2 drills and a real-client check on `usca`; an actual size- or
   daily-triggered rotation of edge logs on either node; XHTTP (§6.3), which still needs
   the operator's client list.
