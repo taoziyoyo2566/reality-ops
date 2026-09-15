@@ -178,10 +178,27 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   observation of whether Happy Eyeballs ever selects IPv6 for dual-stack destinations; an
   actual size- or daily-triggered rotation of edge logs.
 - Compose form ([`plan-edge-compose`](reviews/data-plane-edge/plan-edge-compose-2026-09-15.md),
-  `ops@0538f92`): implemented and verified locally only. The three canary nodes still run
-  the S3 form (`docker_container`, host logrotate timer, `/opt/xray-edge/bin`) until each is
-  migrated with separate authorization. `edge.yml` from `0538f92` on performs that migration,
-  so do not run it against a node without that authorization. Local: `test_compose.py` 6/6,
+  `ops@0538f92`): `usca` and `legend` still run the S3 form (`docker_container`, host logrotate
+  timer, `/opt/xray-edge/bin`) until each is migrated with separate authorization. `edge.yml`
+  from `0538f92` on performs that migration, so do not run it against a node without that
+  authorization.
+- `[实测]` 2026-09-15 20:1x JST `dzire` migrated to the compose form (`edge.yml --limit dzire`,
+  rc 0, changed 14). The first run stopped at the drift check with no change: the operator had
+  deleted the untracked `users/shuaiqi.yml`, while the old instances on dzire, usca and legend
+  still carry `shuaiqi`. Operator decision: `shuaiqi` is no longer needed; remove it only from
+  the new instances and leave old instances to S7 (`edge_drift_old_only_users: ["shuaiqi"]`).
+  Before/after: old multi fingerprint unchanged (32 containers `62bbb81c`, config `0cf63b0e`);
+  `xray_edge` recreated with compose label `xray-edge`, restart 0, healthy, 12.7 MiB; every
+  `docker inspect` parameter identical (image, bridge, 443 binding, DNS override, user,
+  read-only, tmpfs, cap drop, no-new-privileges, pids, memory and swap, nofile, log limits,
+  restart policy, mounts); public key unchanged; users 33 -> 32 on both inbounds, and the only
+  config difference from `last-good` is `shuaiqi` removed. `xray_edge_logrotate` runs as
+  10000, no network, read-only, 0.5 MiB; a manual rotation run exits 0 and writes its status
+  file. The host timer, both units, `/etc/xray-edge`, the host status file and
+  `/opt/xray-edge/bin` are gone. From the control host both `test_dzire.txt` links connect
+  (Vision and XHTTP, HTTP 200 in about 1.2 s) and the TLS fallback still returns
+  `www.flipkart.com`. Not yet done on dzire: plan §6.2 item 5 drills in the compose form
+  (applier add/remove, restart, `edge-remove.yml` and redeploy) and the next-day rotation check. Local: `test_compose.py` 6/6,
   `e2e_local.py` 42/42 three times in a row (now including last-good recovery, UUID and
   short id changes, SOCKS5 membership change, compose logrotate). Buildx gives a new image
   ID on every build, so the tools image tag is a hash of its build inputs.
@@ -209,6 +226,9 @@ Contract: [`plan-subscription-service`](reviews/subscription-service/plan-subscr
   as legacy (no node contacted, synthetic token): 13 nodes collected; the build stopped because
   `/opt/reality/users` holds `test_jp05.json` and `test_jp10.json` while the ACL does not allow
   `test` on jp05 or jp10 (old-system leftovers). The old files have no entries for `ali`.
+  Operator decision 2026-09-15 (plan §5 item 1, option A): the ACL decides. The builder now
+  leaves such files out and lists them under `ignored` in its report; a node the ACL allows
+  without a legacy file still stops the build. The old files are not changed.
 - Design details to confirm on devices: both Clash profiles resolve node domains through
   domestic DoH (`223.5.5.5`, `119.29.29.29`) so that a node can be reached before the tunnel is
   up; the split profile makes Mihomo download GeoIP/GeoSite (about 21 MB) from its default

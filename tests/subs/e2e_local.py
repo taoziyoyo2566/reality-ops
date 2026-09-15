@@ -146,7 +146,7 @@ def main():
         fixtures.write_legacy(legacy)
         legacy_links = build.legacy_files(legacy)
         shutil.rmtree(legacy)
-        catalog, tokens, problems = build.build(collected, fixtures.TOKENS, ["alice", "bob", "test"], legacy_links)
+        catalog, tokens, problems, _ = build.build(collected, fixtures.TOKENS, ["alice", "bob", "test"], legacy_links)
         record("catalog builds without problems", not problems, str(problems))
 
         # Node directory with the role's owners and modes.
@@ -231,7 +231,7 @@ def main():
 
         # Revocation and fail-closed behaviour with the container running.
         reduced = {k: v for k, v in fixtures.TOKENS.items() if k != "bob"}
-        catalog2, tokens2, _ = build.build(collected, reduced, ["alice", "test"], legacy_links)
+        catalog2, tokens2, _, _ = build.build(collected, reduced, ["alice", "test"], legacy_links)
         publish(catalog2, tokens2)
         time.sleep(1)
         record("revoked token gets 404 without restart", http_get(f"/s/{fixtures.TOKENS['bob']}/v2ray")[0] == 404)

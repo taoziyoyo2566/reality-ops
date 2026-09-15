@@ -35,16 +35,18 @@
   changed_when: false
   when: not (edge_skip_drift_check | bool)
 
-- name: 新实例用户集合必须与旧实例一致（不计额外用户）
+- name: 新实例用户集合必须与旧实例一致（不计额外用户与已登记的旧实例独有用户）
   vars:
     old_names: "{{ edge_old_users.stdout | from_json | sort }}"
     new_names: "{{ reality_instances | map(attribute='name') | sort }}"
   assert:
     that:
-      - old_names == new_names
+      - old_names | difference(edge_drift_old_only_users) | sort == new_names
+      - edge_drift_old_only_users | intersect(new_names) | length == 0
     fail_msg: >-
       新旧实例授权范围不一致，停止部署。仅旧实例有：{{ old_names | difference(new_names) }}；
-      仅新实例有：{{ new_names | difference(old_names) }}。先确认用户档案是否已部署到旧实例。
+      仅新实例有：{{ new_names | difference(old_names) }}；已登记的旧实例独有用户：{{ edge_drift_old_only_users }}。
+      先确认用户档案是否已部署到旧实例。
   when: not (edge_skip_drift_check | bool)
 
 - name: 创建新实例目录

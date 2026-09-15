@@ -62,6 +62,10 @@ edge_logrotate_interval: 3600
 
 # 新实例用户集合与旧实例不一致时停止；仅在节点尚无旧实例时才可设为 true。
 edge_skip_drift_check: false
+# 已从用户档案移除、但旧实例（按决定 9 不改）里仍存在的用户。只豁免这些名字，其余用户仍严格比对；
+# 这些用户不得出现在新实例中。旧实例在 S7 contract 删除后清空本列表。
+# 2026-09-15 操作者决定：shuaiqi 不再需要，只从新实例移除，旧实例保留到 S7。
+edge_drift_old_only_users: ["shuaiqi"]
 
 # 测试订阅链接写到控制端此目录（不在仓库内；目录 0700、文件 0600）。
 edge_subs_dir: "{{ lookup('env', 'HOME') }}/.local/share/reality-ops/edge-subs"

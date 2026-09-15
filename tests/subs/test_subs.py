@@ -41,8 +41,8 @@ def built(alpha_state="migrated", extra_legacy=None, tokens=None, enabled=ENABLE
 
 class BuildTest(unittest.TestCase):
     def test_catalog_shape(self):
-        catalog, tokens, problems = built()
-        self.assertEqual(problems, [])
+        catalog, tokens, problems, ignored = built()
+        self.assertEqual((problems, ignored), ([], []))
         self.assertEqual(set(catalog["users"]["alice"]["nodes"]), {"alpha", "beta"})
         self.assertIn("uuid", catalog["users"]["alice"]["nodes"]["alpha"])
         self.assertIn("legacy_links", catalog["users"]["alice"]["nodes"]["beta"])
@@ -52,13 +52,16 @@ class BuildTest(unittest.TestCase):
         for token in fixtures.TOKENS.values():
             self.assertNotIn(token, text)
 
-    def test_legacy_file_without_acl_is_reported(self):
+    def test_acl_decides_over_legacy_files(self):
         extra = {"bob_alpha.json": [{"subscription": fixtures.legacy_link("bob", "198.51.100.8", 1, "x")}],
                  "alice_retired.json": [{"subscription": fixtures.legacy_link("alice", "198.51.100.9", 1, "y")}]}
-        _, _, problems = built(alpha_state="legacy", extra_legacy=extra)
-        self.assertIn("bob on alpha: legacy file but not allowed by ACL", problems)
-        self.assertIn("alice on alpha: allowed by ACL but no legacy file", problems)
-        self.assertIn("alice: legacy file for unknown node retired", problems)
+        catalog, _, problems, ignored = built(alpha_state="legacy", extra_legacy=extra)
+        self.assertEqual(problems, ["alice on alpha: allowed by ACL but no legacy file",
+                                    "test on alpha: allowed by ACL but no legacy file"])
+        self.assertEqual(sorted(ignored), ["alice: legacy file for unknown node retired",
+                                           "bob on alpha: legacy file not allowed by ACL"])
+        self.assertNotIn("alpha", catalog["users"]["bob"]["nodes"])
+        self.assertNotIn("retired", catalog["nodes"])
 
     def test_enabled_user_without_token_fails(self):
         with self.assertRaisesRegex(cat.CatalogError, "without a token"):
@@ -71,19 +74,19 @@ class BuildTest(unittest.TestCase):
             built(tokens=dict(fixtures.TOKENS, bob="short"))
 
     def test_private_key_is_refused(self):
-        catalog, _, _ = built()
+        catalog, _, _, _ = built()
         catalog["nodes"]["alpha"]["edge"]["private_key"] = "x"
         with self.assertRaisesRegex(cat.CatalogError, "private keys"):
             cat.validate_catalog(catalog)
 
     def test_invalid_legacy_link_is_refused(self):
-        catalog, _, _ = built()
+        catalog, _, _, _ = built()
         catalog["users"]["bob"]["nodes"]["beta"]["legacy_links"] = ["vless://not-a-uuid@h:1?security=reality"]
         with self.assertRaises(cat.CatalogError):
             cat.validate_catalog(catalog)
 
     def test_token_table_must_cover_exactly_the_users(self):
-        catalog, tokens, _ = built()
+        catalog, tokens, _, _ = built()
         tokens["tokens"].pop(cat.token_digest(fixtures.TOKENS["bob"]))
         with self.assertRaisesRegex(cat.CatalogError, "without a token"):
             cat.validate_tokens(tokens, catalog)
@@ -91,7 +94,7 @@ class BuildTest(unittest.TestCase):
 
 class RenderTest(unittest.TestCase):
     def setUp(self):
-        self.catalog, _, _ = built()
+        self.catalog, _, _, _ = built()
 
     def decode(self, text):
         return base64.b64decode(text).decode().splitlines()
@@ -160,7 +163,7 @@ class ServerTest(unittest.TestCase):
     def setUp(self):
         self.data = tempfile.mkdtemp()
         self.db = tempfile.mkdtemp()
-        catalog, tokens, _ = built()
+        catalog, tokens, _, _ = built()
         self.write("catalog.json", catalog)
         self.write("tokens.json", tokens)
         self.stderr = io.StringIO()
@@ -208,7 +211,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(a[2], c[2])
 
     def test_revocation_applies_without_restart(self):
-        catalog, tokens, _ = built(enabled=["alice", "test"], tokens={k: v for k, v in fixtures.TOKENS.items() if k != "bob"})
+        catalog, tokens, _, _ = built(enabled=["alice", "test"], tokens={k: v for k, v in fixtures.TOKENS.items() if k != "bob"})
         self.write("catalog.json", catalog)
         self.write("tokens.json", tokens)
         self.assertEqual(self.get(f"/s/{fixtures.TOKENS['bob']}/v2ray")[0], 404)
@@ -218,7 +221,7 @@ class ServerTest(unittest.TestCase):
         os.remove(os.path.join(self.data, "tokens.json"))
         self.assertEqual(self.get(f"/s/{fixtures.TOKENS['alice']}/v2ray")[0], 503)
         self.assertEqual(self.get("/healthz")[0], 503)
-        catalog, tokens, _ = built()
+        catalog, tokens, _, _ = built()
         self.write("tokens.json", tokens)
         self.write("catalog.json", "{not json")
         self.assertEqual(self.get(f"/s/{fixtures.TOKENS['alice']}/clash-split")[0], 503)

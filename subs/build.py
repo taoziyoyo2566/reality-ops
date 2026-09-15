@@ -7,7 +7,9 @@ Input, from subs.yml:
   --enabled    users published in this catalog; each needs a token.
   --legacy-dir the old system's /opt/reality/users (<user>_<node>.json), read only.
 Output: catalog.json and tokens.json (digests only) in --out-dir, and a JSON report without secrets on stdout.
-Exit 1 with the report when validation fails or legacy files disagree with the ACL.
+The ACL decides (operator decision 2026-09-15, plan §5 item 1): legacy files the ACL does not allow, or for nodes
+no longer in the inventory, are left out and listed under "ignored". Exit 1 with the report when validation
+fails or the ACL allows a legacy node for which no legacy file exists.
 """
 import argparse
 import json
@@ -32,7 +34,8 @@ def legacy_files(legacy_dir):
 
 
 def build(collected, tokens, enabled, legacy):
-    nodes, users, problems = {}, {name: {"nodes": {}} for name in enabled}, []
+    """(catalog, token table, problems, ignored)."""
+    nodes, users, problems, ignored = {}, {name: {"nodes": {}} for name in enabled}, [], []
     acl_pairs = set()
     for node_name, node in sorted(collected["nodes"].items()):
         nodes[node_name] = {"label": node["label"], "state": node["state"]}
@@ -47,7 +50,8 @@ def build(collected, tokens, enabled, legacy):
             elif (member["name"], node_name) in legacy:
                 users[member["name"]]["nodes"][node_name] = {"legacy_links": legacy[(member["name"], node_name)]}
 
-    # §5 item 1: legacy files and the ACL must agree for every published user on legacy nodes.
+    # §5 item 1: the ACL decides. A node the ACL allows must have its legacy file; files the ACL does not
+    # allow (or for nodes no longer in the inventory) were never published above and are only reported.
     for user in enabled:
         for node_name, node in nodes.items():
             if node["state"] != "legacy":
@@ -57,10 +61,10 @@ def build(collected, tokens, enabled, legacy):
             if in_acl and not has_file:
                 problems.append(f"{user} on {node_name}: allowed by ACL but no legacy file")
             if has_file and not in_acl:
-                problems.append(f"{user} on {node_name}: legacy file but not allowed by ACL")
+                ignored.append(f"{user} on {node_name}: legacy file not allowed by ACL")
         for (file_user, file_node) in legacy:
             if file_user == user and file_node not in nodes:
-                problems.append(f"{user}: legacy file for unknown node {file_node}")
+                ignored.append(f"{user}: legacy file for unknown node {file_node}")
 
     catalog = {"schema": cat.SCHEMA, "generated_at": collected["generated_at"], "nodes": nodes, "users": users}
     missing = sorted(set(enabled) - set(tokens))
@@ -75,7 +79,7 @@ def build(collected, tokens, enabled, legacy):
     token_doc = {"schema": cat.SCHEMA, "tokens": table}
     cat.validate_catalog(catalog)
     cat.validate_tokens(token_doc, catalog)
-    return catalog, token_doc, problems
+    return catalog, token_doc, problems, ignored
 
 
 def _write(path, doc):
@@ -102,8 +106,8 @@ def main(argv=None):
         tokens = json.load(fh)
     report = {"ok": False, "users": len(enabled)}
     try:
-        catalog, token_doc, problems = build(collected, tokens, enabled, legacy_files(args.legacy_dir))
-        report.update({"nodes": len(catalog["nodes"]), "problems": problems,
+        catalog, token_doc, problems, ignored = build(collected, tokens, enabled, legacy_files(args.legacy_dir))
+        report.update({"nodes": len(catalog["nodes"]), "problems": problems, "ignored": ignored,
                        "migrated": sorted(n for n, v in catalog["nodes"].items() if v["state"] == "migrated"),
                        "links": sum(len(v["nodes"]) for v in catalog["users"].values())})
         if problems:
