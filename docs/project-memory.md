@@ -94,9 +94,14 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   container IPv6 is a ULA (`fd00::`) masqueraded to the node's global IPv6, so Go's
   RFC 6724 ordering prefers IPv4 for dual-stack destinations while IPv6-only
   destinations still work; that is why ipinfo shows IPv4 and reports IPv6 as detected.
-- Not yet done: plan §6.2 drills and a real-client check on `usca`; an actual size- or
-  daily-triggered rotation of edge logs on either node; XHTTP (§6.3), which still needs
-  the operator's client list.
+- `usca` reduced drills, 2026-09-15 10:14-10:16 JST, all as expected, old `reality_core`
+  unchanged throughout: applier user add and remove through the API without a restart
+  (33 -> 34 -> 33, conf.d restored to hash `d8680296db7e`); container restart kept 33
+  users with `0.0.0.0:443` and `[::]:443` listening; `edge-remove.yml` (keys kept) then
+  `edge.yml` restored the same public key and conf.d. Current container `ea66b872264a`.
+  Bad-config rejection and the manual logrotate run were covered on `dzire` only.
+- Not yet done: an actual size- or daily-triggered rotation of edge logs on either node;
+  XHTTP (§6.3), which still needs the operator's client list.
 
 ```bash
 ssh dzire "docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.Image}}' xray_edge; systemctl is-active xray-edge-logrotate.timer"
