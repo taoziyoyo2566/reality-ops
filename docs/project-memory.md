@@ -260,6 +260,21 @@ ssh dzire "sudo docker compose -f /opt/xray-edge/compose.yaml ps; sudo docker co
   forced IPv6 returns 200, egress IPv6 equals the node's address, IPv6 fallback probe correct.
   `[缺口]` authentik is down on 443/80 until it moves behind a Cloudflare tunnel; the runbook is
   [`kagoya-authentik-cloudflare-tunnel`](runbooks/kagoya-authentik-cloudflare-tunnel.md), not yet executed.
+- `[实测]` 2026-09-16 08:33 JST forced one rotation on all four nodes
+  (`docker compose exec logrotate logrotate -f ...`, operator authorized): each produced
+  `access.log.1.gz` and `error.log.1.gz`, truncated `access.log` to 0 (dzire 712 B, usca 752 KB,
+  legend 39 KB, kagoya 1.2 KB before), updated the state file and left Xray running with restart
+  count 0; a connection through each node's test link then wrote to the same `access.log` again,
+  so `copytruncate` works. No automatic rotation had happened before that: the rule is
+  `daily` plus `maxsize 50M`, the largest log was 752 KB, and the logrotate container runs in
+  **UTC**, so the daily boundary is 00:00 UTC (09:00 JST), not node local time.
+- `[实测]` Container time zones: the Xray image carries `Asia/Shanghai`, so access logs are UTC+8;
+  the tools image (alpine) has no `TZ` and runs in UTC; hosts differ (dzire UTC, usca and kagoya
+  JST, legend EDT). Both images ship tzdata, so a `TZ` environment variable would change either
+  (verified locally with `TZ=UTC` and `TZ=Asia/Tokyo`). Not changed; time zone affects only
+  server-side log reading and the daily rotation moment, never clients (REALITY and TLS use
+  absolute time, monitor stores epochs). It would start to matter if per-day quotas or expiry
+  dates were added.
 - Operator decisions 2026-09-15/16: old instances and old code are **not deleted during the
   migration**; whether to delete them is decided after all users are stable on the new
   subscription (roadmap §9 item 11). On kagoya the operator chose to stop authentik's Caddy to
@@ -284,6 +299,11 @@ Contract: [`plan-subscription-service`](reviews/subscription-service/plan-subscr
   Operator decision 2026-09-15 (plan §5 item 1, option A): the ACL decides. The builder now
   leaves such files out and lists them under `ignored` in its report; a node the ACL allows
   without a legacy file still stops the build. The old files are not changed.
+- The user page also explains that websites compare the device's system time zone with the exit
+  IP's region (2026-09-16 operator request): prefer a node in a nearby time zone for accounts that
+  matter, split mode is unaffected because domestic sites stay direct, and changing the device
+  time zone is not advised. Per-node region labels were **not** added: that needs operator-maintained
+  metadata, since a host's own time zone does not indicate where the machine is (dzire UTC, legend EDT).
 - Design details to confirm on devices: both Clash profiles resolve node domains through
   domestic DoH (`223.5.5.5`, `119.29.29.29`) so that a node can be reached before the tunnel is
   up; the split profile makes Mihomo download GeoIP/GeoSite (about 21 MB) from its default

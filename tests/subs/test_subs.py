@@ -148,6 +148,13 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("<script", html)
         self.assertNotIn(fixtures.UUIDS["alice"], html)
 
+    def test_page_explains_timezone_and_unsolvable_signals(self):
+        html = render.page(self.catalog, "alice", "https://subs.example.test/s/" + fixtures.TOKENS["alice"])
+        self.assertIn("选节点的提示", html)
+        self.assertIn("系统时区", html)
+        self.assertIn("无法通过网络层解决的识别", html)
+        self.assertLess(html.index("选节点的提示"), html.index("无法通过网络层解决的识别"))
+
     def test_golden(self):
         GOLDEN.mkdir(exist_ok=True)
         for name, text in {"alice.v2ray.txt": "\n".join(self.decode(render.v2ray(self.catalog, "alice", full=True))) + "\n",
