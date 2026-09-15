@@ -34,6 +34,8 @@ SHORT_ID_RE = re.compile(r"^(?:[0-9a-f]{2}){1,8}$")
 HOST_PORT_RE = re.compile(r"^[A-Za-z0-9.-]+:[0-9]{1,5}$")
 PATH_RE = re.compile(r"^/[A-Za-z0-9._~/-]{1,128}$")
 SOCKS_NETWORKS = ("", "tcp", "udp", "tcp,udp")
+# Xray-docs sockopt.md / RFC 8305 recommended values; tryDelayMs 0 would disable racing.
+HAPPY_EYEBALLS = {"tryDelayMs": 250, "prioritizeIPv6": False, "interleave": 1, "maxConcurrentTry": 4}
 
 
 class ApplyError(Exception):
@@ -116,6 +118,10 @@ def validate(desired):
         # D12: an outbound without a rule would only carry credentials; refuse it.
         _require(any(conditions), f"socks5 {pname} has no route condition")
         _require(profile.get("network", "") in SOCKS_NETWORKS, f"socks5 {pname} has an invalid network")
+
+    egress = desired.get("egress", {})
+    _require(isinstance(egress, dict) and isinstance(egress.get("happy_eyeballs", False), bool),
+             "egress.happy_eyeballs must be a boolean")
 
     level = (desired.get("log") or {}).get("level", "warning")
     _require(level in ("debug", "info", "warning", "error", "none"), "log.level is invalid")
@@ -208,8 +214,13 @@ def render(desired, private_key):
             "sniffing": _sniffing(),
         })
 
+    direct = {"tag": "direct", "protocol": "freedom", "settings": {}}
+    if (desired.get("egress") or {}).get("happy_eyeballs"):
+        # happyEyeballs only applies when domainStrategy is not AsIs; UseIP keeps both
+        # families so IPv4 and IPv6 race instead of AsIs's IPv4-first ordering.
+        direct["streamSettings"] = {"sockopt": {"domainStrategy": "UseIP", "happyEyeballs": dict(HAPPY_EYEBALLS)}}
     outbounds = [
-        {"tag": "direct", "protocol": "freedom", "settings": {}},
+        direct,
         {"tag": "blocked", "protocol": "blackhole", "settings": {}},
     ]
     rules = [

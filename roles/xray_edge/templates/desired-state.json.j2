@@ -34,5 +34,6 @@
     }{{ "," if not loop.last }}
 {% endfor %}
   ],
+  "egress": {"happy_eyeballs": {{ edge_happy_eyeballs_enabled | bool | to_json }}},
   "log": {"level": {{ edge_log_level | to_json }}}
 }

@@ -611,6 +611,17 @@ STUN 经节点返回节点公网地址；分流模式下行为与说明一致。
 9. ~~旧系统在 S7 前允许做哪些止血修复~~：2026-09-15 已决定不做修改（§4.1.3 决定 9）。
 10. U5 的默认模式（隐私或分流）、各客户端配置的维护方式，以及是否提供自检页。
 
+**S8 功能：出站 IPv4/IPv6 竞速（2026-09-15 操作者决定，先 canary）**
+
+- `[上游]` Xray `sockopt.happyEyeballs`（RFC 8305，仅 TCP，需 `domainStrategy` 非 `AsIs`，官方建议 `UseIP` 配合
+  `interleave`）；采用推荐值 `tryDelayMs 250`、`prioritizeIPv6 false`、`interleave 1`、`maxConcurrentTry 4`。默认 `AsIs`
+  下 Go 按 RFC 6724 排序，容器 ULA IPv6 使 IPv4 恒排第一、300ms 后才尝试 IPv6。
+- 实现：`group_vars/all/edge.yml` `edge_happy_eyeballs_nodes` 按节点开关，期望状态 `egress.happy_eyeballs`，
+  `direct` 出站加 `sockopt`；属 `20-outbounds` 变更，应用时重启。canary 节点 `usca`（有 IPv6 出口）。
+- `[实测]` 本地：`xray run -test` 通过；A/B 在仅 IPv4 与开启 IPv6 的 Docker 网络中，开启后 IPv4-only、IPv6-only、
+  双栈目标行为与关闭时一致，双栈在两族均快时选 IPv4。`[缺口]` “IPv4 变慢时选 IPv6”需节点侧长期观察，本地未模拟。
+- 风险：同一用户对同一网站的出口地址族可能变化，部分网站会话与 IP 绑定；只对有 IPv6 出口节点有意义。
+
 ## 10. 风险与回滚边界
 
 - 新旧系统在 S7 完成前并存；不得提前删除旧入口或旧配置；

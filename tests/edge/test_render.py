@@ -145,6 +145,16 @@ class RenderTest(unittest.TestCase):
         self.assertTrue(referenced - {"api"} <= set(outbound_tags))
         self.assertEqual(rules[-1], {"type": "field", "ruleTag": "default", "network": "tcp,udp", "outboundTag": "direct"})
 
+    def test_happy_eyeballs_egress(self):
+        plain = edge.render(desired(), PRIVATE_KEY)["20-outbounds.json"]["outbounds"][0]
+        self.assertNotIn("streamSettings", plain)
+        raced = edge.render(desired(egress={"happy_eyeballs": True}), PRIVATE_KEY)["20-outbounds.json"]["outbounds"][0]
+        sockopt = raced["streamSettings"]["sockopt"]
+        self.assertEqual((raced["tag"], sockopt["domainStrategy"]), ("direct", "UseIP"))
+        self.assertEqual(sockopt["happyEyeballs"], {"tryDelayMs": 250, "prioritizeIPv6": False, "interleave": 1, "maxConcurrentTry": 4})
+        with self.assertRaises(edge.ApplyError):
+            edge.render(desired(egress={"happy_eyeballs": "yes"}), PRIVATE_KEY)
+
     def test_render_is_order_independent(self):
         state = desired()
         reordered = copy.deepcopy(state)
@@ -194,7 +204,8 @@ class ClassifyTest(unittest.TestCase):
         for override in ({"listen": {"port": 8443}},
                          {"reality": {"target": "www.example.net:443", "server_names": ["www.example.net"]}},
                          {"xhttp": {"enabled": True, "path": "/p", "mode": "auto"}},
-                         {"log": {"level": "info"}}):
+                         {"log": {"level": "info"}},
+                         {"egress": {"happy_eyeballs": True}}):
             with self.subTest(override=override):
                 self.assertEqual(edge.classify(self.live, edge.render(desired(**override), PRIVATE_KEY)), "restart")
 
