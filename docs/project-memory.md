@@ -144,8 +144,16 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   From the control host Xray (forced IPv4 and IPv6) and Mihomo connected over Vision and
   XHTTP 6/6; usca's log attributed each request to the right inbound and address family.
   Test files: `test_usca.txt` (Vision + XHTTP) and `test_usca.clash.yaml`.
+- `[实测]` 2026-09-15 15:51 JST `usca` egress Happy Eyeballs (S8 canary), `ops@1348713`: the
+  deploy run was interrupted after the applier step, which had already restarted the
+  container in place with `direct` `sockopt` `UseIP` + `happyEyeballs` (tryDelayMs 250,
+  prioritizeIPv6 false, interleave 1, maxConcurrentTry 4); remaining playbook tasks are
+  idempotent and unchanged. Old `reality_core` unchanged, fallback still `www.costco.com`,
+  33 users. Via usca: IPv4-only -> IPv4, IPv6-only -> IPv6, dual-stack 4/4 -> IPv4 (IPv4
+  connects well within 250 ms from usca); XHTTP connects. Selecting IPv6 when IPv4 is slow
+  is not yet observed.
 - Not yet done: operator device test of usca XHTTP; an actual size- or daily-triggered
-  rotation of edge logs on either node.
+  rotation of edge logs on either node; legend as a new edge and Happy Eyeballs canary.
 
 ```bash
 ssh dzire "docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.Image}}' xray_edge; systemctl is-active xray-edge-logrotate.timer"

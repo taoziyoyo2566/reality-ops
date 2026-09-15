@@ -3,7 +3,7 @@
 # 只被 edge.yml / edge-remove.yml 使用；旧实现不读取任何 edge_* 变量。
 
 # 允许运行新实例的节点；edge.yml 对未列出的节点直接失败。
-edge_nodes: ["dzire", "usca"]
+edge_nodes: ["dzire", "usca", "legend"]
 
 # 只加入新实例、不改用户档案的额外用户（canary 测试账号）。不得与该节点的 ACL 结果重复。
 edge_extra_users: ["test"]
@@ -25,7 +25,7 @@ edge_xhttp_path: "{{ (vault_edge_xhttp_paths | default({})).get(inventory_hostna
 edge_xhttp_mode: "auto"
 # 出站 IPv4/IPv6 竞速（Xray happyEyeballs，推荐值 tryDelayMs 250）：列入的节点对双栈目标按先建立连接者选择地址族。
 # 仅对有 IPv6 出口的节点有意义；roadmap S8 独立功能，先 canary。
-edge_happy_eyeballs_nodes: ["usca"]
+edge_happy_eyeballs_nodes: ["usca", "legend"]
 edge_happy_eyeballs_enabled: "{{ inventory_hostname in edge_happy_eyeballs_nodes }}"
 # Mihomo 没有 auto；Xray 在 REALITY 下 auto 选择 stream-one（XTLS/Xray-core discussion #4113），Clash 片段与之一致。
 edge_mihomo_xhttp_mode: "stream-one"
