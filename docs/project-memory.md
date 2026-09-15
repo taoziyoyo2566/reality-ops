@@ -240,6 +240,31 @@ Live truth is the node; re-check with the commands below instead of trusting thi
 ssh dzire "sudo docker compose -f /opt/xray-edge/compose.yaml ps; sudo docker compose -f /opt/xray-edge/compose.yaml run --rm -T --pull never applier verify --root /opt/xray-edge --container xray_edge --image \$(sudo docker inspect -f '{{.Config.Image}}' xray_edge)"
 ```
 
+- `[实测]` 2026-09-16 S7 preflight of the remaining nodes (read-only): all x86_64 with the Compose
+  plugin (dcc lowest at 2.33.1, Docker 28.0.1). 443 and 80 free everywhere except kagoya, where
+  authentik's Caddy held both until the operator had it stopped. Memory available: ams 353 MB,
+  hk01 260 MB, hk02 257 MB, jp10 254 MB, jp05 233 MB (469 MB total, no swap), netcup 3.6 GB,
+  kagoya 563 MB. Disk: **jp05 root 96% with 89 MB free, too little for the tools image**; hk02 13%
+  free of 41 G; others fine. Docker daemon IPv6 (`fixed-cidr-v6`) is set on kagoya, hk01, hk02,
+  jp10 and netcup, absent on ams, dcc, jp05 and spt, so those four have no IPv6 egress inside
+  containers. `ali` still refuses SSH.
+- `[实测]` 2026-09-16 08:05 JST `kagoya` got its first `xray_edge` (compose form, `edge.yml --limit
+  kagoya`, rc 0, changed 13). The operator stopped authentik's Caddy first (`docker compose stop
+  caddy`, restart policy `unless-stopped`, so it stays stopped across reboots), which freed 443 and
+  80. Old `reality_core` fingerprint, `/opt/reality/data` hash and its 28 users unchanged. New
+  instance: healthy, restart 0, 11.5 MiB, `0.0.0.0:443` and `[::]:443`, 28 users (27 ACL +
+  `test`, `shuaiqi` excluded), no XHTTP, no Happy Eyeballs, nothing outside `/opt/xray-edge`.
+  Root filesystem 66% of 69 G free. From the control host the link connects over the domain and
+  forced IPv4, egress is kagoya's own IPv4, and the TLS fallback returns `edge01.yahoo.co.jp`.
+  After the operator added an AAAA record the same link works over IPv6 with no node-side change:
+  forced IPv6 returns 200, egress IPv6 equals the node's address, IPv6 fallback probe correct.
+  `[缺口]` authentik is down on 443/80 until it moves behind a Cloudflare tunnel; the runbook is
+  [`kagoya-authentik-cloudflare-tunnel`](runbooks/kagoya-authentik-cloudflare-tunnel.md), not yet executed.
+- Operator decisions 2026-09-15/16: old instances and old code are **not deleted during the
+  migration**; whether to delete them is decided after all users are stable on the new
+  subscription (roadmap §9 item 11). On kagoya the operator chose to stop authentik's Caddy to
+  free 443 rather than share the port.
+
 ## Subscription Service (S4) State
 
 Contract: [`plan-subscription-service`](reviews/subscription-service/plan-subscription-service-2026-09-15.md)
