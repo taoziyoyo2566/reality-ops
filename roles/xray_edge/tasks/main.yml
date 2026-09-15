@@ -106,6 +106,8 @@
     state: started
     restart_policy: unless-stopped
     network_mode: bridge
+    dns_servers: "{{ (edge_container_dns | default({})).get(inventory_hostname, {}).get('servers') or omit }}"
+    dns_opts: "{{ (edge_container_dns | default({})).get(inventory_hostname, {}).get('options') or omit }}"
     user: "10000:10000"
     # [::] 接收本机全部 IPv6 地址：节点有多个公网 IPv6 时，不依赖 AAAA 恰好指向 Ansible 选中的那一个。
     ports: >-

@@ -26,6 +26,14 @@ edge_xhttp_mode: "auto"
 # Mihomo 没有 auto；Xray 在 REALITY 下 auto 选择 stream-one（XTLS/Xray-core discussion #4113），Clash 片段与之一致。
 edge_mihomo_xhttp_mode: "stream-one"
 
+# 新实例容器的 DNS。REALITY 每次握手都要解析 target，Go 解析器对无响应的服务器单次等待 5s，
+# 宿主机首个 DNS 丢包时每个新连接都会多等约 5s（2026-09-15 dzire 实测 4.2.2.4 丢包过半）。
+# 只为列出的节点覆盖；未列出的节点继承宿主机 resolv.conf。
+edge_container_dns:
+  dzire:
+    servers: ["8.8.8.8", "1.1.1.1"]
+    options: ["timeout:1", "attempts:2"]
+
 # 容器资源与日志上界
 edge_memory_limit: "300m"
 edge_memory_reservation: "200m"
