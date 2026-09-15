@@ -259,3 +259,7 @@ canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`e
 - **2026-09-15 · 第三台 canary `legend` 与出站竞速。** 操作者授权将 `legend`（原 single，有 IPv6，操作者认为 IPv6 质量较好）
   纳入 canary，只开 RAW+Vision；同时在 `usca`、`legend` 启用路线图 S8 的出站 IPv4/IPv6 竞速（`happyEyeballs` 推荐值）。
   竞速属 S8 独立功能，不是本合同的验收项；按 `edge_happy_eyeballs_nodes` 逐节点开关，默认关闭。
+- **2026-09-15 · 整体纳入 Docker Compose。** 起因：操作者要求功能不散布在宿主机各处、便于维护与快速部署。批准的修订合同
+  [`plan-edge-compose-2026-09-15.md`](plan-edge-compose-2026-09-15.md)：`xray_edge` 改由 compose 管理（运行参数不变），日志轮转改为
+  compose 内容器，应用器进入固定版本的工具镜像，删除 `/opt/xray-edge` 之外的新数据面文件。影响：§3.1 组成、§3.6 日志与 §3.9 移除
+  的实现方式以修订合同为准；三台 canary 逐台迁移，各自另行授权。
