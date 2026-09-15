@@ -121,8 +121,16 @@ Live truth is the node; re-check with the commands below instead of trusting thi
 - `[实测]` 2026-09-15 host DNS survey (12 reachable nodes, `ali` not reachable): only dzire
   has a lossy resolver. netcup, legend, jp10 and kagoya use Tailscale `100.100.100.100`,
   which is also reachable from their `reality_core` container network.
+- Roadmap U5 feasibility (client-side IP leak protection, roadmap §7.2): STUN through
+  dzire returns dzire's address for Xray and Mihomo over Vision and XHTTP. Test-only Mihomo
+  privacy profiles `test_dzire.privacy.clash.yaml` and `test_usca.privacy.clash.yaml` (0600,
+  control host, generated outside the repo; the usca one was built from its link because
+  usca has not been redeployed since the Clash snippet was added) pass `mihomo -t` and, with
+  TUN off, egress and STUN through the node, block IPv6-only targets on dzire instead of
+  going direct, and answer DNS with fake-ip.
 - Not yet done: operator device tests of dzire XHTTP with v2rayN, Shadowrocket and a Clash
-  client; XHTTP on `usca`; an actual size- or daily-triggered rotation of edge logs.
+  client; device test of the privacy profile with TUN and ipleak-style checks; XHTTP on
+  `usca`; an actual size- or daily-triggered rotation of edge logs.
 
 ```bash
 ssh dzire "docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.Image}}' xray_edge; systemctl is-active xray-edge-logrotate.timer"
