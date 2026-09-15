@@ -138,7 +138,14 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   sources (08:00-14:07 container time) had 479 connections, 434 on `vless-xhttp` and 45 on
   Vision, including 185 to ipleak.net and 5 UDP destinations, so the check ran through the
   node.
-- Not yet done: XHTTP on `usca`; an actual size- or daily-triggered rotation of edge logs.
+- `[实测]` 2026-09-15 15:11 JST `usca` XHTTP, `ops@8be3422` (`edge_xhttp_nodes: ["dzire", "usca"]`):
+  container restarted in place (`ea66b872264a`), 33 users on both inbounds, fallback with
+  `xver: 1`, old `reality_core` unchanged, plain TLS probe still returns `www.costco.com`.
+  From the control host Xray (forced IPv4 and IPv6) and Mihomo connected over Vision and
+  XHTTP 6/6; usca's log attributed each request to the right inbound and address family.
+  Test files: `test_usca.txt` (Vision + XHTTP) and `test_usca.clash.yaml`.
+- Not yet done: operator device test of usca XHTTP; an actual size- or daily-triggered
+  rotation of edge logs on either node.
 
 ```bash
 ssh dzire "docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.Image}}' xray_edge; systemctl is-active xray-edge-logrotate.timer"
