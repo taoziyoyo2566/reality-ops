@@ -128,9 +128,17 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   usca has not been redeployed since the Clash snippet was added) pass `mihomo -t` and, with
   TUN off, egress and STUN through the node, block IPv6-only targets on dzire instead of
   going direct, and answer DNS with fake-ip.
-- Not yet done: operator device tests of dzire XHTTP with v2rayN, Shadowrocket and a Clash
-  client; device test of the privacy profile with TUN and ipleak-style checks; XHTTP on
-  `usca`; an actual size- or daily-triggered rotation of edge logs.
+- The privacy-profile device test and QR import are deferred to the S4 subscription service
+  (operator decision 2026-09-15); Clash device testing is not required for now. A merged
+  test profile (`test_privacy.clash.yaml`, usca + dzire Vision + dzire XHTTP) exists only on
+  the control host. No temporary publishing: a Tailscale one-shot download and a Cloudflare
+  quick tunnel were tried and withdrawn with no downloads.
+- `[实测]` 2026-09-15 operator device test of dzire XHTTP: the XHTTP link imported by QR
+  code works, and ipleak.net showed no leak. dzire's log for `test.dzire` from non-control
+  sources (08:00-14:07 container time) had 479 connections, 434 on `vless-xhttp` and 45 on
+  Vision, including 185 to ipleak.net and 5 UDP destinations, so the check ran through the
+  node.
+- Not yet done: XHTTP on `usca`; an actual size- or daily-triggered rotation of edge logs.
 
 ```bash
 ssh dzire "docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.Image}}' xray_edge; systemctl is-active xray-edge-logrotate.timer"
