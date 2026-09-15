@@ -1,0 +1,80 @@
+---
+# 订阅服务 compose 项目：整个功能只占 subs_root_dir（plan-subscription-service §3.1、§3.7）。
+# catalog.json 与 tokens.json 由 subs.yml 在控制端生成到 subs_build_dir 后传入。
+- name: 只允许部署到 subs_host
+  assert:
+    that:
+      - inventory_hostname == subs_host
+      - not (subs_tunnel_enabled | bool) or (vault_subs_tunnel_token | default('') | length > 0)
+    fail_msg: >-
+      订阅服务只部署到 subs_host={{ subs_host }}；启用隧道时 vault_subs_tunnel_token 必须已设置。
+
+- name: 创建订阅服务目录
+  file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ subs_root_dir }}", owner: "0", group: "0", mode: "0755" }
+    - { path: "{{ subs_root_dir }}/data", owner: "0", group: "10001", mode: "0750" }
+    - { path: "{{ subs_root_dir }}/db", owner: "10001", group: "10001", mode: "0750" }
+    - { path: "{{ subs_root_dir }}/secrets", owner: "0", group: "0", mode: "0700" }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: 订阅服务镜像
+  import_tasks: image.yml
+
+- name: 下发隧道 token
+  copy:
+    content: "TUNNEL_TOKEN={{ vault_subs_tunnel_token }}\n"
+    dest: "{{ subs_root_dir }}/secrets/tunnel.env"
+    owner: "0"
+    group: "0"
+    mode: "0600"
+  no_log: true
+  when: subs_tunnel_enabled | bool
+
+- name: 不启用隧道时删除 token 文件
+  file:
+    path: "{{ subs_root_dir }}/secrets/tunnel.env"
+    state: absent
+  when: not (subs_tunnel_enabled | bool)
+
+- name: 下发 catalog 与 token 哈希表（原子替换，服务按文件变化重新加载）
+  copy:
+    src: "{{ subs_build_dir }}/{{ item }}"
+    dest: "{{ subs_root_dir }}/data/{{ item }}"
+    owner: "0"
+    group: "10001"
+    mode: "0640"
+  loop: ["catalog.json", "tokens.json"]
+  diff: false
+
+- name: 下发 compose 项目定义
+  template:
+    src: compose.yaml.j2
+    dest: "{{ subs_root_dir }}/compose.yaml"
+    owner: "0"
+    group: "0"
+    mode: "0644"
+    validate: "docker compose -f %s config --quiet"
+
+- name: 运行订阅服务
+  community.docker.docker_compose_v2:
+    project_src: "{{ subs_root_dir }}"
+    state: present
+    pull: missing
+    remove_orphans: true
+    wait: true
+    wait_timeout: 90
+
+- name: 核对服务已加载数据（容器内请求 /healthz）
+  command: >-
+    docker compose -f {{ subs_root_dir }}/compose.yaml exec -T subs
+    python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8100/healthz', timeout=5).read().decode())"
+  register: subs_health
+  changed_when: false
+  failed_when: subs_health.rc != 0 or not (subs_health.stdout | from_json).ok

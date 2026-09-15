@@ -1,0 +1,75 @@
+---
+# 订阅服务镜像：控制端构建，标签取构建输入的哈希；目标主机不是控制端时按镜像 ID 以 docker save/load 分发。
+- name: 按构建输入计算订阅服务镜像标签
+  set_fact:
+    subs_image: >-
+      {{ subs_repository }}:{{ ((
+           lookup('file', subs_repo_dir ~ '/docker/subs/Dockerfile')
+           ~ lookup('file', subs_repo_dir ~ '/docker/subs/Dockerfile.dockerignore')
+           ~ lookup('file', subs_repo_dir ~ '/docker/subs/requirements.txt')
+           ~ (query('file', *(query('fileglob', subs_repo_dir ~ '/subs/*.py') | sort)) | join('\n'))
+         ) | hash('sha256'))[:12] }}
+
+- name: 在控制端构建订阅服务镜像（该标签不存在时）
+  delegate_to: localhost
+  become: false
+  community.docker.docker_image_build:
+    name: "{{ subs_image.split(':')[0] }}"
+    tag: "{{ subs_image.split(':')[1] }}"
+    path: "{{ subs_repo_dir }}"
+    dockerfile: docker/subs/Dockerfile
+    rebuild: never
+
+- name: 读取控制端订阅服务镜像 ID
+  delegate_to: localhost
+  become: false
+  community.docker.docker_image_info:
+    name: "{{ subs_image }}"
+  register: subs_image_control
+
+- name: 读取目标主机上的订阅服务镜像
+  community.docker.docker_image_info:
+    name: "{{ subs_image }}"
+  register: subs_image_target
+
+- name: 分发订阅服务镜像
+  when: (subs_image_target.images | default([]) | map(attribute='Id') | first | default('')) != subs_image_control.images[0].Id
+  block:
+    - name: 创建控制端导出目录
+      delegate_to: localhost
+      become: false
+      file:
+        path: "{{ subs_image_export_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: 在控制端导出订阅服务镜像
+      delegate_to: localhost
+      become: false
+      community.docker.docker_image_export:
+        names: ["{{ subs_image }}"]
+        path: "{{ subs_image_export_dir }}/{{ subs_image | replace(':', '_') }}.tar"
+
+    - name: 复制订阅服务镜像到目标主机
+      copy:
+        src: "{{ subs_image_export_dir }}/{{ subs_image | replace(':', '_') }}.tar"
+        dest: "{{ subs_root_dir }}/.image.tar"
+        owner: "0"
+        group: "0"
+        mode: "0600"
+
+    - name: 在目标主机载入订阅服务镜像
+      community.docker.docker_image_load:
+        path: "{{ subs_root_dir }}/.image.tar"
+
+  always:
+    - name: 删除目标主机上的镜像文件
+      file:
+        path: "{{ subs_root_dir }}/.image.tar"
+        state: absent
+
+- name: 核对目标主机订阅服务镜像 ID
+  community.docker.docker_image_info:
+    name: "{{ subs_image }}"
+  register: subs_image_check
+  failed_when: (subs_image_check.images | default([]) | map(attribute='Id') | first | default('')) != subs_image_control.images[0].Id

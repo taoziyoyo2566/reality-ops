@@ -82,7 +82,7 @@ compose 项目 reality-subs
   "schema": 1,
   "generated_at": "…",
   "nodes": {
-    "usca": {"state": "migrated", "label": "usca", "ipv6_egress": true,
+    "usca": {"state": "migrated", "label": "usca",
              "edge": {"endpoint": "<域名>", "port": 443, "sni": "…", "public_key": "…",
                       "xhttp": {"enabled": true, "path": "…"}},
              "legacy": null}

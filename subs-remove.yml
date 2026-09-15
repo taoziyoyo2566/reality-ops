@@ -1,0 +1,41 @@
+---
+# 移除订阅服务（回滚用）。只触碰 subs_root_dir 下的 compose 项目与文件，不触碰 monitor、旧订阅或 Gist。
+#   ./monitor_venv/bin/ansible-playbook -i inventory.ini subs-remove.yml -K
+#   访问日志（db/）默认保留，作为迁移时判断用户是否已换地址的依据；追加 -e subs_remove_db=true 一并删除。
+# hosts 须与 group_vars/all/subs.yml 的 subs_host 一致（play 目标解析时读不到 group_vars）。
+- hosts: spt
+  gather_facts: false
+  become: true
+  vars:
+    subs_remove_db: false
+  tasks:
+    - name: 检查 compose 项目定义
+      stat:
+        path: "{{ subs_root_dir }}/compose.yaml"
+      register: subs_compose_file
+
+    - name: 停止并删除 compose 项目
+      community.docker.docker_compose_v2:
+        project_src: "{{ subs_root_dir }}"
+        state: absent
+        remove_orphans: true
+      when: subs_compose_file.stat.exists
+
+    - name: 删除订阅服务文件（默认保留 db）
+      file:
+        path: "{{ subs_root_dir }}/{{ item }}"
+        state: absent
+      loop: "{{ ['compose.yaml', '.image.tar', 'data', 'secrets'] + (['db'] if (subs_remove_db | bool) else []) }}"
+
+    - name: 删除 db 时移除根目录
+      file:
+        path: "{{ subs_root_dir }}"
+        state: absent
+      when: subs_remove_db | bool
+
+    - name: 删除控制端构建产物
+      delegate_to: localhost
+      become: false
+      file:
+        path: "{{ subs_build_dir }}"
+        state: absent

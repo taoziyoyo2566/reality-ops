@@ -1,0 +1,125 @@
+---
+# S4 订阅服务：汇总 ACL 与节点公钥，生成 catalog 与 token 哈希表，部署 compose 项目到 subs_host。
+#   ./monitor_venv/bin/ansible-playbook -i inventory.ini subs.yml -K --vault-password-file ~/.vault_pass
+# 合同：docs/reviews/subscription-service/plan-subscription-service-2026-09-15.md
+# 旧节点不连接（ACL 只用控制端数据计算）；只有状态为 migrated 的节点会被只读访问以核对用户并取公钥。
+
+- name: 汇总每个节点的订阅数据
+  hosts: reality_nodes
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  tasks:
+    - name: 用户加载、校验与 ACL（与 deploy.yml 相同的计算）
+      import_tasks: roles/xray_edge/tasks/acl.yml
+
+    - name: 节点在订阅中的状态
+      set_fact:
+        subs_state: "{{ subs_node_states.get(inventory_hostname, 'legacy') }}"
+
+    - name: migrated 节点只能是新实例节点
+      assert:
+        that: subs_state == 'legacy' or inventory_hostname in edge_nodes
+        fail_msg: "{{ inventory_hostname }} 在 subs_node_states 中为 migrated，但不在 edge_nodes 中。"
+
+    - name: migrated 节点：读取新实例数据
+      when: subs_state == 'migrated'
+      block:
+        - name: 收集节点 facts（node_endpoint 可能依赖）
+          setup:
+            gather_subset: ["!all", "network"]
+
+        - name: 计算新实例用户（与 edge.yml 相同）
+          import_tasks: roles/xray_edge/tasks/desired.yml
+
+        - name: 核对运行中的用户并读取公钥（只读）
+          command: >-
+            docker compose -f {{ edge_root_dir }}/compose.yaml run --rm -T --pull never applier verify
+            --root {{ edge_root_dir }} --container {{ edge_container_name }} --image {{ edge_xray_image }}
+          register: subs_edge_verify
+          changed_when: false
+
+    - name: 记录节点订阅数据
+      set_fact:
+        subs_node:
+          label: "{{ node_alias }}"
+          state: "{{ subs_state }}"
+          edge: >-
+            {{ {
+                 'endpoint': node_endpoint, 'port': edge_listen_port | int, 'sni': reality_server_names[0],
+                 'public_key': (subs_edge_verify.stdout_lines | last | from_json).public_key,
+                 'xhttp': {'enabled': edge_xhttp_enabled | bool, 'path': edge_xhttp_path, 'mode': edge_xhttp_mode}
+               } if subs_state == 'migrated' else None }}
+          users: >-
+            {{ (edge_users if subs_state == 'migrated' else reality_instances)
+               | map('dict2items') | map('selectattr', 'key', 'in', ['name', 'uuid', 'short_id'])
+               | map('items2dict') | list }}
+      no_log: true
+
+# hosts 须与 group_vars/all/subs.yml 的 subs_host 一致（play 目标解析时读不到 group_vars）；角色内 assert 核对。
+- name: 生成数据并部署订阅服务
+  hosts: spt
+  gather_facts: false
+  become: true
+  tasks:
+    - name: 必须覆盖 inventory 中全部节点
+      assert:
+        that: groups['reality_nodes'] | reject('in', hostvars | dict2items | selectattr('value.subs_node', 'defined') | map(attribute='key') | list) | list | length == 0
+        fail_msg: 部分节点没有订阅数据，停止发布。
+
+    - name: 本次发布的用户必须都有 token
+      assert:
+        that:
+          - subs_enabled_users | length > 0
+          - subs_enabled_users | difference((vault_subs_tokens | default({})).keys() | list) | length == 0
+        fail_msg: subs_enabled_users 中的用户必须都在 vault_subs_tokens 中有 token。
+
+    - name: 在控制端生成 catalog 与 token 哈希表
+      delegate_to: localhost
+      become: false
+      block:
+        - name: 创建控制端私有构建目录
+          file:
+            path: "{{ subs_build_dir }}"
+            state: directory
+            mode: "0700"
+
+        - name: 写入汇总数据
+          copy:
+            content: >-
+              {{ {'generated_at': lookup('pipe', 'date -u +%Y-%m-%dT%H:%M:%SZ'),
+                  'nodes': dict(groups['reality_nodes'] | zip(groups['reality_nodes'] | map('extract', hostvars, 'subs_node')))} | to_json }}
+            dest: "{{ subs_build_dir }}/collected.json"
+            mode: "0600"
+          no_log: true
+
+        - name: 写入本次用户的 token（明文，构建后删除）
+          copy:
+            content: "{{ dict(subs_enabled_users | zip(subs_enabled_users | map('extract', vault_subs_tokens))) | to_json }}"
+            dest: "{{ subs_build_dir }}/tokens-plain.json"
+            mode: "0600"
+          no_log: true
+
+        - name: 构建并校验（旧链接与 ACL 不一致时停止）
+          command: >-
+            python3 -m subs.build --collected {{ subs_build_dir }}/collected.json
+            --tokens {{ subs_build_dir }}/tokens-plain.json --enabled {{ subs_enabled_users | join(',') }}
+            --legacy-dir {{ subs_legacy_dir }} --out-dir {{ subs_build_dir }}
+          args:
+            chdir: "{{ subs_repo_dir }}"
+          register: subs_build
+          changed_when: false
+
+        - name: 构建报告
+          debug:
+            msg: "{{ subs_build.stdout | from_json }}"
+      always:
+        - name: 删除明文 token 与汇总数据
+          file:
+            path: "{{ subs_build_dir }}/{{ item }}"
+            state: absent
+          loop: ["tokens-plain.json", "collected.json"]
+
+    - name: 部署订阅服务
+      import_role:
+        name: subs_service

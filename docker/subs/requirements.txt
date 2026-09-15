@@ -1,0 +1,5 @@
+# 订阅服务运行依赖，2026-09-15 于 PyPI 核对（cp313 manylinux x86_64 wheel）。安装时使用 --require-hashes。
+PyYAML==6.0.3 \
+    --hash=sha256:0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6
+segno==1.6.6 \
+    --hash=sha256:28c7d081ed0cf935e0411293a465efd4d500704072cdb039778a2ab8736190c7

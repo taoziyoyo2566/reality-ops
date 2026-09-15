@@ -1,0 +1,36 @@
+# S4 订阅服务（compose 项目，只部署在 subs_host）。
+# 实施合同：docs/reviews/subscription-service/plan-subscription-service-2026-09-15.md
+# 只被 subs.yml / subs-remove.yml 使用；monitor、generate_subs_gist.py 与旧订阅不读取任何 subs_* 变量。
+
+subs_host: "spt"
+subs_root_dir: "/opt/reality-subs"
+subs_compose_project: "reality-subs"
+subs_container_name: "reality_subs"
+subs_repository: "reality-subs"
+# D1 选 B：compose 内 cloudflared 以独立隧道暴露服务（token 在 vault_subs_tunnel_token），宿主机不开端口。
+# 设为 false 时改为发布 127.0.0.1:subs_host_port（本地测试或方式 A）。
+subs_tunnel_enabled: true
+subs_host_port: 8100
+subs_cloudflared_image: "cloudflare/cloudflared:2026.9.1@sha256:b269e8abd07a5bf6f3f4be65d5050b2174eca89c56a0241a8ff32a16aec454e4"
+# 用户页面中订阅地址的前缀；新隧道主机名确定前留空，由请求的 Host 头推出。
+subs_public_base_url: ""
+
+# 节点在订阅中的状态：legacy 输出旧链接，migrated 只输出 443 链接（§3.2）。未列出的节点为 legacy。
+# 向真实用户发放新地址之前，canary 节点可设为 migrated 供 test 验证；发放之后改动需逐台授权（§9）。
+subs_node_states:
+  dzire: migrated
+  usca: migrated
+  legend: migrated
+
+# 本次发布的用户；每人需要 vault_subs_tokens 中的 token。真实用户的加入需另行授权（§9）。
+subs_enabled_users: ["test"]
+
+# 旧系统的每用户订阅文件（只读）与控制端私有构建目录（不在仓库内）。
+subs_legacy_dir: "/opt/reality/users"
+subs_build_dir: "{{ lookup('env', 'HOME') }}/.local/share/reality-ops/subs-build"
+subs_image_export_dir: "{{ lookup('env', 'HOME') }}/.local/share/reality-ops/subs-images"
+subs_repo_dir: "{{ playbook_dir }}"
+
+subs_memory_limit: "128m"
+subs_docker_log_max_size: "10m"
+subs_docker_log_max_file: "3"

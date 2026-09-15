@@ -1,0 +1,53 @@
+# {{ ansible_managed | default('managed by reality-ops') }}
+# 订阅服务 compose 项目。合同：docs/reviews/subscription-service/plan-subscription-service-2026-09-15.md §3.1、§3.7
+{% set logging = {"driver": "json-file", "options": {"max-size": subs_docker_log_max_size | string, "max-file": subs_docker_log_max_file | string}} %}
+name: {{ subs_compose_project | to_json }}
+
+services:
+  subs:
+    image: {{ subs_image | to_json }}
+    container_name: {{ subs_container_name | to_json }}
+    restart: unless-stopped
+    user: "10001:10001"
+    environment:
+      SUBS_PUBLIC_BASE_URL: {{ subs_public_base_url | string | to_json }}
+    volumes:
+      - {{ (subs_root_dir ~ '/data:/data:ro') | to_json }}
+      - {{ (subs_root_dir ~ '/db:/db') | to_json }}
+{% if subs_tunnel_enabled | bool %}
+    # 只在内部网络：服务本身不能主动访问外网，也不发布宿主机端口。
+    networks: [internal]
+{% else %}
+    ports: [{{ ('127.0.0.1:' ~ subs_host_port ~ ':8100') | to_json }}]
+{% endif %}
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: {{ subs_memory_limit | to_json }}
+    logging: {{ logging | to_json }}
+{% if subs_tunnel_enabled | bool %}
+
+  cloudflared:
+    image: {{ subs_cloudflared_image | to_json }}
+    container_name: {{ (subs_container_name ~ '_cloudflared') | to_json }}
+    restart: unless-stopped
+    command: ["tunnel", "run"]
+    # TUNNEL_TOKEN；隧道公共主机名在 Cloudflare 控制台指向 http://subs:8100。
+    env_file: [{{ (subs_root_dir ~ '/secrets/tunnel.env') | to_json }}]
+    depends_on: [subs]
+    networks: [internal, egress]
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: {{ subs_memory_limit | to_json }}
+    logging: {{ logging | to_json }}
+
+networks:
+  internal:
+    internal: true
+  egress: {}
+{% endif %}

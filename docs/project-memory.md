@@ -177,10 +177,42 @@ Live truth is the node; re-check with the commands below instead of trusting thi
 - Not yet done: forced IPv4-versus-IPv6 comparison on the client-to-legend leg; long-term
   observation of whether Happy Eyeballs ever selects IPv6 for dual-stack destinations; an
   actual size- or daily-triggered rotation of edge logs.
+- Compose form ([`plan-edge-compose`](reviews/data-plane-edge/plan-edge-compose-2026-09-15.md),
+  `ops@0538f92`): implemented and verified locally only. The three canary nodes still run
+  the S3 form (`docker_container`, host logrotate timer, `/opt/xray-edge/bin`) until each is
+  migrated with separate authorization. `edge.yml` from `0538f92` on performs that migration,
+  so do not run it against a node without that authorization. Local: `test_compose.py` 6/6,
+  `e2e_local.py` 42/42 three times in a row (now including last-good recovery, UUID and
+  short id changes, SOCKS5 membership change, compose logrotate). Buildx gives a new image
+  ID on every build, so the tools image tag is a hash of its build inputs.
 
 ```bash
+# S3 form (current on dzire, usca, legend)
 ssh dzire "docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.Image}}' xray_edge; systemctl is-active xray-edge-logrotate.timer"
+# Compose form (after migration)
+ssh dzire "sudo docker compose -f /opt/xray-edge/compose.yaml ps; sudo docker compose -f /opt/xray-edge/compose.yaml run --rm -T --pull never applier verify --root /opt/xray-edge --container xray_edge --image \$(sudo docker inspect -f '{{.Config.Image}}' xray_edge)"
 ```
+
+## Subscription Service (S4) State
+
+Contract: [`plan-subscription-service`](reviews/subscription-service/plan-subscription-service-2026-09-15.md)
+(APPROVED 2026-09-15, D1 option B: compose with its own `cloudflared` tunnel; hostname not chosen yet).
+
+- Implemented locally, not deployed: `subs/` (stdlib HTTP server, renderer, catalog builder,
+  SQLite access log), `docker/subs/`, `roles/subs_service`, `subs.yml`, `subs-remove.yml`,
+  `group_vars/all/subs.yml` (`subs_enabled_users: ["test"]`, canary nodes `migrated`).
+  Vault variables `vault_subs_tokens` and `vault_subs_tunnel_token` do not exist yet.
+- Local verification: `tests/subs/test_subs.py` 19/19 (also inside the image); `e2e_local.py`
+  22/22 with Xray (Vision, XHTTP) and Mihomo v1.19.31 (privacy and split profiles, TUN off).
+  All 584 links in the 332 old per-user files on `spt` parse.
+- `[实测]` 2026-09-15 local run of the `subs.yml` aggregation and build with every node treated
+  as legacy (no node contacted, synthetic token): 13 nodes collected; the build stopped because
+  `/opt/reality/users` holds `test_jp05.json` and `test_jp10.json` while the ACL does not allow
+  `test` on jp05 or jp10 (old-system leftovers). The old files have no entries for `ali`.
+- Design details to confirm on devices: both Clash profiles resolve node domains through
+  domestic DoH (`223.5.5.5`, `119.29.29.29`) so that a node can be reached before the tunnel is
+  up; the split profile makes Mihomo download GeoIP/GeoSite (about 21 MB) from its default
+  jsdelivr URLs on first load, which may fail on some networks in China.
 
 ## Production State
 
