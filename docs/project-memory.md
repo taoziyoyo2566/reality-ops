@@ -178,7 +178,7 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   observation of whether Happy Eyeballs ever selects IPv6 for dual-stack destinations; an
   actual size- or daily-triggered rotation of edge logs.
 - Compose form ([`plan-edge-compose`](reviews/data-plane-edge/plan-edge-compose-2026-09-15.md),
-  `ops@0538f92`): `usca` and `legend` still run the S3 form (`docker_container`, host logrotate
+  `ops@0538f92`): `legend` still runs the S3 form (`docker_container`, host logrotate
   timer, `/opt/xray-edge/bin`) until each is migrated with separate authorization. `edge.yml`
   from `0538f92` on performs that migration, so do not run it against a node without that
   authorization.
@@ -207,7 +207,21 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   restored the same public key, conf.d and users, with every `docker inspect` parameter as
   before (the tools image was already on the node, so it was not sent again). Both test
   links connected afterwards. `edge-remove.yml` needs `--vault-password-file` like `edge.yml`.
-  Not yet done on dzire: the next-day rotation check. Local: `test_compose.py` 6/6,
+  Not yet done on dzire: the next-day rotation check.
+- `[实测]` 2026-09-15 about 20:35 JST `usca` migrated to the compose form (`edge.yml --limit usca`,
+  rc 0, changed 13). Old `reality_core` container fingerprint unchanged and its
+  `/opt/reality/data/reality_core/config.json` still dated 2026-09-14 (a first broader hash also
+  covered `/opt/reality/monitor/state/traffic_cache.json`, which the monitor agent rewrites
+  every minute, so it changed; the old-config hash is now taken over `/opt/reality/data` only).
+  `xray_edge` recreated with compose label, restart 0, healthy, 13.1 MiB (old `reality_core`
+  76 MiB, 560 MB available); every `docker inspect` parameter identical, including
+  `0.0.0.0:443` and `[::]:443`; public key unchanged; users 33 -> 32, the only config
+  difference from `last-good` being `shuaiqi` removed; Happy Eyeballs (`UseIP`) kept.
+  `xray_edge_logrotate` confined as on dzire; manual rotation exits 0. Host timer, units,
+  `/etc/xray-edge`, status file and `bin/` gone. From the control host: Vision and XHTTP
+  through the domain, and Vision forced to IPv4 and to IPv6, all return HTTP 200; ipify
+  through the link reports usca's own IPv4 and IPv6; the TLS fallback over IPv4 and IPv6
+  still returns `costco.com`. `legend` is still in the S3 form. Local: `test_compose.py` 6/6,
   `e2e_local.py` 42/42 three times in a row (now including last-good recovery, UUID and
   short id changes, SOCKS5 membership change, compose logrotate). Buildx gives a new image
   ID on every build, so the tools image tag is a hash of its build inputs.
