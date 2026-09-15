@@ -197,8 +197,17 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   file. The host timer, both units, `/etc/xray-edge`, the host status file and
   `/opt/xray-edge/bin` are gone. From the control host both `test_dzire.txt` links connect
   (Vision and XHTTP, HTTP 200 in about 1.2 s) and the TLS fallback still returns
-  `www.flipkart.com`. Not yet done on dzire: plan §6.2 item 5 drills in the compose form
-  (applier add/remove, restart, `edge-remove.yml` and redeploy) and the next-day rotation check. Local: `test_compose.py` 6/6,
+  `www.flipkart.com`.
+- `[实测]` 2026-09-15 about 20:30 JST dzire compose-form drills (plan-edge-compose §6.2 item 5),
+  old multi fingerprint unchanged throughout: a temporary synthetic user added to and removed
+  from `state/desired.json` went through the applier container as `api` both times (32 -> 33
+  -> 32, restart count 0, conf.d back to `5b86737d`); `docker compose restart` kept 32 users
+  on both inbounds with 443 listening; `edge-remove.yml` (keys kept) left no containers, only
+  `/opt/xray-edge/keys`, nothing listening on 443 and no host residue; `edge.yml` then
+  restored the same public key, conf.d and users, with every `docker inspect` parameter as
+  before (the tools image was already on the node, so it was not sent again). Both test
+  links connected afterwards. `edge-remove.yml` needs `--vault-password-file` like `edge.yml`.
+  Not yet done on dzire: the next-day rotation check. Local: `test_compose.py` 6/6,
   `e2e_local.py` 42/42 three times in a row (now including last-good recovery, UUID and
   short id changes, SOCKS5 membership change, compose logrotate). Buildx gives a new image
   ID on every build, so the tools image tag is a hash of its build inputs.
