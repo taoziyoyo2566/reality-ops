@@ -18,10 +18,13 @@ edge_container_name: "xray_edge"
 edge_listen_port: 443
 edge_log_level: "warning"
 
-# 第二步（XHTTP）开关；path 每节点随机生成，保存在 vault 的 vault_edge_xhttp_paths。
-edge_xhttp_enabled: false
+# 第二步（XHTTP）：列入 edge_xhttp_nodes 的节点开启；path 每节点随机生成，保存在 vault 的 vault_edge_xhttp_paths。
+edge_xhttp_nodes: ["dzire"]
+edge_xhttp_enabled: "{{ inventory_hostname in edge_xhttp_nodes }}"
 edge_xhttp_path: "{{ (vault_edge_xhttp_paths | default({})).get(inventory_hostname, '') }}"
 edge_xhttp_mode: "auto"
+# Mihomo 没有 auto；Xray 在 REALITY 下 auto 选择 stream-one（XTLS/Xray-core discussion #4113），Clash 片段与之一致。
+edge_mihomo_xhttp_mode: "stream-one"
 
 # 容器资源与日志上界
 edge_memory_limit: "300m"

@@ -28,3 +28,32 @@
   loop_control:
     label: "{{ item.name }}"
   diff: false
+
+# Clash 类客户端（Mihomo 内核）通常导入 YAML 而不是 vless:// 链接。
+- name: 写入测试用 Clash（Mihomo）节点片段
+  delegate_to: localhost
+  become: false
+  vars:
+    base_proxy:
+      type: vless
+      server: "{{ node_endpoint }}"
+      port: "{{ edge_listen_port | int }}"
+      uuid: "{{ item.uuid }}"
+      udp: true
+      tls: true
+      servername: "{{ reality_server_names[0] }}"
+      client-fingerprint: chrome
+      encryption: ""
+      reality-opts:
+        public-key: "{{ edge_public_key }}"
+        short-id: "{{ item.short_id }}"
+    vision_proxy: "{{ base_proxy | combine({'name': item.name ~ '.' ~ inventory_hostname ~ '-edge', 'network': 'tcp', 'flow': 'xtls-rprx-vision'}) }}"
+    xhttp_proxy: "{{ base_proxy | combine({'name': item.name ~ '.' ~ inventory_hostname ~ '-edge-xhttp', 'network': 'xhttp', 'alpn': ['h2'], 'xhttp-opts': {'path': edge_xhttp_path, 'mode': edge_mihomo_xhttp_mode}}) }}"
+  copy:
+    dest: "{{ edge_subs_dir }}/{{ item.name }}_{{ inventory_hostname }}.clash.yaml"
+    mode: "0600"
+    content: "{{ {'proxies': [vision_proxy] + ([xhttp_proxy] if (edge_xhttp_enabled | bool) else [])} | to_nice_yaml(indent=2, sort_keys=false) }}"
+  loop: "{{ edge_users | selectattr('name', 'in', edge_test_users) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  diff: false

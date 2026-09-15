@@ -60,4 +60,4 @@
       file:
         path: "{{ item }}"
         state: absent
-      loop: "{{ query('fileglob', edge_subs_dir ~ '/*_' ~ inventory_hostname ~ '.txt') }}"
+      loop: "{{ query('fileglob', edge_subs_dir ~ '/*_' ~ inventory_hostname ~ '.txt') + query('fileglob', edge_subs_dir ~ '/*_' ~ inventory_hostname ~ '.clash.yaml') }}"
