@@ -73,9 +73,20 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   container, units and files, and the redeploy restored the same public key and conf.d.
 - The node REALITY key lives only in `/opt/xray-edge/keys` on `dzire`. The operator's
   test link is `~/.local/share/reality-ops/edge-subs/test_dzire.txt` on `spt` (0600).
-- Not yet observed: an actual size- or daily-triggered rotation and compression of the
-  edge logs (logs were still small). XHTTP (§6.3) and `usca` (§6.4) not started; §6.3
-  still needs the operator's client list.
+- `[实测]` `usca` (original single node, 1 core): `xray_edge` deployed with `edge.yml` at
+  `ops@f542911` on 2026-09-15 09:02 JST in one run. Image `fd502666`, restart count 0,
+  host ports `0.0.0.0:443` and `[global v6]:443` (API not published; the old
+  `reality_core` keeps `127.0.0.1:10085`), 33 users (32 ACL + `test`), timer active.
+  The drift check read 32 users from the old single instance through `lsi`, matching ACL.
+  The old `reality_core` was fingerprinted before and was identical after.
+- From the control host: plain TLS probes to `usca:443` over IPv4 and IPv6 return the real
+  `www.costco.com` certificate; the `test` IPv4 and IPv6 links both connect. The access
+  log recorded the control host's real public IPv4 and IPv6 as sources, so bridge
+  networking preserves IPv6 client addresses. Memory: edge about 10 MiB, old
+  `reality_core` about 75 MiB. Test link file: `test_usca.txt` (IPv4 and IPv6 lines).
+- Not yet done: plan §6.2 drills and a real-client check on `usca`; an actual size- or
+  daily-triggered rotation of edge logs on either node; XHTTP (§6.3), which still needs
+  the operator's client list.
 
 ```bash
 ssh dzire "docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.Image}}' xray_edge; systemctl is-active xray-edge-logrotate.timer"

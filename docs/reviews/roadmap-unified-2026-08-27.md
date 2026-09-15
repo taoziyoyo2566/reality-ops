@@ -379,10 +379,13 @@ monitor 数据库的 `subscription_logs`，当前账号无权限）。
   `dzire`、`usca` 实测（见 §3.3、§4.1.1、§4.1.3）。
 - 已补（2026-09-15，§3.3）：12 台可达节点的 443 占用与 Docker 版本；`kagoya` 的 443 被 nginx
   占用，U1 预检不通过，需先决定该节点的 443 处置；`dcc` 为 Docker 28.0.1，其余 29.x。
-- `[缺口]` `ali` 的 443 占用、Docker 版本与资源余量；bridge 下 IPv6 客户端源地址是否保留
-  （`spt`、`usca` 已发布 IPv6 端口，但样本中没有 IPv6 客户端；`dzire` 无全局 IPv6）；真实客户端
-  兼容；删除用户后旧连接的保持行为；新旧实例在同一节点并行时的资源占用；客户端订阅刷新频率与
-  长期不拉取订阅的用户数量（需读取 `spt` 上 monitor 数据库，当前账号无权限）。以上均未实测。
+- 已补（2026-09-15，`xray_edge` canary）：bridge 网络下 IPv6 客户端源地址**被保留**——`usca` 新实例
+  发布 `[v6]:443`，控制端经 IPv6 与 IPv4 各自连接后，访问日志记录的来源分别等于控制端公网 IPv6 与
+  IPv4，无 Docker 网关或 ULA 地址；新旧实例并行资源：`usca`（1 核）新实例约 10MiB、旧 `reality_core`
+  约 75MiB，`dzire` 新实例约 15MiB。真实客户端：操作者已在 `dzire` 以 RAW+Vision 链接实测正常。
+- `[缺口]` `ali` 的 443 占用、Docker 版本与资源余量；XHTTP 的真实客户端兼容；删除用户后旧连接的
+  保持行为；客户端订阅刷新频率与长期不拉取订阅的用户数量（需读取 `spt` 上 monitor 数据库，当前
+  账号无权限）。以上均未实测。
   Vision 回落 XHTTP 按决定 4 在新实例第二步验证。
 - 关闭条件：以 synthetic fixtures 生成 golden 配置并通过
   `xray run -test -confdir`；staging 验证 API 增删改用户、SOCKS5 成员变更、重启后与落盘状态
