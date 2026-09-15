@@ -178,10 +178,9 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   observation of whether Happy Eyeballs ever selects IPv6 for dual-stack destinations; an
   actual size- or daily-triggered rotation of edge logs.
 - Compose form ([`plan-edge-compose`](reviews/data-plane-edge/plan-edge-compose-2026-09-15.md),
-  `ops@0538f92`): `legend` still runs the S3 form (`docker_container`, host logrotate
-  timer, `/opt/xray-edge/bin`) until each is migrated with separate authorization. `edge.yml`
-  from `0538f92` on performs that migration, so do not run it against a node without that
-  authorization.
+  `ops@0538f92`): dzire, usca and legend were migrated on 2026-09-15 (records below). On any
+  other node `edge.yml` from `0538f92` on deploys the compose form directly; on a node still
+  in the S3 form it performs the migration, which needs its own authorization.
 - `[实测]` 2026-09-15 20:1x JST `dzire` migrated to the compose form (`edge.yml --limit dzire`,
   rc 0, changed 14). The first run stopped at the drift check with no change: the operator had
   deleted the untracked `users/shuaiqi.yml`, while the old instances on dzire, usca and legend
@@ -221,15 +220,23 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   `/etc/xray-edge`, status file and `bin/` gone. From the control host: Vision and XHTTP
   through the domain, and Vision forced to IPv4 and to IPv6, all return HTTP 200; ipify
   through the link reports usca's own IPv4 and IPv6; the TLS fallback over IPv4 and IPv6
-  still returns `costco.com`. `legend` is still in the S3 form. Local: `test_compose.py` 6/6,
+  still returns `costco.com`.
+- `[实测]` 2026-09-15 about 20:50 JST `legend` migrated to the compose form (`edge.yml --limit legend`,
+  rc 0, changed 13; root filesystem 72% -> 75% of 4.9 G after loading the tools image). Old
+  `reality_core` fingerprint and `/opt/reality/data` hash unchanged (config dated 2026-09-13).
+  `xray_edge` recreated with compose label, restart 0, healthy, 10.4 MiB; `docker inspect`
+  parameters identical apart from mount order; public key unchanged; users 30 -> 29, the only
+  config difference being `shuaiqi` removed; Happy Eyeballs kept; no XHTTP. Logrotate container
+  confined, manual run exits 0; host timer, units, `/etc/xray-edge`, status file and `bin/`
+  gone. From the control host the Vision link connects through the domain and forced to IPv4
+  and IPv6; ipify through it reports legend's own IPv4 and IPv6; the TLS fallback over both
+  families returns `*.shopee.sg`. All three canary nodes now run the compose form. Local: `test_compose.py` 6/6,
   `e2e_local.py` 42/42 three times in a row (now including last-good recovery, UUID and
   short id changes, SOCKS5 membership change, compose logrotate). Buildx gives a new image
   ID on every build, so the tools image tag is a hash of its build inputs.
 
 ```bash
-# S3 form (current on dzire, usca, legend)
-ssh dzire "docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.Image}}' xray_edge; systemctl is-active xray-edge-logrotate.timer"
-# Compose form (after migration)
+# Compose form (dzire, usca, legend since 2026-09-15)
 ssh dzire "sudo docker compose -f /opt/xray-edge/compose.yaml ps; sudo docker compose -f /opt/xray-edge/compose.yaml run --rm -T --pull never applier verify --root /opt/xray-edge --container xray_edge --image \$(sudo docker inspect -f '{{.Config.Image}}' xray_edge)"
 ```
 
