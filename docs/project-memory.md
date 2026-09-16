@@ -282,6 +282,26 @@ ssh dzire "sudo docker compose -f /opt/xray-edge/compose.yaml ps; sudo docker co
 
 ## Subscription Service (S4) State
 
+- `[实测]` 2026-09-16 19:33 JST first deployment on `spt` (operator ran `subs.yml -K`; an earlier
+  run at 18:41 stopped before any change because the operator's shell had no SSH agent with the node
+  key). Only `test` is published; `subs_public_base_url` is `https://sub.taoziyoyo.com`, and dzire, usca,
+  legend and kagoya are `migrated`. Tunnel token and the `test` token are in the vault
+  (`vault_subs_tunnel_token`, `vault_subs_tokens`), never printed.
+  - Containers: `reality_subs` (UID 10001, read-only, `cap_drop ALL`, no-new-privileges, 128 MB, only
+    on the `internal: true` network, `/data` read-only, `/db` writable, healthy) and
+    `reality_subs_cloudflared` (UID 65532, read-only, `cap_drop ALL`, internal + egress networks). No
+    host port; `reality-monitor` and the host `cloudflared` still active.
+  - Public (`https://sub.taoziyoyo.com`): `/healthz` 200; the `test` page 200 with four QR codes and the
+    page CSP; `v2ray` 8 links (dzire Vision + XHTTP, usca Vision + XHTTP, legend, kagoya, plus the old
+    jp05 and jp10 links that `test` is entitled to); `v2ray-full` 10; both Clash profiles 8 proxies and
+    pass `mihomo -t`; unknown token, unknown format and `/` all 404.
+  - Removing `tokens.json` gave 503 on both subscription and `/healthz`; restoring it served 200 again
+    without a restart; `docker compose restart` kept the access log. The access log (10 rows) and
+    container logs contain no token.
+  - Cloudflare rewrites `Referrer-Policy` to `same-origin` (a zone-level security-header transform);
+    the page also sends `<meta name="referrer" content="no-referrer">` and loads nothing external.
+  - Not yet done: device tests (plan §6.3 items 2-4), real-user tokens and notification.
+
 Contract: [`plan-subscription-service`](reviews/subscription-service/plan-subscription-service-2026-09-15.md)
 (APPROVED 2026-09-15, D1 option B: compose with its own `cloudflared` tunnel; hostname not chosen yet).
 
@@ -292,13 +312,16 @@ Contract: [`plan-subscription-service`](reviews/subscription-service/plan-subscr
 - Local verification: `tests/subs/test_subs.py` 19/19 (also inside the image); `e2e_local.py`
   22/22 with Xray (Vision, XHTTP) and Mihomo v1.19.31 (privacy and split profiles, TUN off).
   All 584 links in the 332 old per-user files on `spt` parse.
-- `[实测]` 2026-09-15 local run of the `subs.yml` aggregation and build with every node treated
-  as legacy (no node contacted, synthetic token): 13 nodes collected; the build stopped because
-  `/opt/reality/users` holds `test_jp05.json` and `test_jp10.json` while the ACL does not allow
-  `test` on jp05 or jp10 (old-system leftovers). The old files have no entries for `ali`.
-  Operator decision 2026-09-15 (plan §5 item 1, option A): the ACL decides. The builder now
-  leaves such files out and lists them under `ignored` in its report; a node the ACL allows
-  without a legacy file still stops the build. The old files are not changed.
+- 2026-09-15 local run of the `subs.yml` aggregation with every node treated as legacy: 13 nodes
+  collected, no node contacted. **Correction 2026-09-16:** that run reported `test_jp05.json` and
+  `test_jp10.json` as files the ACL does not allow, but the harness playbook lived in a scratch
+  directory and `acl.yml` reads users from `{{ playbook_dir }}/users`, so it loaded no users and
+  every ACL was empty. The real ACL allows `test` on jp05 and jp10 (`users/test.yml` has
+  `hosts: ['jp05', 'jp10']`), so those files are legitimate, not leftovers. The operator's option A
+  (the ACL decides; files it does not allow are left out and listed under `ignored`; a node the ACL
+  allows without a legacy file still stops the build) was chosen on that wrong premise; the rule is
+  kept because it removes nothing the ACL allows. Any local harness for these plays must run from
+  the repository root or set `playbook_dir`-independent paths. The old files have no entries for `ali`.
 - The user page also explains that websites compare the device's system time zone with the exit
   IP's region (2026-09-16 operator request): prefer a node in a nearby time zone for accounts that
   matter, split mode is unaffected because domestic sites stay direct, and changing the device
