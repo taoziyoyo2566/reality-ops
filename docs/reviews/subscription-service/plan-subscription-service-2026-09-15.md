@@ -273,3 +273,12 @@ compose 项目 reality-subs
 本文已于 2026-09-15 批准，仅授权工作树内实现与 §6.1 本地验证（含本机构建镜像与本地 compose 运行）。以下各自单独授权：Git 发布；
 `spt` 上的镜像构建与 compose 项目部署、变更与删除；Cloudflare 隧道或主机名变更（操作者执行）；隧道 token 写入 vault；镜像推送到任何仓库；vault 中真实用户 token 的生成；向真实用户发放地址或通知；发放后任何节点 `subs_node_states`
 改为 `migrated`；旧 Gist、共享 token 与 `subs.taoziyoyo.com` 的失效。
+
+## 10. 已批准的变更
+
+- **2026-09-16 · 页面地址按客户端返回订阅。** 起因：`test` 真机测试时，Shadowrocket 扫到的是页面地址（`/s/<token>`），
+  取回的是网页，提示无法获取服务器。操作者批准：页面地址对已知订阅客户端直接返回订阅内容——Shadowrocket、v2rayN、
+  v2rayNG、V2Box、Hiddify、Streisand、NekoBox/Nekoray 返回 `v2ray`，Clash、Mihomo、Stash 类返回 `clash-split`（与页面默认模式一致）；
+  浏览器与无法识别的客户端仍返回页面。§3.4 的其他地址不变，访问日志记录实际返回的格式。
+  影响：用户只需一个二维码；识别依据是 User-Agent，未识别的客户端需使用明确的格式地址。
+

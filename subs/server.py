@@ -1,6 +1,6 @@
 """Subscription HTTP service (plan-subscription-service §3.4, §3.6).
 
-GET /s/<token>            user page
+GET /s/<token>            user page for browsers; subscription body for known clients (render.format_for_agent)
 GET /s/<token>/<format>   subscription body (render.FORMATS)
 GET /healthz              catalog loaded or not, no user data
 
@@ -117,7 +117,10 @@ def make_handler(store, log, public_base_url):
             match = TOKEN_PATH_RE.match(path)
             if not match:
                 return self._send(404, "text/plain; charset=utf-8", NOT_FOUND)
-            token, fmt = match.group(1), match.group(2) or "page"
+            token, fmt = match.group(1), match.group(2)
+            if fmt is None:
+                # The page address also serves subscription clients, so a single QR code works everywhere.
+                fmt = render.format_for_agent(self.headers.get("User-Agent")) or "page"
             catalog, user = store.user_for(token)
             if catalog is None:
                 return self._send(503, "text/plain; charset=utf-8", b"unavailable\n")

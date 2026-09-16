@@ -9,6 +9,10 @@ import yaml
 from . import links
 
 FORMATS = ("v2ray", "v2ray-full", "clash-split", "clash-privacy")
+# User-Agent substrings (lower case) of clients that import a subscription from the page address, so one
+# QR code works everywhere (2026-09-16). Clash-family first: several of them embed other names.
+CLASH_AGENTS = ("clash", "mihomo", "stash")
+V2RAY_AGENTS = ("shadowrocket", "v2rayn", "v2box", "hiddify", "streisand", "nekobox", "nekoray")
 PRIVATE_CIDRS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "169.254.0.0/16",
                  "100.64.0.0/10", "224.0.0.0/4", "fc00::/7", "fe80::/10", "ff00::/8"]
 FOREIGN_DOH = ["https://1.1.1.1/dns-query", "https://8.8.8.8/dns-query"]
@@ -101,6 +105,19 @@ def clash_profile(catalog, user, mode):
     return header + yaml.dump(profile, Dumper=_NoAliasDumper, sort_keys=False, allow_unicode=True, width=1000)
 
 
+def format_for_agent(user_agent):
+    """Subscription format for a client fetching the page address, or None for a browser or unknown client.
+
+    Clash-family clients get the split profile, matching the page's default mode.
+    """
+    agent = (user_agent or "").lower()
+    if any(name in agent for name in CLASH_AGENTS):
+        return "clash-split"
+    if any(name in agent for name in V2RAY_AGENTS):
+        return "v2ray"
+    return None
+
+
 def body(catalog, user, fmt):
     """(content type, text) for a subscription format."""
     if fmt == "v2ray":
@@ -152,6 +169,7 @@ def page(catalog, user, base_url):
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex"><title>订阅</title><style>{PAGE_CSS}</style></head><body><main>
 <h1>订阅</h1><p>本页地址与下方地址、二维码都包含你的个人凭据，不要分享或截图发给他人。</p>
+<p>本页地址也可以直接作为订阅添加到 Shadowrocket、v2rayN 或 Clash 类客户端（Clash 类默认使用分流模式）；需要其他格式时用下方对应地址。</p>
 <section><h2>可用节点</h2><ul>{node_list}</ul></section>
 {section("Clash 类客户端 · 分流模式", "clash-split", "国内网站和局域网直连，其余经节点。国内网站会看到你的真实 IP，但速度快、不易触发国内账号风控。", clash=True, tag="默认")}
 {section("Clash 类客户端 · 隐私模式", "clash-privacy", "除局域网外全部经节点，包括国内网站；接管 UDP、IPv6 与 DNS，尽量避免网站获得真实 IP。国内服务会变慢，也可能被要求验证。", clash=True)}

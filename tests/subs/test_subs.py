@@ -209,6 +209,28 @@ class ServerTest(unittest.TestCase):
         for key in ("Cache-Control", "Referrer-Policy", "X-Robots-Tag", "X-Content-Type-Options"):
             self.assertIn(key, headers)
 
+    def test_page_address_serves_subscription_clients(self):
+        path = f"/s/{fixtures.TOKENS['alice']}"
+        for agent, expect in (("Shadowrocket/3445 CFNetwork/3860.700.1 Darwin/25.6.0", "v2ray"),
+                              ("v2rayN/7.24.9", "v2ray"), ("v2rayNG/1.10.0", "v2ray"),
+                              ("clash-verge/v2.4.0", "clash"), ("FlClash/v0.8", "clash"),
+                              ("mihomo.party/v1.8", "clash"), ("Stash/3.1.1 Clash/1.9.0", "clash"),
+                              ("Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) Safari/604.1", "page"),
+                              ("", "page"), ("curl/8.5.0", "page")):
+            conn = http.client.HTTPConnection(*self.server.server_address, timeout=5)
+            conn.request("GET", path, headers={"User-Agent": agent} if agent else {})
+            resp = conn.getresponse()
+            body = resp.read()
+            conn.close()
+            self.assertEqual(resp.status, 200, agent)
+            kind = ("page" if body.startswith(b"<!doctype html>") else
+                    "clash" if b"proxy-groups:" in body else "v2ray")
+            self.assertEqual(kind, expect, agent)
+            if kind == "clash":
+                self.assertIn(b"GEOSITE,cn,DIRECT", body)
+            if kind == "v2ray":
+                self.assertIn(fixtures.UUIDS["alice"], base64.b64decode(body).decode())
+
     def test_unknown_token_and_format_look_the_same(self):
         a = self.get("/s/" + "z" * 43 + "/v2ray")
         b = self.get(f"/s/{fixtures.TOKENS['alice']}/nope")

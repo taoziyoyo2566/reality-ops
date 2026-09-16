@@ -300,7 +300,18 @@ ssh dzire "sudo docker compose -f /opt/xray-edge/compose.yaml ps; sudo docker co
     container logs contain no token.
   - Cloudflare rewrites `Referrer-Policy` to `same-origin` (a zone-level security-header transform);
     the page also sends `<meta name="referrer" content="no-referrer">` and loads nothing external.
-  - Not yet done: device tests (plan §6.3 items 2-4), real-user tokens and notification.
+  - 2026-09-16 first device test: Shadowrocket scanned the page address and got the HTML page, so it
+    reported that it could not fetch servers. The page address now serves known subscription clients
+    directly (plan §10, `render.format_for_agent`): Shadowrocket, v2rayN/NG, V2Box, Hiddify, Streisand
+    and NekoBox get `v2ray`; Clash, Mihomo and Stash get `clash-split`; browsers and unknown clients get
+    the page. Redeployed about 19:57 JST (image `reality-subs:1f00c3809496`); simulated Shadowrocket,
+    v2rayN, Clash Verge, FlClash and Safari requests each received the expected format.
+  - `[操作者实测]` 2026-09-16 about 20:00 JST: one QR code of the page address imported into Shadowrocket
+    and the nodes connect. The access log shows Shadowrocket receiving `v2ray` (over IPv6 and IPv4)
+    and iPhone Safari receiving the page. Node access logs since the morning rotation had `test`
+    connections on dzire (231), usca (713) and kagoya (24); none on legend.
+  - Not yet done: device checks of legend and of an XHTTP node, Clash import of both modes, the
+    privacy-mode ipleak check (IPv4, IPv6, WebRTC, DNS), real-user tokens and notification.
 
 Contract: [`plan-subscription-service`](reviews/subscription-service/plan-subscription-service-2026-09-15.md)
 (APPROVED 2026-09-15, D1 option B: compose with its own `cloudflared` tunnel; hostname not chosen yet).
