@@ -310,6 +310,10 @@ ssh dzire "sudo docker compose -f /opt/xray-edge/compose.yaml ps; sudo docker co
     and the nodes connect. The access log shows Shadowrocket receiving `v2ray` (over IPv6 and IPv4)
     and iPhone Safari receiving the page. Node access logs since the morning rotation had `test`
     connections on dzire (231), usca (713) and kagoya (24); none on legend.
+  - `[操作者实测]` 2026-09-16 ip125.com via dzire: with split routing the domestic probe showed the real
+    IP (China direct rule, expected); after switching the client to global mode only dzire's IP was shown
+    and the IPv6 check failed, matching dzire's lack of IPv6 egress (no real IPv6 exposed). Client and
+    WebRTC/DNS items were not reported.
   - Not yet done: device checks of legend and of an XHTTP node, Clash import of both modes, the
     privacy-mode ipleak check (IPv4, IPv6, WebRTC, DNS), real-user tokens and notification.
 
