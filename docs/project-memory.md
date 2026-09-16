@@ -206,7 +206,15 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   restored the same public key, conf.d and users, with every `docker inspect` parameter as
   before (the tools image was already on the node, so it was not sent again). Both test
   links connected afterwards. `edge-remove.yml` needs `--vault-password-file` like `edge.yml`.
-  Not yet done on dzire: the next-day rotation check.
+  Next-day rotation check on dzire: see the 2026-09-16 12:34 UTC entry below.
+- `[实测]` 2026-09-16 12:34 UTC dzire rotation check (read-only): `access.log` was rotated
+  automatically at 00:29:44 UTC, the first hourly `logrotate-loop` tick after the UTC day change
+  (container time is UTC, logrotate 3.22.0). `access.log.1.gz` (last write 23:34:16) and
+  `access.log.2.gz` (the 2026-09-15 11:30 drill) are compressed. `error.log` was last rotated at
+  23:33:29 UTC by a manual `logrotate -f` in an earlier session (sudo journal), not by the loop; it
+  is empty now, so `notifempty` skips it. Both containers up 25 h, restart 0, and the loop logged no
+  errors in 36 h. `[缺口]` `maxsize 50M` has not triggered (access.log 70 KB), and the 14-file limit
+  cannot be observed until 14 daily rotations have run.
 - `[实测]` 2026-09-15 about 20:35 JST `usca` migrated to the compose form (`edge.yml --limit usca`,
   rc 0, changed 13). Old `reality_core` container fingerprint unchanged and its
   `/opt/reality/data/reality_core/config.json` still dated 2026-09-14 (a first broader hash also
