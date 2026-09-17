@@ -269,3 +269,17 @@ canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`e
   操作者批准：`edge.yml` 仍只读取旧实例用户，但只列出差异、不中止部署；节点没有旧实例时跳过比较；删除 `edge_drift_old_only_users`。
   影响：§3.4“不一致时停止”与 §7 中“集合比较是止损手段”改为提示；ACL 副本与 `deploy.yml` 的一致性靠提示发现（按决定 9，`deploy.yml` 不再变更）。
   `shuaiqi` 在旧实例上的访问保留，直到操作者另行对旧节点运行 `deploy.yml`，每次部署都会提示。
+- **2026-09-18 · 状态页探测账号（D-S3）。** 起因：节点状态页需要经每个节点真实访问一次检测地址
+  （[`plan-node-status-page`](../console/plan-node-status-page-2026-09-18.md)，2026-09-18 批准）。操作者批准：期望状态增加 `probe` 段
+  （`enabled`、`user`、`target`），开启时探测用户随其他用户下发，应用器加入一个 freedom 出站（`redirect` 到 `target`）
+  与一条路由规则（该用户 → 该出站，在 SOCKS5 与默认规则之前）；该用户不得出现在 SOCKS5 路由中。凭据在 vault，
+  `status_probe_nodes` 默认等于 `edge_nodes`（新节点部署即纳入）。按域名放行不可取：嗅探到的域名只用于路由，连接仍发往客户端给出的地址。
+  影响：关闭时渲染结果与此前逐字节一致；开启时新增 `short_id` 与路由，该节点 Xray 重启一次。探测用户不写入控制台登记文件、
+  不参与 §3.4 的新旧用户比较、不生成测试链接。
+- **2026-09-18 · 路由先解析域名再匹配 IP 规则（路线图 C18）。** 起因：本地实测发现节点上的用户用解析到 127.0.0.1 的域名可以访问
+  节点容器内的监听端口（metrics 10086；原理上还有 API 10085），因为 `block-private` 只匹配字面 IP，而 `IPIfNonMatch` 只在所有规则
+  都不匹配时才解析，默认规则总会匹配。改动：`30-routing.json` 的 `domainStrategy` 由 `IPIfNonMatch` 改为 `IPOnDemand`。
+  影响：解析结果落在私有 / 环回 / 链路本地（含云元数据 169.254.169.254）的域名会被 `blocked`；普通站点不变；
+  现有 SOCKS5 profile 只按用户匹配，行为不变（若将来给 profile 配 `ips`，它将同时对域名目标生效）；
+  每个新连接在匹配该规则时多一次域名解析。旧系统模板不改动。`[实测]` 2026-09-18 节点端到端 44/44。
+  **状态：2026-09-18 已部署到 `dzire`、`usca`、`legend`、`kagoya`（各重启 Xray 一次）。**

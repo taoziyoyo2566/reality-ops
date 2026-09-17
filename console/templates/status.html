@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}状态{% endblock %}
+{% block content %}
+<style>{{ status_css | safe }}</style>
+<h1>节点状态</h1>
+{% if not status_enabled %}
+<section><p class="muted">状态页未启用（<code>group_vars/all/status.yml</code> 的 <code>status_enabled</code>）。</p></section>
+{% else %}
+<section>
+<p class="muted">持有订阅地址的用户在“订阅地址/status”看到与下方相同的内容（约一分钟内同步）。
+最近一轮检测：{{ last_round | time }}{% if stale %} <span class="bad">（status 服务没有按时完成检测）</span>{% endif %}</p>
+{{ body | safe }}
+</section>
+
+<section>
+<h2>各连接方式最近一次检测</h2>
+{% if rows %}
+<table>
+<thead><tr><th>节点</th><th>连接方式</th><th>结果</th><th class="num">耗时</th><th>错误</th><th>时间</th><th class="num">连续失败 / 成功</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr><td><a href="/nodes/{{ r.node }}">{{ r.node }}</a></td><td>{{ r.transport }}</td>
+<td>{% if r.last_ok is none %}<span class="muted">无数据</span>{% elif r.last_ok %}<span class="ok">成功</span>{% else %}<span class="bad">失败</span>{% endif %}</td>
+<td class="num">{{ (r.last_latency_ms ~ ' ms') if r.last_latency_ms is not none else '—' }}</td>
+<td>{{ r.last_error or '' }}</td><td>{{ r.last_at | time }}</td>
+<td class="num">{{ r.fails or 0 }} / {{ r.oks or 0 }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="muted">还没有节点加入探测账号（<code>status_probe_nodes</code>，见 <code>docs/operations.md</code> §14.8）。</p>
+{% endif %}
+<p class="muted">“无数据”表示本轮从本机直接访问检测地址失败或本机 Xray 客户端未就绪，这一轮不计入判定。</p>
+</section>
+
+<section id="notes">
+<h2>事件说明（近 30 天）</h2>
+{% if incidents %}
+<table>
+<thead><tr><th>节点</th><th>类型</th><th>开始</th><th>结束</th><th>说明（用户可见）</th></tr></thead>
+<tbody>
+{% for i in incidents %}
+<tr><td>{{ i.node }}</td><td>{{ kinds[i.kind] }}{% if i.transport_names %} <span class="muted">{{ i.transport_names | join('、') }}</span>{% endif %}</td>
+<td>{{ i.started_at | stime }}</td><td>{{ i.ended_at | stime if i.ended_at else '持续中' }}</td>
+<td><form method="post" action="/incidents/{{ i.id }}/note" class="inline">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="text" name="note" value="{{ i.note }}" maxlength="{{ note_max }}" size="28">
+<button>保存</button></form></td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="muted">近 30 天没有事件。</p>
+{% endif %}
+</section>
+{% endif %}
+{% endblock %}

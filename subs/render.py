@@ -170,7 +170,8 @@ def page(catalog, user, base_url):
 <meta name="robots" content="noindex"><title>订阅</title><style>{PAGE_CSS}</style></head><body><main>
 <h1>订阅</h1><p>本页地址与下方地址、二维码都包含你的个人凭据，不要分享或截图发给他人。</p>
 <p>本页地址也可以直接作为订阅添加到 Shadowrocket、v2rayN 或 Clash 类客户端（Clash 类默认使用分流模式）；需要其他格式时用下方对应地址。</p>
-<section><h2>可用节点</h2><ul>{node_list}</ul></section>
+<section><h2>可用节点</h2><ul>{node_list}</ul>
+<p><a href="{html.escape(base_url)}/status">查看所有节点的运行状态与历史</a></p></section>
 {section("Clash 类客户端 · 分流模式", "clash-split", "国内网站和局域网直连，其余经节点。国内网站会看到你的真实 IP，但速度快、不易触发国内账号风控。", clash=True, tag="默认")}
 {section("Clash 类客户端 · 隐私模式", "clash-privacy", "除局域网外全部经节点，包括国内网站；接管 UDP、IPv6 与 DNS，尽量避免网站获得真实 IP。国内服务会变慢，也可能被要求验证。", clash=True)}
 {section("v2rayN / Shadowrocket", "v2ray", "节点订阅。分流与防泄漏由客户端自身的路由设置决定。")}

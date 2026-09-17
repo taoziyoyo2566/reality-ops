@@ -42,6 +42,6 @@
 ## 遗留
 
 - Xray v26.3.27 的 API 只监听 TCP，`reporter` 与 Xray 共用网络命名空间时仍能访问 API；只靠程序不调用来约束（计划 §7）。
-- vault 中的 `vault_subs_tokens` 已导入控制台、不再使用，删除需另行授权。
+- vault 中的 `vault_subs_tokens` 已导入控制台、不再使用；2026-09-18 经操作者同意删除（`docs/operations.md` §14.7）。
 - Shadowrocket 全局模式下 WebRTC 显示真实 IPv4，原因与方案待调查（路线图 §7.2），不属于本阶段。
 - 部署早于本次提交（基于 `ops@2d55b3c` 的工作树）；本次提交的内容与节点和控制台上运行的一致。

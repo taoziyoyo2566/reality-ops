@@ -29,6 +29,7 @@ class Node:
     report_enabled: bool
     report_digest: str
     image: str
+    status_probe: bool = False
     mtime: float = field(compare=False, default=0.0)
 
     def edge(self):
@@ -72,11 +73,12 @@ def parse(name, doc, mtime=0.0):
     digest = report.get("token_sha256") or ""
     _require(digest == "" or DIGEST_RE.match(digest), "invalid report token digest")
     _require(not report["enabled"] or digest, "report enabled without a token digest")
+    _require(isinstance(doc.get("status_probe", False), bool), "status_probe must be a boolean")
     return Node(name=name, label=doc["label"], endpoint=doc["endpoint"], port=doc["port"], sni=doc["sni"],
                 public_key=doc["public_key"],
                 xhttp={"enabled": xhttp["enabled"], "path": xhttp.get("path", ""), "mode": xhttp.get("mode", "auto")},
                 users=users, report_enabled=report["enabled"], report_digest=digest,
-                image=str(doc.get("image", "")), mtime=mtime)
+                image=str(doc.get("image", "")), status_probe=doc.get("status_probe", False), mtime=mtime)
 
 
 def _stamp(directory):

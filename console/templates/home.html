@@ -19,8 +19,15 @@
   <div class="stat"><div class="muted">本月流量 {{ month }}</div><div class="v">{{ (month_total.values() | sum(attribute='up') + month_total.values() | sum(attribute='down')) | bytes }}</div></div>
 </div>
 
-<section style="margin-top:14px">
+<section id="publish" style="margin-top:14px">
 <h2>订阅发布</h2>
+<p class="muted">订阅服务只读取控制台“发布”出去的两份文件：哪个地址属于谁、每个人能用哪些节点。
+在用户页发放、重置、吊销，或在节点页显示、隐藏节点时，控制台先修改数据，再自动发布一次；
+控制台启动时和节点登记文件变化后（30 秒内）也会自动发布。</p>
+{% if just_published and last_publish %}
+<p role="status" class="{{ 'ok' if last_publish.ok else 'bad' }}"><strong>{{ '已重新发布' if last_publish.ok else '重新发布失败' }}：</strong>{{ last_publish.detail }}。
+{% if last_publish.ok %}{{ '用户那边没有任何变化。' if '内容与上次相同' in last_publish.detail else '用户刷新订阅后生效。' }}{% endif %}</p>
+{% endif %}
 {% if last_publish %}
 <p>最近一次：{{ last_publish.at | time }} ·
 {% if last_publish.ok %}<span class="ok">成功</span>{% else %}<span class="bad">失败</span>{% endif %}
@@ -32,6 +39,6 @@
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <button>立即重新发布</button>
 </form>
-<span class="muted">发放、重置、吊销和节点显示切换都会自动发布；节点注册文件变化后 30 秒内也会自动发布。</span>
+<span class="muted">只按当前数据再发布一次，不修改任何数据。平时不需要；用于自动发布失败并排除原因之后，或订阅服务的数据被清空之后。</span>
 </section>
 {% endblock %}

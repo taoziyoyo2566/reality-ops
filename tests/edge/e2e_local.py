@@ -134,9 +134,9 @@ def desired(users, xhttp=False, socks5=None, port=443):
     }
 
 
-def fetch(port):
+def fetch(port, url=CHECK_URL):
     return run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "20",
-                "-x", f"socks5h://127.0.0.1:{port}", CHECK_URL], check=False).stdout.strip()
+                "-x", f"socks5h://127.0.0.1:{port}", url], check=False).stdout.strip()
 
 
 def inspect(name, fmt):
@@ -271,6 +271,12 @@ def main():
         start_client(root, server_ip, public_key)
         record("alice connects over RAW+Vision", fetch(18190) == "200")
         record("bob is rejected before being added", fetch(18192) != "200")
+        # roadmap C18: a name that points at loopback must not reach the node's own listeners
+        inside = {name: fetch(18190, url) for name, url in (
+            ("literal IP", "http://127.0.0.1:10085/"),
+            ("name pointing at loopback", "http://127.0.0.1.nip.io:10085/"),
+            ("name pointing at the docker gateway", f"http://{server_ip.rsplit('.', 1)[0]}.1.nip.io:2375/"))}
+        record("a user cannot reach the node's own listeners", all(code != "200" for code in inside.values()), str(inside))
 
         before = restarts()
         rc, out = node.apply(desired(["alice", "bob"]))

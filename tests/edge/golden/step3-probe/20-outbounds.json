@@ -1,0 +1,21 @@
+{
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "settings": {},
+      "tag": "direct"
+    },
+    {
+      "protocol": "blackhole",
+      "settings": {},
+      "tag": "blocked"
+    },
+    {
+      "protocol": "freedom",
+      "settings": {
+        "redirect": "cp.example.com:80"
+      },
+      "tag": "probe"
+    }
+  ]
+}

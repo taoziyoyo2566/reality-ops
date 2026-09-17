@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Local end-to-end check of the console phase 1 against real containers (plan-console-phase1 §6.1 item 3).
+"""Local end-to-end check of the console against real containers (plan-console-phase1 §6.1 item 3,
+plan-node-status-page §6.1 item 4).
 
 One xray_edge node (compose, applier, reporter), the console (web and report services) and the subscription
 service run on this host. The check registers the node the way edge.yml does, issues a subscription in the
 admin pages, connects a real Xray client with the published link, and follows the traffic into the console.
 It also restarts Xray (the reporter must rejoin its network), rotates the report token, hides the node and
-revokes the subscription.
+revokes the subscription. The status service probes the node through Vision and XHTTP with the probe account;
+the check breaks XHTTP only (partial), stops Xray (outage), hides the node (maintenance) and cuts the status
+service's network (no data).
 
-Needs Docker with Compose and outbound HTTPS. Run with a Python that has Jinja2 and PyYAML:
+Needs Docker with Compose and outbound HTTP/HTTPS. Run with a Python that has Jinja2 and PyYAML:
   monitor_venv/bin/python tests/console/e2e_local.py [--keep]
 Creates containers, compose projects, image tags named *console-e2e* and a temporary directory. On exit it
 removes the containers, projects and directory (files owned by container users through a root container) and keeps
@@ -65,6 +68,10 @@ USERS = {
     "alice": {"name": "alice", "uuid": "11111111-1111-4111-8111-111111111111", "short_id": "a1a1a1a1"},
     "bob": {"name": "bob", "uuid": "22222222-2222-4222-8222-222222222222", "short_id": "a1a1a1a1"},
 }
+PROBE = {"name": "status-probe", "uuid": "44444444-4444-4444-8444-444444444444", "short_id": "d4d4d4d4"}
+STATUS_URL = console_compose.group_vars("status")["status_check_url"]
+PROBE_TARGET = console_compose.group_vars("status")["status_probe_target"]
+XHTTP_PATH = "/xp-e2e"
 
 results = []
 
@@ -145,9 +152,12 @@ class Layout:
             f" install -d -m 0755 {n}/rotate; install -d -o 10000 -g 10000 -m 0700 {n}/rotate/state {n}/spool;"
             f" install -d -m 0755 {c}; install -d -o 0 -g 10002 -m 0750 {c}/data {c}/registry;"
             f" install -d -o 10002 -g 10002 -m 0700 {c}/db {c}/import; install -d -m 0700 {c}/secrets;"
+            f" install -d -o 0 -g 10002 -m 0750 {c}/probe;"
             f" install -d -m 0755 {s}; install -d -o 10002 -g 10001 -m 2750 {s}/data;"
             f" install -d -o 10001 -g 10002 -m 0750 {s}/db; install -d -m 0700 {s}/secrets")
         self.put(f"{c}/secrets/tunnel.env", "TUNNEL_TOKEN=unused\n")
+        self.put(f"{c}/probe/probe.json", json.dumps({"uuid": PROBE["uuid"], "short_id": PROBE["short_id"]}),
+                 "0:10002", "0640")
         self.put(f"{c}/data/users.json", json.dumps({"users": [
             {"name": u, "groups": ["free"], "hosts": [], "deny_hosts": []} for u in USERS]}), "0:10002", "0640")
         self.put(f"{self.node}/rotate/logrotate.conf", "", mode="0644")
@@ -161,7 +171,7 @@ class Layout:
             console_root_dir=c, console_registry_dir=f"{c}/registry", subs_root_dir=s,
             console_web_port=self.web_port, console_allowed_hosts=[f"127.0.0.1:{self.web_port}"],
             console_compose_project=CONSOLE_PROJECT, console_container_name="console_e2e", console_image=CONSOLE,
-            subs_public_base_url="https://sub.example.test")
+            subs_public_base_url="https://sub.example.test", status_interval=INTERVAL, status_timeout=4)
         self.put(f"{c}/compose.yaml", console, mode="0644")
 
     def node_compose_file(self, report_url):
@@ -176,8 +186,9 @@ class Layout:
 
     def apply(self, users, command="apply", extra=()):
         state = {"schema": 1, "node": NODE, "reality": {"target": f"{TARGET}:443", "server_names": [TARGET]},
-                 "listen": {"port": 443}, "xhttp": {"enabled": False, "path": "", "mode": "auto"},
-                 "users": [USERS[u] for u in users], "socks5": [], "metrics": {"enabled": True},
+                 "listen": {"port": 443}, "xhttp": {"enabled": True, "path": XHTTP_PATH, "mode": "auto"},
+                 "users": [USERS[u] for u in users] + [PROBE], "socks5": [], "metrics": {"enabled": True},
+                 "probe": {"enabled": True, "user": PROBE["name"], "target": PROBE_TARGET},
                  "log": {"level": "info"}}
         self.put(f"{self.node}/state/desired.json", json.dumps(state))
         proc = self.compose(self.node, "run", "--rm", "-T", "--pull", "never", "applier", command,
@@ -187,11 +198,11 @@ class Layout:
         except (IndexError, ValueError):
             return proc.returncode, {"stderr": proc.stderr[-300:]}
 
-    def register(self, users, public_key, digest, endpoint):
+    def register(self, users, public_key, digest, endpoint, xhttp_path=XHTTP_PATH):
         doc = {"schema": 1, "node": NODE, "label": "e2e [test]", "endpoint": endpoint, "port": 443, "sni": TARGET,
-               "public_key": public_key, "xhttp": {"enabled": False, "path": "", "mode": "auto"},
+               "public_key": public_key, "xhttp": {"enabled": True, "path": xhttp_path, "mode": "auto"},
                "users": [USERS[u] for u in users], "report": {"enabled": True, "token_sha256": digest},
-               "image": IMAGE}
+               "image": IMAGE, "status_probe": True}
         self.put(f"{self.console}/registry/{NODE}.json", json.dumps(doc), "0:10002", "0640")
 
     def console_query(self, code):
@@ -256,14 +267,130 @@ def start_client(layout, link):
     time.sleep(2)
 
 
-def fetch(layout):
+def fetch(layout, url=CHECK_URL):
     return run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "20",
-                "-x", f"socks5h://127.0.0.1:{layout.client_port}", CHECK_URL], check=False).stdout.strip()
+                "-x", f"socks5h://127.0.0.1:{layout.client_port}", url], check=False).stdout.strip()
 
 
 TRAFFIC = ("import json; from console import config, db, queries; s = config.from_env();\n"
            "with db.connect(s.db_path) as c: print(json.dumps({'users': queries.traffic_by_user(c, queries.this_month()),"
            " 'status': queries.node_status(c)}))")
+STATUS = ("import json; from console import config, db; s = config.from_env();\n"
+          "with db.connect(s.db_path) as c: print(json.dumps({"
+          "'incidents': [dict(r) for r in c.execute('SELECT * FROM incident ORDER BY id')],"
+          " 'states': {r['transport']: dict(r) for r in c.execute('SELECT * FROM probe_state')}}))")
+
+
+def check_status(layout, admin, token, server_ip, public_key, digest, published):
+    """plan-node-status-page §6.1 item 4."""
+    def status():
+        return layout.console_query(STATUS) or {"incidents": [], "states": {}}
+
+    def both_ok():
+        states = status()["states"]
+        return all((states.get(t) or {}).get("last_ok") == 1 for t in ("vision", "xhttp"))
+
+    def incident(kind, since, closed=None):
+        def find():
+            for inc in status()["incidents"]:
+                if inc["kind"] == kind and inc["started_at"] >= since and (
+                        closed is None or (inc["ended_at"] is not None) == closed):
+                    return inc
+            return None
+        return find
+
+    record("status probes succeed through Vision and XHTTP", wait_for(both_ok, INTERVAL * 6, 2), status()["states"])
+    # probes keep running while the node is hidden, so wait for the round that sees it shown again
+    maintenance = wait_for(incident("maintenance", 0, closed=True), INTERVAL * 4, 1)
+    record("hiding the node was recorded as maintenance", maintenance
+           and maintenance["ended_at"] - maintenance["started_at"] >= INTERVAL, maintenance)
+    path = f"{layout.subs}/data/status.json"
+    record("status.json is published for the subscription service (0640)",
+           layout.as_root(f"stat -c %a {path}", check=False).stdout.strip() == "640")
+
+    # The probe account reaches only the check address.
+    probe_link = links.edge_links({"endpoint": server_ip, "port": 443, "sni": TARGET, "public_key": public_key},
+                                  PROBE, "probe")[0][1]
+    start_client(layout, probe_link)
+    record("the probe account reaches the check address", fetch(layout, STATUS_URL) == "204")
+    others = {url: fetch(layout, url) for url in (CHECK_URL, "http://www.example.com/", "http://" + server_ip + "/")}
+    record("the probe account cannot reach anything else", all(code != "200" for code in others.values()), others)
+
+    # XHTTP only: point the console at a wrong path, so only XHTTP fails.
+    started = int(time.time())
+    layout.register(["alice", "bob"], public_key, digest, server_ip, xhttp_path="/xp-wrong")
+    partial = wait_for(incident("partial", started - INTERVAL), INTERVAL * 8, 2)
+    record("XHTTP failing alone opens a partial event", partial and partial["transports"] == "xhttp", partial)
+    layout.register(["alice", "bob"], public_key, digest, server_ip)
+    ended = wait_for(incident("partial", started - INTERVAL, closed=True), INTERVAL * 8, 2)
+    record("the partial event ends after recovery", ended, ended)
+
+    # Xray stopped: an outage from the first failed round, closed after recovery.
+    wait_for(both_ok, INTERVAL * 6, 2)
+    stopped = int(time.time())
+    run(["docker", "stop", SRV])
+    outage = wait_for(incident("outage", stopped - INTERVAL), INTERVAL * 10, 2)
+    record("stopping Xray opens an outage that starts at the first failed round",
+           outage and stopped - INTERVAL <= outage["started_at"] <= stopped + 2 * INTERVAL, outage)
+    run(["docker", "start", SRV])
+    closed = wait_for(incident("outage", stopped - INTERVAL, closed=True), INTERVAL * 12, 2)
+    record("the outage ends after Xray is back", closed, closed)
+
+    # Page contents on both sides.
+    status_code, page = http("GET", f"http://127.0.0.1:{layout.subs_port}/s/{token}/status")
+    record("the subscription status page shows the node and its events",
+           status_code == 200 and "e2e [test]" in page and "XHTTP 链接无法连接" in page and "所有链接都无法连接" in page
+           and "维护中" in page and "<script" not in page, status_code)
+    record("an invalid token gets no status page",
+           http("GET", f"http://127.0.0.1:{layout.subs_port}/s/{'z' * 43}/status")[0] == 404)
+    status_code, page = admin.get("/status")
+    record("the admin status page shows the probes", status_code == 200 and "各连接方式最近一次检测" in page
+           and "e2e [test]" in page)
+    before = len(status()["incidents"])
+    admin_note = admin.post(f"/incidents/{closed['id']}/note", note="e2e 说明") if closed else 0
+    record("an event note reaches the subscription status page", admin_note == 303 and wait_for(
+        lambda: "e2e 说明" in http("GET", f"http://127.0.0.1:{layout.subs_port}/s/{token}/status")[1], INTERVAL * 4, 2))
+
+    # No network for the status service: rounds become no data, nothing opens.
+    for network in ("bridge", f"{CONSOLE_PROJECT}_egress"):
+        run(["docker", "network", "disconnect", network, "console_e2e_status"], check=False)
+    time.sleep(INTERVAL * 5)
+    states = status()["states"]
+    record("without its network the status service records no data and opens nothing",
+           all((states.get(t) or {}).get("last_error") == "local network" for t in ("vision", "xhttp"))
+           and len(status()["incidents"]) == before, states)
+    for network in (f"{CONSOLE_PROJECT}_egress", "bridge"):
+        run(["docker", "network", "connect", network, "console_e2e_status"], check=False)
+    record("probes recover when the network is back", wait_for(both_ok, INTERVAL * 8, 2))
+
+    # Probe traffic on the node (plan §5 item 4): pause the reporter so only probe traffic crosses the node's interface.
+    def node_bytes():
+        out = run(["docker", "exec", SRV, "cat", "/sys/class/net/eth0/statistics/rx_bytes",
+                   "/sys/class/net/eth0/statistics/tx_bytes"], check=False).stdout.split()
+        return sum(map(int, out)) if len(out) == 2 else None
+    reporter = f"{SRV}_reporter"
+    run(["docker", "stop", reporter], check=False)
+    time.sleep(INTERVAL)
+    rounds, first = 12, node_bytes()
+    time.sleep(INTERVAL * rounds)
+    last = node_bytes()
+    run(["docker", "start", reporter], check=False)
+    per_probe = (last - first) / rounds / 2 if first is not None and last is not None else None
+    record("probe traffic measured on the node", per_probe is not None,
+           per_probe and f"{per_probe / 1024:.1f} KiB per probe, about {per_probe * 43200 / 1e9:.2f} GB per target "
+                         "per 30 days at 60 s")
+    record("the status service is healthy", wait_for(
+        lambda: inspect("console_e2e_status", "{{.State.Health.Status}}") == "healthy", 60, 3))
+    logs = run(["docker", "logs", "console_e2e_status"], check=False)
+    record("the probe credential never appears in the status log", PROBE["uuid"] not in logs.stdout + logs.stderr)
+
+    # roadmap C18: an ordinary user must not reach the node's own listeners, by IP or by a name that resolves
+    # to one (the metrics listener carries every user's traffic counters).
+    start_client(layout, published[0])
+    inside = {name: fetch(layout, url) for name, url in (
+        ("literal IP", "http://127.0.0.1:10086/debug/vars"),
+        ("name pointing at loopback", "http://127.0.0.1.nip.io:10086/debug/vars"))}
+    record("a user cannot reach the node's metrics listener", all(code != "200" for code in inside.values()), inside)
 
 
 def main():
@@ -280,8 +407,10 @@ def main():
     try:
         layout.prepare()
         layout.compose(layout.subs, "up", "-d")
-        layout.compose(layout.console, "up", "-d", "web", "report")
+        layout.compose(layout.console, "up", "-d", "web", "report", "status")
         run(["docker", "network", "connect", "bridge", "console_e2e_report"])
+        # the node runs on the default bridge; the status service reaches it there (on spt it goes out to the node)
+        run(["docker", "network", "connect", "bridge", "console_e2e_status"])
         report_ip = ip_of("console_e2e_report")
         report_url = f"http://{report_ip}:8201/report"
         record("console web and report services start",
@@ -324,8 +453,9 @@ def main():
         record("issuing alice's subscription in the admin page", admin.post("/users/alice/issue") == 303)
         token = admin.token("alice")
         status, published = subscription(layout.subs_port, token)
-        record("subscription service serves the new token with the node's link",
-               status == 200 and len(published) == 1 and f"@{server_ip}:443" in published[0], f"{status} {len(published)}")
+        record("subscription service serves the new token with the node's links (Vision, XHTTP)",
+               status == 200 and len(published) == 2 and f"@{server_ip}:443" in published[0]
+               and "type=xhttp" in published[1], f"{status} {len(published)}")
         start_client(layout, published[0])
         record("client connects with the published link", fetch(layout) == "200")
 
@@ -336,6 +466,8 @@ def main():
         traffic = wait_for(alice_traffic, INTERVAL * 6, 2)
         record("reporter delivers alice's traffic to the console", traffic, traffic)
         data = layout.console_query(TRAFFIC) or {}
+        record("the probe account's traffic is not counted as a user's", set(data.get("users") or {}) <= set(USERS),
+               sorted(data.get("users") or {}))
         record("node status shows 443 listening", ((data.get("status") or {}).get(NODE) or {})
                .get("report", {}).get("listening") is True)
         status, page = admin.get("/users")
@@ -384,19 +516,22 @@ def main():
         # Hide and show the node, then revoke.
         admin.post(f"/nodes/{NODE}/show", shown="0")
         record("hiding the node removes it from the subscription", subscription(layout.subs_port, token) == (200, []))
+        time.sleep(INTERVAL * 2 + 1)  # let the status service see the hidden node
         admin.post(f"/nodes/{NODE}/show", shown="1")
-        record("showing the node brings it back", len(subscription(layout.subs_port, token)[1]) == 1)
+        record("showing the node brings it back", len(subscription(layout.subs_port, token)[1]) == 2)
         admin.post("/users/alice/rotate")
         new_token = admin.token("alice")
         record("rotating the subscription invalidates the old address",
                new_token != token and subscription(layout.subs_port, token)[0] == 404
                and subscription(layout.subs_port, new_token)[0] == 200)
+        check_status(layout, admin, new_token, server_ip, public_key, out.get("report_token_sha256"), published)
+
         admin.post("/users/alice/revoke", confirm="alice")
         record("revoking returns 404", subscription(layout.subs_port, new_token)[0] == 404)
         console_logs = layout.compose(layout.console, "logs", check=False).stdout
         record("subscription tokens never appear in console logs", token not in console_logs and new_token not in console_logs)
         mem = run(["docker", "stats", "--no-stream", "--format", "{{.Name}} {{.MemUsage}}",
-                   "console_e2e_web", "console_e2e_report", reporter], check=False).stdout.strip().replace("\n", "; ")
+                   "console_e2e_web", "console_e2e_report", "console_e2e_status", reporter], check=False).stdout.strip().replace("\n", "; ")
         record("memory use recorded", bool(mem), mem)
     finally:
         if args.keep:

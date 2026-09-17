@@ -347,6 +347,9 @@ class WebAppTest(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertIn("frame-ancestors 'none'", headers["content-security-policy"])
             self.assertEqual(headers["cache-control"], "no-store")
+            # 浏览器在 no-referrer 下对表单 POST 发送 `Origin: null`，页面必须保留同源的 Origin。
+            self.assertEqual(headers["referrer-policy"], "same-origin")
+            self.assertIn('<meta name="referrer" content="same-origin">', srv.request("GET", "/users")[1])
             self.assertEqual(self.post(srv, "/users/alice/issue")[0], 403)                   # no form token
             self.assertEqual(self.post(srv, "/users/alice/issue", csrf="0" * 64)[0], 403)
             body = urllib.parse.urlencode({"csrf": self.csrf}).encode()
@@ -354,7 +357,15 @@ class WebAppTest(unittest.TestCase):
                                  {"Content-Type": "application/x-www-form-urlencoded",
                                   "Origin": "https://evil.example"})[0]
             self.assertEqual(status, 403)
-        self.assertIsNone(self.token("alice"))
+            for origin in ("null", "https://" + HOST):
+                status = srv.request("POST", "/users/alice/issue", body,
+                                     {"Content-Type": "application/x-www-form-urlencoded", "Origin": origin})[0]
+                self.assertEqual(status, 403, origin)
+            self.assertIsNone(self.token("alice"))
+            status = srv.request("POST", "/users/alice/issue", body,
+                                 {"Content-Type": "application/x-www-form-urlencoded", "Origin": "http://" + HOST})[0]
+            self.assertEqual(status, 303)                                                  # same-origin browser form
+        self.assertIsNotNone(self.token("alice"))
 
     def test_issue_rotate_revoke_publish_and_audit(self):
         with self.env.conn() as conn:
@@ -404,8 +415,14 @@ class WebAppTest(unittest.TestCase):
             self.post(srv, "/nodes/ghost/show", csrf=self.csrf, shown="1")   # unregistered: refused
             with self.env.conn() as conn:
                 self.assertNotIn("ghost", db.shown_nodes(conn))
+            status, _, headers = self.post(srv, "/publish", csrf=self.csrf)
+            self.assertEqual((status, headers["location"]), (303, "/?published=1#publish"))
+            notice = srv.request("GET", "/?published=1")[1]
+            self.assertIn("<strong>已重新发布：</strong>手动发布：0 个节点、1 个用户，内容与上次相同", notice)
+            self.assertIn("用户那边没有任何变化", notice)
+            self.assertNotIn("已重新发布：", srv.request("GET", "/")[1])
             for path in ("/", "/users", "/users/bob", "/nodes", "/nodes/beta", "/traffic", "/traffic?month=2026-01",
-                         "/audit"):
+                         "/audit", "/status", "/status?day=2026-01-01"):
                 status, page, _ = srv.request("GET", path)
                 self.assertEqual(status, 200, path)
             self.assertEqual(srv.request("GET", "/nodes/ghost")[0], 404)

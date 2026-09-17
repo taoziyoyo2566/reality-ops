@@ -2,6 +2,7 @@
 
 GET /s/<token>            user page for browsers; subscription body for known clients (render.format_for_agent)
 GET /s/<token>/<format>   subscription body (render.FORMATS)
+GET /s/<token>/status     node status page (plan-node-status-page §3.4), from status.json; not access-logged
 GET /healthz              catalog loaded or not, no user data
 
 Unknown tokens, unknown formats and revoked users all get the same 404. A missing or invalid catalog or
@@ -13,9 +14,11 @@ import os
 import re
 import sys
 import threading
+import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import accesslog, catalog as cat, render
+from . import accesslog, catalog as cat, render, statuspage
 
 TOKEN_PATH_RE = re.compile(r"^/s/([A-Za-z0-9_-]{43})(?:/([a-z0-9-]{1,20}))?/?$")
 COMMON_HEADERS = {
@@ -38,8 +41,11 @@ class Store:
     def __init__(self, data_dir):
         self.catalog_path = os.path.join(data_dir, "catalog.json")
         self.tokens_path = os.path.join(data_dir, "tokens.json")
+        self.status_path = os.path.join(data_dir, "status.json")
         self._lock = threading.Lock()
         self._stamp = None
+        self._status_stamp = None
+        self._status = None
         self.catalog = None
         self.digests = {}
         self.error = "not loaded"
@@ -66,6 +72,24 @@ class Store:
                     self.error = type(exc).__name__
                     print(f"subs: data not loaded: {exc}", file=sys.stderr, flush=True)
             return self.catalog, self.digests
+
+    def status(self):
+        """The status document, or None when it is missing or invalid (the page then says so)."""
+        try:
+            st = os.stat(self.status_path)
+            stamp = (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+        except OSError:
+            stamp = None
+        with self._lock:
+            if stamp != self._status_stamp:
+                self._status_stamp = stamp
+                self._status = None
+                if stamp is not None:
+                    try:
+                        self._status = statuspage.load(self.status_path)
+                    except Exception as exc:  # a bad status file only costs the status page
+                        print(f"subs: status not loaded: {type(exc).__name__}", file=sys.stderr, flush=True)
+            return self._status
 
     def user_for(self, token):
         catalog, digests = self.current()
@@ -107,7 +131,7 @@ def make_handler(store, log, public_base_url):
             return f"{root}/s/{token}"
 
         def do_GET(self):
-            path = self.path.split("?", 1)[0]
+            path, _, query = self.path.partition("?")
             if path == "/healthz":
                 catalog, _ = store.current()
                 doc = {"ok": catalog is not None,
@@ -124,8 +148,12 @@ def make_handler(store, log, public_base_url):
             catalog, user = store.user_for(token)
             if catalog is None:
                 return self._send(503, "text/plain; charset=utf-8", b"unavailable\n")
-            if not user or (fmt != "page" and fmt not in render.FORMATS):
+            if not user or (fmt not in ("page", "status") and fmt not in render.FORMATS):
                 return self._send(404, "text/plain; charset=utf-8", NOT_FOUND)
+            if fmt == "status":
+                day = (urllib.parse.parse_qs(query).get("day") or [""])[0]
+                text = statuspage.page(store.status(), day, render.PAGE_CSS, self._base_url(token), int(time.time()))
+                return self._send(200, "text/html; charset=utf-8", text.encode(), {"Content-Security-Policy": PAGE_CSP})
             if fmt == "page":
                 content_type, text = "text/html; charset=utf-8", render.page(catalog, user, self._base_url(token))
                 extra = {"Content-Security-Policy": PAGE_CSP}

@@ -61,6 +61,19 @@ def _write(directory, name, doc):
     os.replace(tmp, path)
 
 
+def _unchanged(directory, catalog, token_doc):
+    """True when the files already hold this content (the generation time aside)."""
+    try:
+        with open(os.path.join(directory, "catalog.json")) as fh:
+            old_catalog = json.load(fh)
+        with open(os.path.join(directory, "tokens.json")) as fh:
+            old_tokens = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    strip = lambda doc: {k: v for k, v in doc.items() if k != "generated_at"}
+    return strip(old_catalog) == strip(catalog) and old_tokens == token_doc
+
+
 def publish(settings, conn, registry, reason):
     """Write both files and log the result; returns (ok, detail). Never raises for data problems."""
     nodes, problems, _ = registry.current()
@@ -68,6 +81,7 @@ def publish(settings, conn, registry, reason):
     generated_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     try:
         catalog, token_doc = build(nodes, db.shown_nodes(conn), tokens, generated_at)
+        unchanged = _unchanged(settings.subs_data_dir, catalog, token_doc)
         # The service reloads when either file changes and refuses a mismatched pair; a request that lands
         # between the two renames gets one 503 and the next request loads the complete pair.
         _write(settings.subs_data_dir, "tokens.json", token_doc)
@@ -76,8 +90,9 @@ def publish(settings, conn, registry, reason):
         detail = f"{reason}: {type(exc).__name__}: {exc}"
         conn.execute("INSERT INTO publish_log (at, ok, detail) VALUES (?, 0, ?)", (db.now(), detail))
         return False, detail
-    detail = f"{reason}: {len(catalog['nodes'])} nodes, {len(catalog['users'])} users"
+    detail = (f"{reason}：{len(catalog['nodes'])} 个节点、{len(catalog['users'])} 个用户，"
+              f"{'内容与上次相同' if unchanged else '内容已更新'}")
     if problems:
-        detail += f", {len(problems)} registration file(s) skipped"
+        detail += f"；跳过 {len(problems)} 个无法读取的登记文件"
     conn.execute("INSERT INTO publish_log (at, ok, detail) VALUES (?, 1, ?)", (db.now(), detail))
     return True, detail

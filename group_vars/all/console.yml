@@ -28,8 +28,8 @@ console_memory_limit: "128m"
 console_docker_log_max_size: "10m"
 console_docker_log_max_file: "3"
 
-# 首次部署时导入（数据库为空时才生效）：vault_subs_tokens 中已发放的 token 与在订阅中显示的节点，
-# 使现有订阅地址与节点列表不变。
+# 首次部署时导入（数据库为空时才生效）：在订阅中显示的节点，以及 vault 中的 vault_subs_tokens（存在时）。
+# 订阅 token 只保存在控制台数据库；数据库丢失时先按 docs/operations.md §14.7 恢复备份。
 console_initial_shown_nodes: ["dzire", "usca", "legend", "kagoya"]
 
 console_repo_dir: "{{ playbook_dir }}"

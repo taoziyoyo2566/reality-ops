@@ -60,8 +60,14 @@ vault_console_tunnel_token: "<token>"
 
 ```bash
 head -n 1 group_vars/all/vault.yml          # 预期 $ANSIBLE_VAULT;1.1;AES256；看到明文立即停止，不得提交
-monitor_venv/bin/ansible-vault view --vault-password-file ~/.vault_pass group_vars/all/vault.yml \
-  | monitor_venv/bin/python -c 'import sys, yaml; v = (yaml.safe_load(sys.stdin) or {}).get("vault_console_tunnel_token"); print("missing" if not v else f"present, {len(str(v))} chars")'
+monitor_venv/bin/python - <<'EOF'
+import os, subprocess, yaml   # ansible-vault 出错时这里直接报错，不会误报
+out = subprocess.run(["monitor_venv/bin/ansible-vault", "view", "--vault-password-file", os.path.expanduser("~/.vault_pass"),
+                      "group_vars/all/vault.yml"], capture_output=True, text=True, check=True).stdout
+v = yaml.safe_load(out) or {}
+t = v.get("vault_console_tunnel_token")
+print("missing" if not t else f"present, {len(str(t))} chars")
+EOF
 ```
 
 清空剪贴板。token 以 `eyJ` 开头；复制时不要带上命令里的其他部分或换行。

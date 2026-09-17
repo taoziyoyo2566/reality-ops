@@ -24,7 +24,7 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import fixtures  # noqa: E402
-from subs import build, catalog as cat, links, render, server  # noqa: E402
+from subs import build, catalog as cat, links, render, server, statuspage  # noqa: E402
 
 GOLDEN = pathlib.Path(__file__).resolve().parent / "golden"
 ENABLED = ["alice", "bob", "test"]
@@ -256,6 +256,56 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.get(f"/s/{fixtures.TOKENS['alice']}/clash-split")[0], 503)
         self.write("catalog.json", catalog)
         self.assertEqual(self.get(f"/s/{fixtures.TOKENS['alice']}/clash-split")[0], 200)
+
+    def status_doc(self):
+        return {"schema": 1, "generated_at": 1767283380, "interval": 60, "tz": {"offset_hours": 8, "label": "北京时间"},
+                "days": ["2026-01-01", "2026-01-02"],
+                "nodes": [{"label": "Alpha 节点", "state": "partial", "availability": 99.5,
+                           "days": [["ok", 0, 0, 0], ["partial", 0, 3, 0]]}],
+                "events": [{"node": "Alpha 节点", "kind": "partial", "started_at": 1767283200, "ended_at": None,
+                            "transports": ["XHTTP"], "all_transports": 2, "note": "<b>x</b>"}]}
+
+    def test_status_page_expires(self):
+        doc = self.status_doc()   # generated in January 2026, long before any test run
+        self.write("status.json", doc)
+        self.assertIn("状态数据已过期", self.get(f"/s/{fixtures.TOKENS['alice']}/status")[2].decode())
+
+    def test_status_page(self):
+        token = fixtures.TOKENS["alice"]
+        status, headers, body = self.get(f"/s/{token}/status")
+        self.assertEqual(status, 200)
+        self.assertIn("暂无状态数据", body.decode())
+        self.write("status.json", self.status_doc())
+        status, headers, body = self.get(f"/s/{token}/status?day=2026-01-02")
+        text = body.decode()
+        self.assertEqual(status, 200)
+        self.assertIn("default-src 'none'", headers["Content-Security-Policy"])
+        self.assertIn("Alpha 节点", text)
+        self.assertIn("XHTTP 链接无法连接", text)
+        self.assertIn("&lt;b&gt;x&lt;/b&gt;", text)
+        self.assertIn(f'href="https://subs.example.test/s/{token}"', text)
+        self.assertNotIn("<script", text)
+        self.assertEqual(self.get("/s/" + "z" * 43 + "/status")[0], 404)
+        # the user page links to it; status views are not subscription fetches
+        self.assertIn(f"https://subs.example.test/s/{token}/status", self.get(f"/s/{token}")[2].decode())
+        conn = sqlite3.connect(os.path.join(self.db, "access.sqlite"))
+        self.assertEqual([r[0] for r in conn.execute("SELECT fmt FROM hits")], ["page"])
+        conn.close()
+
+    def test_invalid_status_document_is_not_served(self):
+        for mutate in (lambda d: d["nodes"][0].update(state="<script>"), lambda d: d.update(nodes=[1]),
+                       lambda d: d["events"][0].update(transports=[1])):
+            doc = self.status_doc()
+            mutate(doc)
+            self.write("status.json", doc)
+            with redirect_stderr(self.stderr):
+                status, _, body = self.get(f"/s/{fixtures.TOKENS['alice']}/status")
+            self.assertEqual(status, 200)
+            self.assertIn("暂无状态数据", body.decode())
+            self.assertNotIn("<script>", body.decode())
+        self.write("status.json", self.status_doc())
+        self.assertIn("Alpha 节点", self.get(f"/s/{fixtures.TOKENS['alice']}/status")[2].decode())
+        statuspage.validate(self.status_doc())
 
     def test_page_and_access_log_do_not_leak_tokens(self):
         status, headers, body = self.get(f"/s/{fixtures.TOKENS['alice']}")

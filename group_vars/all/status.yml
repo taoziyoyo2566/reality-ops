@@ -1,0 +1,30 @@
+# 节点状态页（docs/reviews/console/plan-node-status-page-2026-09-18.md）。
+# edge.yml 与 console.yml 共用：探测账号的用户名、凭据与检测地址（及由它推导的转发目标）两边必须一致。
+
+# 加入探测账号的节点：默认跟随新系统节点（edge_nodes），新节点部署时自动纳入状态页，不再单独维护名单。
+# 首次加入时该节点 Xray 重启一次。控制台只探测登记文件中已加入的节点。
+status_probe_nodes: "{{ edge_nodes }}"
+status_probe_user: "status-probe"
+# 凭据只在 vault；命令见 docs/operations.md §14.8。
+status_probe_uuid: "{{ vault_status_probe_uuid | default('') }}"
+status_probe_short_id: "{{ vault_status_probe_short_id | default('') }}"
+
+# 控制台 status 服务
+status_enabled: true
+# 只能是 http://（本机经 Xray 的 HTTP 代理端口转发）。
+status_check_url: "http://cp.cloudflare.com/generate_204"
+status_check_status: 204
+# 探测账号在节点上的全部流量都被送到这个地址（freedom redirect），不论客户端请求哪里；由检测地址推导，改地址后须对各探测节点重新运行 edge.yml。
+status_probe_target: "{{ status_check_url | urlsplit('hostname') }}:{{ status_check_url | urlsplit('port') or 80 }}"
+status_interval: 60
+status_timeout: 10
+# 连续失败几次开始一次事件、连续成功几次结束
+status_fail_count: 3
+status_recover_count: 2
+# 状态页的时区（每日格按它分日）
+status_utc_offset_hours: 8
+status_tz_label: "北京时间"
+status_show_days: 90
+status_raw_days: 30
+status_keep_days: 400
+status_memory_limit: "128m"

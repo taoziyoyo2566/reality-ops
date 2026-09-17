@@ -561,9 +561,9 @@ PB="./monitor_venv/bin/ansible-playbook -i inventory.ini --vault-password-file $
 ### 14.1 首次上线顺序
 
 ```bash
-$PB edge.yml --limit dzire      # 每台已部署新实例的节点各运行一次：更新工具镜像并向控制台登记（不重启 Xray）
+$PB edge.yml                    # 覆盖 edge_nodes 中的全部节点（逐台）：更新工具镜像并向控制台登记
 $PB subs.yml                    # 订阅服务只负责部署，把数据目录交给控制台写入
-$PB console.yml                 # 部署控制台；首次运行导入 vault_subs_tokens 与 console_initial_shown_nodes，发布一次
+$PB console.yml                 # 部署控制台；首次运行导入 console_initial_shown_nodes 并发布一次（§14.7）
 ```
 
 前提：Cloudflare 上 `report.taoziyoyo.com` 的路由在**控制台自己的隧道**里、指向 `http://report:8201`（不要加在订阅服务的隧道上），
@@ -572,23 +572,45 @@ $PB console.yml                 # 部署控制台；首次运行导入 vault_sub
 
 ### 14.2 管理页面
 
-```bash
-ssh -L 8200:127.0.0.1:8200 spt   # 本机浏览器打开 http://127.0.0.1:8200
-```
-
-- 只接受 `group_vars/all/console.yml` 的 `console_allowed_hosts` 中的 Host；本地转发用了其他端口时，把 `127.0.0.1:<端口>` 加进去并重新运行 `console.yml`。
-- **用户**：发放、重置、吊销订阅地址（吊销需输入用户名确认），查看地址、二维码、最后拉取时间与流量。
-- **节点**：在线状态、443、错误日志末尾、各用户流量；“在订阅中显示 / 隐藏”切换后立即重新发布。
-- 用户增删改仍用 `generate_user.py` + `deploy.yml`（旧节点）+ `edge.yml`（新节点）；`edge.yml` 会提示新旧实例的用户差异，不会中止。
-  重新运行 `console.yml` 更新页面上的用户档案信息；节点登记变化后控制台 30 秒内自动重新发布订阅。
-
-### 14.3 开启节点上报
+在自己的电脑上执行（`<spt>` 换成登录 spt 用的 SSH 主机名），窗口保持打开，然后浏览器打开 `http://127.0.0.1:8200`：
 
 ```bash
-# group_vars/all/edge.yml：把节点加入 edge_report_nodes，然后
-$PB edge.yml --limit dzire      # 首次开启时 Xray 因增加 metrics 配置重启一次（数秒）
-$PB edge.yml --limit dzire -e edge_rotate_report_token=true   # 轮换该节点的上报 token
+ssh -N -L 8200:127.0.0.1:8200 <spt>
 ```
+
+- 页面没有登录，只能这样经 SSH 转发访问，不要把这个端口转发给别人。
+- 只接受 `group_vars/all/console.yml` 的 `console_allowed_hosts` 中的 Host（默认 `127.0.0.1:8200`、`localhost:8200`）；
+  本地用了其他端口时，把 `127.0.0.1:<端口>` 加进去并重新运行 `console.yml`。
+
+| 要做的事 | 在哪里 | 说明 |
+|---|---|---|
+| 给用户发订阅地址 | 用户 → 点用户名 → 发放订阅地址 | 页面显示地址与二维码，只发给本人；用户须已有档案（`users/*.yml`） |
+| 地址泄露，要换 | 用户详情 → 重置地址 | 旧地址立即失效，用户需重新导入 |
+| 停用某用户的订阅 | 用户详情 → 输入用户名 → 吊销订阅 | 订阅地址返回 404；**节点上的账号不受影响**，已导入的节点仍能用，要停止访问须修改用户档案并部署 |
+| 看某用户是否在用 | 用户列表 / 用户详情 | 最后拉取时间、各节点本月流量、近 31 天每日流量 |
+| 节点维护时暂时不给用户 | 节点 → 点节点 → 从订阅中隐藏 | 用户刷新订阅后不再看到；维护完再点“在订阅中显示” |
+| 看节点是否正常 | 首页“需要注意” / 节点列表 / 节点详情 | 在线、443 监听、最后上报、错误日志末尾 |
+| 看流量 | 流量 | 按月、按用户、按节点；日期按 UTC |
+| 查谁在什么时候做了什么 | 记录 | 管理员操作与每次订阅发布的结果 |
+| 看节点现在和过去是否正常 | 状态 | 与用户在“订阅地址/status”看到的内容相同，另有每种连接方式最近一次检测的结果；可给事件写说明（§14.8） |
+| 手动重新发布订阅 | 首页 → 立即重新发布 | 按当前数据重写订阅服务的两个文件，页面显示结果；内容没变时用户端没有区别。一般不需要（发放、重置、吊销、显示切换、节点登记变化和控制台启动都会自动发布），用于自动发布失败并排除原因后，或订阅服务数据被清空后 |
+
+第一阶段不在控制台里做的事：
+
+- 新增、修改、删除用户：`generate_user.py` 修改档案 → 旧节点 `deploy.yml` → 新节点 `edge.yml` → `console.yml`（更新页面上的档案信息）。
+  `edge.yml` 会提示新旧实例的用户差异，不会中止；节点登记变化后控制台 30 秒内自动重新发布订阅。
+- 部署、升级、增删节点：`edge.yml` / `edge-remove.yml`；开启节点上报见 §14.3。
+
+### 14.3 节点上报
+
+上报默认跟随新系统节点（`edge_report_nodes` 等于 `edge_nodes`），部署时自动开启；首次开启时该节点 Xray 重启一次（数秒）。
+
+```bash
+$PB edge.yml                                                  # 全部节点
+$PB edge.yml --limit dzire -e edge_rotate_report_token=true    # 轮换某节点的上报 token
+```
+
+只让部分节点上报时，在 `group_vars/all/edge.yml` 把 `edge_report_nodes` 改成明确的列表。
 
 节点侧核对（只读）：
 
@@ -603,7 +625,7 @@ $PB console-remove.yml                              # 保留 db/ 与 registry/�
 $PB edge-remove.yml --limit dzire                   # 同时删除该节点的登记文件，控制台下次发布时不再包含它
 ```
 
-控制台移除后订阅服务继续提供最后一次发布的内容。
+控制台移除后订阅服务继续提供最后一次发布的订阅内容；状态页数据一并删除，用户状态页显示“暂无状态数据”。
 
 ### 14.5 本地验证
 
@@ -613,8 +635,11 @@ monitor_venv/bin/python tests/edge/test_compose.py
 monitor_venv/bin/python tests/console/test_compose.py
 monitor_venv/bin/python tests/edge/e2e_local.py                         # 节点端到端（Docker、外网）
 monitor_venv/bin/python tests/console/e2e_local.py                      # 控制台端到端（Docker、外网）
-# 控制台单元测试需要 docker/console/requirements.txt 的依赖，可在控制台镜像内运行：
-docker run --rm -v "$PWD":/repo:ro -w /repo --user 10002:10002 reality-console:console-e2e python tests/console/test_console.py
+# 控制台与状态页单元测试需要 docker/console/requirements.txt 的依赖，可在控制台镜像内运行（镜像由上面的 e2e 构建）：
+for t in test_console test_status; do
+  docker run --rm -v "$PWD":/repo:ro -w /repo --user 10002:10002 -e PYTHONDONTWRITEBYTECODE=1 reality-console:console-e2e python tests/console/$t.py
+done
+docker run --rm -v "$PWD":/repo:ro -w /repo --user 10001:10001 -e PYTHONDONTWRITEBYTECODE=1 reality-subs:console-e2e python tests/subs/test_subs.py
 ```
 
 ### 14.6 故障排查
@@ -625,3 +650,110 @@ docker run --rm -v "$PWD":/repo:ro -w /repo --user 10002:10002 reality-console:c
 | 节点“已开启上报，但还没有收到上报” | 节点上 `docker logs xray_edge_reporter`；HTTP 401 表示登记的 token 哈希与节点不一致，重新运行 `edge.yml`；`report.taoziyoyo.com` 返回 502 或 530 时按 [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md) §9 排查 |
 | `console.yml` 提示数据目录属主不是控制台 | 先运行 `subs.yml` |
 | 订阅地址返回 503 | 控制台两次发布之间的瞬间会出现一次；持续出现时看控制台首页的发布记录 |
+| 状态页所有节点“无数据” | `spt` 本机访问检测地址失败，或 `status` 服务没有运行：`sudo docker logs --tail 30 reality_console_status` |
+| 首页“状态检测超过 5 分钟没有完成一轮” | 同上；日志中 `probe credential file is invalid` 或 `No such file` 表示探测凭据未下发，按 §14.8 写入 vault 后运行 `console.yml` |
+| 某节点状态一直失败，但用户能连 | 节点页“状态检测”是否为“已加入探测账号”；未加入或登记文件较旧时对该节点运行 `edge.yml`（§14.8） |
+
+### 14.7 首次导入、订阅 token 的保存与恢复
+
+- `console.yml` 只在控制台数据库里还没有发放过订阅、也没有设置过节点显示时导入一次并发布：`console_initial_shown_nodes`，
+  以及 vault 中的 `vault_subs_tokens`（存在时）。过程是写临时文件 `/opt/reality-console/import/initial.json` →
+  `docker compose run --rm web python -m console.admin import-initial` → 删除临时文件；输出中的“导入结果”一行说明本次是否导入。
+- 订阅 token 只保存在控制台数据库 `/opt/reality-console/db/console.sqlite` 中；每日（UTC）备份为
+  `db/backup/console-<日期>.sqlite`，保留 14 份。`console-remove.yml` 默认保留数据库与节点登记文件。
+- vault 中已没有 `vault_subs_tokens`，不要再加回：控制台里的重置与吊销不会同步到 vault，数据库丢失后按旧 token 导入
+  会让已吊销的地址重新生效。
+- 数据库为空时控制台不发布，订阅服务继续提供最后一次发布的内容。此时如果直接运行 `console.yml`，只会导入节点并发布，
+  所有订阅地址随之失效、需要重新发放，所以**先恢复备份，再运行 `console.yml`**。
+
+在 spt 上恢复备份（控制台启动时会自动发布一次）：
+
+```bash
+D=/opt/reality-console/db
+sudo ls -l $D/backup/
+B=console-YYYY-MM-DD.sqlite                  # 改成要恢复的备份
+R=$D/before-restore-$(date -u +%Y%m%dT%H%M%S)   # 出问题的数据库移到这里保留
+sudo docker compose -f /opt/reality-console/compose.yaml stop web report
+sudo sh -c "mkdir $R && mv $D/console.sqlite* $R/"   # 数据库文件已不存在时 mv 会报错，可以继续
+sudo install -o 10002 -g 10002 -m 0600 $D/backup/$B $D/console.sqlite
+sudo docker compose -f /opt/reality-console/compose.yaml start web report
+```
+
+恢复后在首页确认“订阅发布”成功，并用一个订阅地址确认能取到节点。备份之后到恢复之前的流量记录会丢失；
+节点不会重发已被接收的上报，流量不会重复计算。
+
+### 14.8 节点状态页
+
+合同：[`plan-node-status-page`](reviews/console/plan-node-status-page-2026-09-18.md)。用户在订阅页点“查看所有节点的运行状态与历史”
+（`https://sub.taoziyoyo.com/s/<token>/status`）；管理员看控制台“状态”。设置在 `group_vars/all/status.yml`。
+
+`spt` 上的 `status` 服务每 60 秒用探测账号经每个节点（Vision；开启 XHTTP 的节点另测 XHTTP）访问一次 `http://cp.cloudflare.com/generate_204`。
+探测账号在节点上的全部连接都被固定转发到这个地址，连不到别处。
+某种连接方式连续 3 次失败记为事件，开始时间取第一次失败；连续 2 次成功结束。本机直接访问检测地址失败的那一轮记为“无数据”，
+无数据不计入可用率；连续无数据超过两轮时，进行中的事件在最后一轮有数据之后一轮结束，空档前的失败也不再累计。
+在控制台隐藏节点的期间记为“维护中”。`status` 服务停止超过三轮后，用户看到的状态页显示“状态数据已过期”。
+
+**首次上线**（每步各自授权）：
+
+1. 生成探测凭据并写入 vault（明文只在内存中；已存在时不修改）：
+
+```bash
+monitor_venv/bin/python - <<'EOF'
+import os, secrets, uuid, yaml
+from ansible.constants import DEFAULT_VAULT_ID_MATCH
+from ansible.parsing.vault import VaultLib, VaultSecret
+path = "group_vars/all/vault.yml"
+secret = VaultSecret(open(os.path.expanduser("~/.vault_pass"), "rb").read().strip())
+vault = VaultLib([(DEFAULT_VAULT_ID_MATCH, secret)])
+plain = vault.decrypt(open(path, "rb").read()).decode()
+if "vault_status_probe_uuid" in (yaml.safe_load(plain) or {}):
+    raise SystemExit("已存在，未修改")
+plain = plain.rstrip("\n") + (f'\nvault_status_probe_uuid: "{uuid.uuid4()}"'
+                              f'\nvault_status_probe_short_id: "{secrets.token_hex(4)}"\n')
+tmp = path + ".tmp"
+with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as fh:
+    fh.write(vault.encrypt(plain, secret))
+os.replace(tmp, path)
+print("已写入")
+EOF
+head -n 1 group_vars/all/vault.yml    # 预期 $ANSIBLE_VAULT;1.1;AES256；看到明文立即停止，不得提交
+ANSIBLE_LOCAL_TEMP=/tmp/reality-ops-ansible-local monitor_venv/bin/ansible spt -i inventory.ini -c local \
+  --vault-password-file ~/.vault_pass -m debug -a "msg={{ (status_probe_uuid | length) ~ ' ' ~ (status_probe_short_id | length) }}"
+# 预期 "36 8"
+```
+
+2. 部署探测账号（`status_probe_nodes` 默认就是 `edge_nodes`，新节点部署时自动纳入）：
+
+```bash
+$PB edge.yml                    # 一次覆盖全部新系统节点，逐台进行，每台 Xray 重启一次；之后确认 test 仍能连接
+$PB edge.yml --limit dzire      # 只处理一台时
+```
+
+凭据写入 vault 之前 `edge.yml` 会中止（断言提示缺少哪一项）。
+
+3. 更新订阅服务（增加状态页地址）与控制台（启动 `status` 服务）：
+
+```bash
+$PB subs.yml                    # 订阅服务镜像更新，容器重建时中断数秒
+$PB console.yml                 # 输出“核对状态服务已完成最近一轮检测”为 ok
+```
+
+4. 核对：控制台“状态”页中各连接方式最近一次检测为“成功”；用浏览器打开 `test` 的订阅地址，点状态页链接，内容与管理页一致。
+
+```bash
+ssh <spt> "sudo docker compose -f /opt/reality-console/compose.yaml ps status; sudo docker logs --tail 20 reality_console_status"
+```
+
+**日常**：
+
+- 事件说明：控制台“状态”→“事件说明”，填写后约一分钟出现在用户状态页；每次保存记入“记录”。
+- 计划维护：节点页“从订阅中隐藏”，期间显示“维护中”；恢复时点“在订阅中显示”。
+- 修改间隔、失败 / 恢复次数或时区：改 `group_vars/all/status.yml` 后运行 `console.yml`。
+- 修改检测地址（只能是 `http://`）：改 `status_check_url` 后先对每台探测节点运行 `edge.yml`（转发目标由它推导，Xray 重启一次），
+  再运行 `console.yml`。
+
+**关闭 / 回滚**：
+
+- 停用状态页：`status_enabled: false` 后运行 `console.yml`，停止 `status` 服务并删除 `status.json`；历史数据保留在控制台数据库。
+- 移除某节点的探测账号：在 `group_vars/all/status.yml` 把 `status_probe_nodes` 改成明确的列表（去掉该节点），
+  再 `$PB edge.yml --limit <节点>`（Xray 重启一次）；该节点从状态页消失，历史保留。

@@ -3,14 +3,11 @@
 # 合同：docs/reviews/data-plane-edge/plan-single-instance-443-2026-09-15.md；
 # compose 形态：docs/reviews/data-plane-edge/plan-edge-compose-2026-09-15.md（节点上只有 Docker + edge_root_dir）。
 
+# edge.yml 已按 edge_nodes 选主机并 serial: 1 逐台执行；这里防止角色被别的 playbook 用在其他主机上。
 - name: 只允许在 edge_nodes 列出的节点运行
   assert:
-    that:
-      - inventory_hostname in edge_nodes
-      - ansible_limit is defined
-    fail_msg: >-
-      {{ inventory_hostname }} 不在 edge_nodes={{ edge_nodes }} 中，或未用 --limit 指定目标。
-      新实例只按节点逐台部署。
+    that: inventory_hostname in edge_nodes
+    fail_msg: "{{ inventory_hostname }} 不在 edge_nodes={{ edge_nodes }} 中。"
 
 - name: 用户加载、校验与 ACL（与 deploy.yml 相同的计算）
   import_tasks: acl.yml
@@ -191,6 +188,7 @@
            'xhttp': {'enabled': edge_xhttp_enabled | bool, 'path': edge_xhttp_path, 'mode': edge_xhttp_mode},
            'users': edge_users | sort(attribute='name'),
            'report': {'enabled': edge_report_enabled | bool, 'token_sha256': edge_report_token_sha256},
+           'status_probe': edge_status_probe_enabled | bool,
            'image': edge_xray_image
          } | to_nice_json(indent=1) }}
   no_log: true

@@ -1,10 +1,19 @@
 ---
-# 部署与旧 single/multi 并行的 xray_edge 新实例。必须用 --limit 逐台指定 edge_nodes 中的节点：
-#   ./monitor_venv/bin/ansible-playbook -i inventory.ini edge.yml --limit dzire -K --vault-password-file ~/.vault_pass
+# 部署与旧 single/multi 并行的 xray_edge 新实例。一次覆盖 edge_nodes 中的全部节点（逐台执行，其余主机跳过、不连接）：
+#   ./monitor_venv/bin/ansible-playbook -i inventory.ini edge.yml -K --vault-password-file ~/.vault_pass
+# 只处理一台时加 --limit dzire。
 # 合同：docs/reviews/data-plane-edge/plan-single-instance-443-2026-09-15.md
 - hosts: reality_nodes
-  gather_facts: true
+  gather_facts: false
   become: true
   serial: 1
-  roles:
-    - xray_edge
+  tasks:
+    - name: 部署新实例（只处理 edge_nodes 中的节点）
+      when: inventory_hostname in edge_nodes
+      block:
+        - name: 收集主机信息
+          setup:
+
+        - name: 应用 xray_edge 角色
+          include_role:
+            name: xray_edge

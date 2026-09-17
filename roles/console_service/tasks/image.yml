@@ -10,6 +10,7 @@
            ~ lookup('file', console_repo_dir ~ '/subs/__init__.py')
            ~ lookup('file', console_repo_dir ~ '/subs/catalog.py')
            ~ lookup('file', console_repo_dir ~ '/subs/links.py')
+           ~ lookup('file', console_repo_dir ~ '/subs/statuspage.py')
            ~ (query('file', *(query('fileglob', console_repo_dir ~ '/console/*.py') | sort)) | join('\n'))
            ~ (query('file', *(query('fileglob', console_repo_dir ~ '/console/templates/*.html') | sort)) | join('\n'))
          ) | hash('sha256'))[:12] }}

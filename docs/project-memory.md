@@ -292,7 +292,8 @@ ssh dzire "sudo docker compose -f /opt/xray-edge/compose.yaml ps; sudo docker co
   run at 18:41 stopped before any change because the operator's shell had no SSH agent with the node
   key). Only `test` is published; `subs_public_base_url` is `https://sub.taoziyoyo.com`, and dzire, usca,
   legend and kagoya are `migrated`. Tunnel token and the `test` token are in the vault
-  (`vault_subs_tunnel_token`, `vault_subs_tokens`), never printed.
+  (`vault_subs_tunnel_token`, `vault_subs_tokens`), never printed. `vault_subs_tokens` was removed on
+  2026-09-18 after the console imported it (see Management Console State).
   - Containers: `reality_subs` (UID 10001, read-only, `cap_drop ALL`, no-new-privileges, 128 MB, only
     on the `internal: true` network, `/data` read-only, `/db` writable, healthy) and
     `reality_subs_cloudflared` (UID 65532, read-only, `cap_drop ALL`, internal + egress networks). No
@@ -365,7 +366,7 @@ Contract: [`plan-subscription-service`](reviews/subscription-service/plan-subscr
 Contract: [`plan-console-phase1`](reviews/console/plan-console-phase1-2026-09-16.md) (APPROVED 2026-09-17,
 D-C1 to D-C5). Roadmap position: P1 in [`roadmap-unified-2026-09-16.md`](reviews/roadmap-unified-2026-09-16.md) §7.0.
 
-- `[代码]` 2026-09-17 implemented in the working tree, **not deployed and not committed**: `console/` (FastAPI web and
+- `[代码]` Implemented 2026-09-17 and committed as `ops@b4dd28a` (2026-09-18): `console/` (FastAPI web and
   report services, SQLite), `docker/console/`, `roles/console_service`, `console.yml`, `console-remove.yml`,
   `group_vars/all/console.yml`; node side `docker/edge-tools/edge_reporter.py`, applier metrics listener and report
   token, `reporter` compose service (off unless the node is in `edge_report_nodes`), node registration files written
@@ -386,7 +387,7 @@ D-C1 to D-C5). Roadmap position: P1 in [`roadmap-unified-2026-09-16.md`](reviews
 - `[上游]`+`[实测]` 2026-09-17: the v26.3.27 API listener is TCP only (`app/commander/commander.go`
   `net.Listen("tcp", ...)`), and a dokodemo API inbound on a Unix socket did not come up locally, so the reporter can
   still reach `127.0.0.1:10085` inside the shared network namespace. Accepted as a code-level constraint (plan §7).
-- `[实测]` 2026-09-17 22:40-22:52 JST deployed from the working tree (base `ops@2d55b3c`, not yet committed):
+- `[实测]` 2026-09-17 22:40-22:52 JST deployed from the working tree later committed as `ops@b4dd28a`:
   `edge.yml` on dzire, usca, legend and kagoya wrote their registration files (`/opt/reality-console/registry`);
   `subs.yml` handed `/opt/reality-subs/data` to the console (`10002:10001`, setgid) and `db/` to its group, without
   restarting the subscription service; `console.yml` started `reality_console_web` and `reality_console_report`
@@ -404,6 +405,59 @@ D-C1 to D-C5). Roadmap position: P1 in [`roadmap-unified-2026-09-16.md`](reviews
   contiguous, one reporter instance per node, nothing dropped), traffic totals did not double-count and the alerts
   cleared. Hiding `legend` in the console removed it from the `test` subscription on the device and showing it again
   brought it back (5 then 6 links).
+- `[实测]` 2026-09-18 the console on `spt` was redeployed from the working tree (ahead of `ops@b4dd28a`, not committed):
+  pages send `Referrer-Policy: same-origin` (header and meta) because browsers send `Origin: null` on form posts
+  under `no-referrer`, which the Origin check refuses. The operator then reported that the page actions work from the
+  browser.
+- `[代码]` 2026-09-18 working tree, not deployed: after “立即重新发布” the home page shows the publish result
+  (`/?published=1#publish`).
+- `[实测]` 2026-09-18 `vault_subs_tokens` removed from `group_vars/all/vault.yml` (decrypted and re-encrypted in
+  memory; the other 27 keys unchanged; Ansible resolves the variable as absent). Subscription tokens now exist only in
+  the console database and its daily backups; restore procedure in `docs/operations.md` §14.7.
+- `[代码]` 2026-09-18 working tree, not deployed: each publish records whether the content changed
+  (`内容与上次相同` / `内容已更新`), and the home page explains that the manual publish only republishes.
+
+## Node Status Page State
+
+Contract: [`plan-node-status-page`](reviews/console/plan-node-status-page-2026-09-18.md) (APPROVED 2026-09-18, D-S1 to D-S6).
+
+- `[代码]` 2026-09-18 working tree, not deployed: `console/status.py` (`status` service: Xray client as a child process,
+  one local HTTP proxy port per node and transport, direct check first, events after 3 failures / 2 successes, daily
+  known/unknown seconds, `status.json` into the subscription data directory), new tables `probe_result`, `probe_state`,
+  `incident`, `status_daily`, `status_meta`; admin page `/status` with event notes; `subs/statuspage.py` and the route
+  `/s/<token>/status` (not access-logged); applier `probe` section (a freedom outbound that redirects every
+  connection of the probe user to `status_probe_target`, derived from `status_check_url`);
+  `group_vars/all/status.yml` (`status_probe_nodes` empty, credentials `vault_status_probe_uuid` /
+  `vault_status_probe_short_id` not yet in the vault); console image copies `/usr/bin/xray` from `edge_xray_image`.
+- `[实测]` 2026-09-18 local: applier render tests with a `step3-probe` golden case (existing golden files unchanged),
+  `tests/console/test_status.py` 27/27, `tests/console/test_console.py` 19/19, `tests/console/test_compose.py` 10/10,
+  `tests/subs/test_subs.py` 23/23 (subs image); Ansible rendered the desired state for `dzire` with the probe on and off
+  (off: no probe user, `probe.enabled` false; on: user added, registration users unchanged, classify `restart`;
+  missing credentials and a name clash fail the assert without printing values); `--syntax-check` passes for
+  `console.yml`, `console-remove.yml`, `edge.yml`, `edge-remove.yml`, `subs.yml`. The vault snippet in operations §14.8
+  was run against a copy of the vault only.
+- `[实测]` 2026-09-18 local end-to-end (`tests/console/e2e_local.py`, 48/48) with a real node, the probe account,
+  the status service and the subscription service: probes through Vision and XHTTP, a wrong XHTTP path opens a partial
+  event and closes it on recovery, stopping Xray opens an outage timed at the first failed round, hiding the node is
+  recorded as maintenance, cutting the status service's network records no data and opens nothing, an event note
+  reaches the user status page, and the probe credential reaches only the check address (other hosts: no connection or
+  Cloudflare 403). Probe traffic 11.8 KiB per probe (about 0.52 GB per target per 30 days at 60 s); `status` container
+  52 MiB.
+- `[实测]` 2026-09-18 (roadmap C18, fixed in the working tree, not deployed): through a node, an ordinary user reaching
+  `http://127.0.0.1.nip.io:10086/debug/vars` (a domain that resolves to loopback) gets HTTP 200 from the node's own
+  metrics listener; the literal IP is refused by `block-private`. Routing uses `domainStrategy: IPIfNonMatch`, which
+  resolves only when no rule matched, and the default rule always matches. The Xray API port (10085) is reachable the
+  same way in principle. Affects every deployed `xray_edge` node; on the new system only `test` holds a subscription.
+  Fix in the working tree: routing `domainStrategy` `IPOnDemand` (S3 contract §10). `[实测]` node e2e 44/44 and console
+  e2e 49/49 with the fix: literal IP, a name pointing at loopback and one pointing at the Docker gateway are all
+  refused, SOCKS5 routing per user unchanged. Old-system templates still use `IPIfNonMatch` and were not checked.
+- `[实测]` 2026-09-18 deployed: `edge.yml` on `dzire` first, then the rest (each Xray restarted once); `subs.yml` and
+  `console.yml` on `spt`. All four nodes probe normally (6 targets, no alerts, availability 100%); latest probe
+  `usca` 141ms, `kagoya` 420ms, `dzire` 927ms, `legend` 880-950ms with one 5535ms round (probably an occasional DNS
+  timeout on that node; `dzire` has explicit container DNS for the same reason). Result record:
+  [`node-status-page-2026-09-18.changelog.md`](reviews/console/node-status-page-2026-09-18.changelog.md).
+- `[未知]` Docker Engine version on `spt` (the status health check avoids `start_interval`, which needs Engine 25+).
+- `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while
   `edge_report_nodes` is empty) → `subs.yml` → `console.yml` → add nodes to `edge_report_nodes` one at a time.

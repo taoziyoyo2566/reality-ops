@@ -26,6 +26,27 @@
           {%- endfor -%}
           {{ out }}
 
+    # 状态页探测账号（plan-node-status-page §3.2）：只进期望状态，不进注册文件、测试链接与新旧用户比较。
+    - name: 校验探测账号
+      assert:
+        that:
+          - status_probe_user not in all_names
+          - status_probe_uuid is match('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+          - status_probe_short_id is match('^([0-9a-f]{2}){1,8}$')
+          - status_probe_uuid | lower not in (edge_users | map(attribute='uuid') | map('lower') | list)
+          - status_check_url is match('^http://')
+        fail_msg: >-
+          {{ inventory_hostname }} 在 status_probe_nodes 中：vault_status_probe_uuid 与 vault_status_probe_short_id 必须已设置
+          （docs/operations.md §14.8），{{ status_probe_user }} 不能与用户档案重名或共用 UUID，status_check_url 必须是 http://。
+      when: edge_status_probe_enabled | bool
+
+    - name: 计算期望状态中的用户（含探测账号）
+      no_log: true
+      set_fact:
+        edge_desired_users: >-
+          {{ edge_users + ([{'name': status_probe_user, 'uuid': status_probe_uuid, 'short_id': status_probe_short_id}]
+                           if (edge_status_probe_enabled | bool) else []) }}
+
 - name: 计算本节点生效的 SOCKS5 profile（与旧模板相同的 D12 单一门控）
   no_log: true
   set_fact:

@@ -1,6 +1,6 @@
 {
   "routing": {
-    "domainStrategy": "IPIfNonMatch",
+    "domainStrategy": "IPOnDemand",
     "rules": [
       {
         "inboundTag": [

@@ -27,6 +27,14 @@
         "type": "field"
       },
       {
+        "outboundTag": "probe",
+        "ruleTag": "probe",
+        "type": "field",
+        "user": [
+          "status-probe.node1"
+        ]
+      },
+      {
         "network": "tcp,udp",
         "outboundTag": "direct",
         "ruleTag": "default",

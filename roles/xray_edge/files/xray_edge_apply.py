@@ -38,6 +38,10 @@ SHORT_ID_RE = re.compile(r"^(?:[0-9a-f]{2}){1,8}$")
 HOST_PORT_RE = re.compile(r"^[A-Za-z0-9.-]+:[0-9]{1,5}$")
 PATH_RE = re.compile(r"^/[A-Za-z0-9._~/-]{1,128}$")
 SOCKS_NETWORKS = ("", "tcp", "udp", "tcp,udp")
+# Status probe account (plan-node-status-page §3.2): all of its traffic is redirected to one host:port, whatever
+# destination the client asks for. Domain rules would not do: with routeOnly sniffing a client could send an IP
+# destination with the allowed name in SNI or Host and be relayed to that IP.
+PROBE_TAG = "probe"
 # Xray-docs sockopt.md / RFC 8305 recommended values; tryDelayMs 0 would disable racing.
 HAPPY_EYEBALLS = {"tryDelayMs": 250, "prioritizeIPv6": False, "interleave": 1, "maxConcurrentTry": 4}
 
@@ -126,6 +130,17 @@ def validate(desired):
     metrics = desired.get("metrics", {})
     _require(isinstance(metrics, dict) and isinstance(metrics.get("enabled", False), bool),
              "metrics.enabled must be a boolean")
+
+    probe = desired.get("probe", {})
+    _require(isinstance(probe, dict) and isinstance(probe.get("enabled", False), bool),
+             "probe.enabled must be a boolean")
+    if probe.get("enabled"):
+        _require(probe.get("user") in seen_names, "probe.user must be one of the users")
+        target = probe.get("target")
+        _require(isinstance(target, str) and HOST_PORT_RE.match(target)
+                 and 1 <= int(target.rsplit(":", 1)[1]) <= 65535, "probe.target must be host:port")
+        routed = sorted(p["name"] for p in socks5 if probe["user"] in p.get("users", []))
+        _require(not routed, f"probe.user must not be routed through socks5 {routed}")
 
     egress = desired.get("egress", {})
     _require(isinstance(egress, dict) and isinstance(egress.get("happy_eyeballs", False), bool),
@@ -239,6 +254,11 @@ def render(desired, private_key):
         {"type": "field", "ruleTag": "block-private", "ip": ["geoip:private"], "outboundTag": "blocked"},
     ]
     by_name = {u["name"]: u for u in users}
+    probe = desired.get("probe") or {}
+    if probe.get("enabled"):
+        outbounds.append({"tag": PROBE_TAG, "protocol": "freedom", "settings": {"redirect": probe["target"]}})
+        rules.append({"type": "field", "ruleTag": PROBE_TAG, "user": [_email(by_name[probe["user"]], node)],
+                      "outboundTag": PROBE_TAG})
     for profile in socks5:
         tag = f"socks5-{profile['name']}"
         server = {"address": profile["address"], "port": profile["port"]}
@@ -262,7 +282,10 @@ def render(desired, private_key):
         "00-base.json": base,
         "10-inbounds.json": {"inbounds": inbounds},
         "20-outbounds.json": {"outbounds": outbounds},
-        "30-routing.json": {"routing": {"domainStrategy": "IPIfNonMatch", "rules": rules}},
+        # IPOnDemand resolves a requested domain when an IP rule is reached, so block-private also covers
+        # names that point at loopback, the Docker gateway, the LAN or cloud metadata (roadmap C18).
+        # IPIfNonMatch would only resolve when no rule matched at all, and the default rule always matches.
+        "30-routing.json": {"routing": {"domainStrategy": "IPOnDemand", "rules": rules}},
     }
 
 

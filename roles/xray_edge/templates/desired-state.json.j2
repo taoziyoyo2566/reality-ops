@@ -13,7 +13,7 @@
     "mode": {{ edge_xhttp_mode | to_json }}
   },
   "users": [
-{% for u in edge_users | sort(attribute='name') %}
+{% for u in edge_desired_users | sort(attribute='name') %}
     {"name": {{ u.name | to_json }}, "uuid": {{ u.uuid | to_json }}, "short_id": {{ u.short_id | string | to_json }}}{{ "," if not loop.last }}
 {% endfor %}
   ],
@@ -36,5 +36,10 @@
   ],
   "egress": {"happy_eyeballs": {{ edge_happy_eyeballs_enabled | bool | to_json }}},
   "metrics": {"enabled": {{ edge_report_enabled | bool | to_json }}},
+  "probe": {
+    "enabled": {{ edge_status_probe_enabled | bool | to_json }},
+    "user": {{ status_probe_user | to_json }},
+    "target": {{ status_probe_target | to_json }}
+  },
   "log": {"level": {{ edge_log_level | to_json }}}
 }

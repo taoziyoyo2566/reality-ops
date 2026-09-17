@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import urllib.parse
 
 import jinja2
 import yaml
@@ -27,6 +28,7 @@ def group_vars(*names):
     for name in names:
         raw.update(yaml.safe_load((REPO / f"group_vars/all/{name}.yml").read_text()))
     env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+    env.filters["urlsplit"] = lambda url, part: getattr(urllib.parse.urlsplit(url), part)
     values = {k: v for k, v in raw.items() if not (isinstance(v, str) and "{{" in v)}
     pending = {k: v for k, v in raw.items() if k not in values}
     for _ in range(5):
@@ -43,11 +45,12 @@ def environment():
     env = jinja2.Environment(undefined=jinja2.StrictUndefined, keep_trailing_newline=True)
     env.filters["to_json"] = json.dumps
     env.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).strip().lower() in ("yes", "on", "1", "true")
+    env.filters["combine"] = lambda a, b: dict(a, **b)
     return env
 
 
 def render(**overrides):
-    variables = group_vars("subs", "console")
+    variables = group_vars("subs", "console", "status")
     variables.update({"ansible_managed": "test", "console_image": IMAGE})
     variables.update(overrides)
     return environment().from_string(TEMPLATE.read_text()).render(**variables)
@@ -66,7 +69,7 @@ class ConsoleComposeTest(unittest.TestCase):
         self.services = self.doc["services"]
 
     def test_services_and_hardening(self):
-        self.assertEqual(sorted(self.services), ["cloudflared", "report", "web"])
+        self.assertEqual(sorted(self.services), ["cloudflared", "report", "status", "web"])
         for name, svc in self.services.items():
             with self.subTest(service=name):
                 self.assertTrue(svc["read_only"])
@@ -75,9 +78,55 @@ class ConsoleComposeTest(unittest.TestCase):
                 self.assertEqual(svc["restart"], "unless-stopped")
                 self.assertEqual(svc["logging"]["driver"], "json-file")
                 self.assertNotIn("docker.sock", " ".join(svc.get("volumes", [])))
-        for name in ("web", "report"):
+        for name in ("web", "report", "status"):
             self.assertEqual(self.services[name]["user"], "10002:10002")
             self.assertEqual(self.services[name]["image"], IMAGE)
+
+    def test_status_service(self):
+        status = self.services["status"]
+        self.assertEqual(status["command"], ["python", "-m", "console.status"])
+        self.assertTrue(status["init"])
+        self.assertEqual(status["networks"], ["egress"])
+        self.assertNotIn("ports", status)
+        self.assertEqual(sorted(status["volumes"]), [
+            "/opt/reality-console/db:/db", "/opt/reality-console/probe:/run/probe:ro",
+            "/opt/reality-console/registry:/registry:ro", "/opt/reality-subs/data:/subs-data"])
+        self.assertEqual((status["pids_limit"], status["mem_limit"]), (128, "128m"))
+        self.assertEqual(status["healthcheck"]["test"], ["CMD", "python", "-m", "console.status", "--check"])
+        env = status["environment"]
+        self.assertEqual((env["STATUS_ENABLED"], env["STATUS_INTERVAL"], env["STATUS_FAIL_COUNT"],
+                          env["STATUS_RECOVER_COUNT"], env["STATUS_UTC_OFFSET_HOURS"]), ("true", "60", "3", "2", "8"))
+        self.assertEqual(env["STATUS_CHECK_URL"], "http://cp.cloudflare.com/generate_204")
+        # the admin pages read the same settings
+        web_env = self.services["web"]["environment"]
+        self.assertEqual({k: v for k, v in web_env.items() if k.startswith("STATUS_")}, env)
+
+    def test_status_can_be_turned_off(self):
+        services = yaml.safe_load(render(status_enabled=False))["services"]
+        self.assertNotIn("status", services)
+        self.assertEqual(services["web"]["environment"]["STATUS_ENABLED"], "false")
+
+    def test_probe_account_matches_on_both_sides(self):
+        status = group_vars("status")
+        self.assertEqual(status["status_probe_target"], "cp.cloudflare.com:80")
+        values = dict(status, status_check_url="http://probe.example.test:8080/x")
+        target = yaml.safe_load((REPO / "group_vars/all/status.yml").read_text())["status_probe_target"]
+        env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+        env.filters["urlsplit"] = lambda url, part: getattr(urllib.parse.urlsplit(url), part)
+        self.assertEqual(env.from_string(target).render(**values), "probe.example.test:8080")
+        template = (REPO / "roles/xray_edge/templates/desired-state.json.j2").read_text()
+        self.assertIn('"target": {{ status_probe_target | to_json }}', template)
+        edge = yaml.safe_load((REPO / "group_vars/all/edge.yml").read_text())
+        self.assertEqual(edge["edge_status_probe_enabled"], "{{ inventory_hostname in status_probe_nodes }}")
+        # the probe account follows the new-system nodes; no second list to keep in sync
+        raw = yaml.safe_load((REPO / "group_vars/all/status.yml").read_text())
+        self.assertEqual(raw["status_probe_nodes"], "{{ edge_nodes }}")
+        playbook = yaml.safe_load((REPO / "edge.yml").read_text())[0]
+        self.assertEqual(playbook["tasks"][0]["when"], "inventory_hostname in edge_nodes")
+        self.assertEqual((playbook["hosts"], playbook["serial"], playbook["gather_facts"]),
+                         ("reality_nodes", 1, False))
+        dockerfile = (REPO / "docker/console/Dockerfile").read_text()
+        self.assertIn(f"FROM {edge['edge_xray_image']} AS xray", dockerfile)
 
     def test_only_web_is_published_and_only_on_loopback(self):
         self.assertEqual(self.services["web"]["ports"], ["127.0.0.1:8200:8200"])

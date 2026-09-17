@@ -10,6 +10,20 @@
       控制台只部署到 console_host={{ console_host }}；vault_console_tunnel_token（控制台自己的隧道，
       plan-console-phase1 §3.6）必须已写入 vault。
 
+- name: 有节点加入探测账号时，探测凭据必须已设置
+  assert:
+    that:
+      - status_probe_uuid is match('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+      - status_probe_short_id is match('^([0-9a-f]{2}){1,8}$')
+    fail_msg: "status_probe_nodes 不为空：vault_status_probe_uuid 与 vault_status_probe_short_id 必须已设置（docs/operations.md §14.8）。"
+  when: (status_enabled | bool) and (status_probe_nodes | length > 0)
+
+- name: 检测地址必须是 http://（status 服务经本机 HTTP 代理端口访问）
+  assert:
+    that: status_check_url is match('^http://[^/:]+(:[0-9]+)?/')
+    fail_msg: "status_check_url={{ status_check_url }} 必须是 http://主机[:端口]/路径。"
+  when: status_enabled | bool
+
 - name: 创建控制台目录
   file:
     path: "{{ item.path }}"
@@ -24,6 +38,7 @@
     - { path: "{{ console_root_dir }}/db", owner: "{{ console_uid }}", group: "{{ console_uid }}", mode: "0700" }
     - { path: "{{ console_root_dir }}/import", owner: "{{ console_uid }}", group: "{{ console_uid }}", mode: "0700" }
     - { path: "{{ console_root_dir }}/secrets", owner: "0", group: "0", mode: "0700" }
+    - { path: "{{ console_root_dir }}/probe", owner: "0", group: "{{ console_uid }}", mode: "0750" }
   loop_control:
     label: "{{ item.path }}"
 
@@ -75,6 +90,23 @@
     mode: "0600"
   no_log: true
 
+- name: 下发状态页探测凭据
+  copy:
+    content: "{{ {'uuid': status_probe_uuid, 'short_id': status_probe_short_id} | to_json }}\n"
+    dest: "{{ console_root_dir }}/probe/probe.json"
+    owner: "0"
+    group: "{{ console_uid }}"
+    mode: "0640"
+  no_log: true
+  diff: false
+  when: (status_enabled | bool) and (status_probe_uuid | length > 0)
+
+- name: 未启用或未设置时删除探测凭据
+  file:
+    path: "{{ console_root_dir }}/probe/probe.json"
+    state: absent
+  when: not ((status_enabled | bool) and (status_probe_uuid | length > 0))
+
 - name: 下发 compose 项目定义
   template:
     src: compose.yaml.j2
@@ -92,6 +124,13 @@
     remove_orphans: true
     wait: true
     wait_timeout: 90
+
+# 放在 compose 之后：status 容器停止前的最后一轮可能再次写入。
+- name: 关闭状态页时删除已发布的状态数据
+  file:
+    path: "{{ subs_root_dir }}/data/status.json"
+    state: absent
+  when: not (status_enabled | bool)
 
 # 只在控制台从未发放、从未显示过节点时生效（console.admin import-initial），使现有订阅地址与节点列表不变。
 - name: 首次导入已发放的 token 与显示中的节点
@@ -131,3 +170,12 @@
   loop_control:
     label: "{{ item.service }}"
   changed_when: false
+
+- name: 核对状态服务已完成最近一轮检测
+  command: docker compose -f {{ console_root_dir }}/compose.yaml exec -T status python -m console.status --check
+  changed_when: false
+  retries: 6
+  delay: 10
+  register: console_status_check
+  until: console_status_check.rc == 0
+  when: status_enabled | bool

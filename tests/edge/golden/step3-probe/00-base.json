@@ -1,0 +1,40 @@
+{
+  "api": {
+    "services": [
+      "HandlerService",
+      "StatsService",
+      "LoggerService",
+      "RoutingService"
+    ],
+    "tag": "api"
+  },
+  "log": {
+    "access": "/var/log/xray/access.log",
+    "error": "/var/log/xray/error.log",
+    "loglevel": "warning"
+  },
+  "metrics": {
+    "listen": "127.0.0.1:10086"
+  },
+  "policy": {
+    "levels": {
+      "0": {
+        "bufferSize": 0,
+        "connIdle": 300,
+        "downlinkOnly": 0,
+        "handshake": 4,
+        "statsUserDownlink": true,
+        "statsUserOnline": true,
+        "statsUserUplink": true,
+        "uplinkOnly": 0
+      }
+    },
+    "system": {
+      "statsInboundDownlink": true,
+      "statsInboundUplink": true,
+      "statsOutboundDownlink": true,
+      "statsOutboundUplink": true
+    }
+  },
+  "stats": {}
+}

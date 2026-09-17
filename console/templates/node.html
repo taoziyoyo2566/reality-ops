@@ -24,6 +24,7 @@
 <tr><th>用户数</th><td>{{ node.users | length }}</td></tr>
 <tr><th>注册文件更新</th><td>{{ node.mtime | int | time }}</td></tr>
 <tr><th>上报</th><td>{{ '已开启' if node.report_enabled else '未开启' }}</td></tr>
+<tr><th>状态检测</th><td>{{ '已加入探测账号' if node.status_probe else '未加入' }}</td></tr>
 </table>
 </section>
 
@@ -43,6 +44,27 @@
 <p class="muted">还没有收到该节点的上报。</p>
 {% endif %}
 </section>
+
+{% if status_enabled and node.status_probe %}
+<section>
+<h2>状态事件</h2>
+{% if incidents %}
+<table>
+<thead><tr><th>类型</th><th>开始</th><th>结束</th><th>连接方式</th><th>说明</th></tr></thead>
+<tbody>
+{% for i in incidents %}
+<tr><td>{{ {'outage': '故障', 'partial': '部分异常', 'maintenance': '维护'}[i.kind] }}</td>
+<td>{{ i.started_at | stime }}</td><td>{{ i.ended_at | stime if i.ended_at else '持续中' }}</td>
+<td>{{ i.transport_names | join('、') }}</td><td>{{ i.note }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="muted">近期没有事件。</p>
+{% endif %}
+<p class="muted"><a href="/status">状态页</a>可以给事件写说明。</p>
+</section>
+{% endif %}
 
 <section>
 <h2>本月各用户流量 {{ month }}</h2>

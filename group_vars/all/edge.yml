@@ -41,14 +41,17 @@ edge_happy_eyeballs_enabled: "{{ inventory_hostname in edge_happy_eyeballs_nodes
 # Mihomo 没有 auto；Xray 在 REALITY 下 auto 选择 stream-one（XTLS/Xray-core discussion #4113），Clash 片段与之一致。
 edge_mihomo_xhttp_mode: "stream-one"
 
-# 节点上报（管理控制台第一阶段，plan-console-phase1 §3.4）：列入的节点开启 Xray metrics（首次开启时 Xray 重启一次），
-# 并运行 reporter 每 edge_report_interval 秒把各用户流量与节点状态发到控制台。逐台加入，各自另行授权。
-edge_report_nodes: ["dzire", "usca", "legend", "kagoya"]
+# 节点上报（管理控制台第一阶段，plan-console-phase1 §3.4）：开启 Xray metrics（首次开启时 Xray 重启一次），
+# 并运行 reporter 每 edge_report_interval 秒把各用户流量与节点状态发到控制台。
+# 默认跟随新系统节点：新节点部署时自动上报，不另外维护名单。
+edge_report_nodes: "{{ edge_nodes }}"
 edge_report_enabled: "{{ inventory_hostname in edge_report_nodes }}"
 edge_report_url: "https://{{ console_report_host }}/report"
 edge_report_interval: 300
 # 只在需要换节点上报 token 时用 -e edge_rotate_report_token=true 运行 edge.yml；同一次运行会把新哈希登记到控制台。
 edge_rotate_report_token: false
+# 状态页探测账号：节点列表与账号参数在 group_vars/all/status.yml。
+edge_status_probe_enabled: "{{ inventory_hostname in status_probe_nodes }}"
 
 # 新实例容器的 DNS。REALITY 每次握手都要解析 target，Go 解析器对无响应的服务器单次等待 5s，
 # 宿主机首个 DNS 丢包时每个新连接都会多等约 5s（2026-09-15 dzire 实测 4.2.2.4 丢包过半）。

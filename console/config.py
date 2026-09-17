@@ -33,3 +33,46 @@ def from_env(env=None):
         allowed_hosts=tuple(h.strip() for h in env.get("CONSOLE_ALLOWED_HOSTS", "127.0.0.1:8200,localhost:8200").split(",")
                             if h.strip()),
     )
+
+
+@dataclass(frozen=True)
+class StatusSettings:
+    """Node status page (plan-node-status-page §3); group_vars/all/status.yml sets these through compose."""
+    enabled: bool
+    probe_file: str
+    xray: str
+    workdir: str
+    check_url: str
+    check_status: int
+    interval: int
+    timeout: int
+    fail_count: int
+    recover_count: int
+    utc_offset_hours: float
+    tz_label: str
+    show_days: int
+    raw_days: int
+    keep_days: int
+    base_port: int
+
+
+def status_from_env(env=None):
+    env = os.environ if env is None else env
+    return StatusSettings(
+        enabled=env.get("STATUS_ENABLED", "false").lower() == "true",
+        probe_file=env.get("STATUS_PROBE_FILE", "/run/probe/probe.json"),
+        xray=env.get("STATUS_XRAY", "/usr/local/bin/xray"),
+        workdir=env.get("STATUS_WORKDIR", "/tmp"),
+        check_url=env.get("STATUS_CHECK_URL", "http://cp.cloudflare.com/generate_204"),
+        check_status=int(env.get("STATUS_CHECK_STATUS", "204")),
+        interval=int(env.get("STATUS_INTERVAL", "60")),
+        timeout=int(env.get("STATUS_TIMEOUT", "10")),
+        fail_count=int(env.get("STATUS_FAIL_COUNT", "3")),
+        recover_count=int(env.get("STATUS_RECOVER_COUNT", "2")),
+        utc_offset_hours=float(env.get("STATUS_UTC_OFFSET_HOURS", "8")),
+        tz_label=env.get("STATUS_TZ_LABEL", "北京时间"),
+        show_days=int(env.get("STATUS_SHOW_DAYS", "90")),
+        raw_days=int(env.get("STATUS_RAW_DAYS", "30")),
+        keep_days=int(env.get("STATUS_KEEP_DAYS", "400")),
+        base_port=int(env.get("STATUS_BASE_PORT", "20000")),
+    )

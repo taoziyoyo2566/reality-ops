@@ -23,6 +23,23 @@ CREATE TABLE IF NOT EXISTS publish_log (
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL,
     detail TEXT NOT NULL DEFAULT '');
+-- Node status page (plan-node-status-page §3.5). ok is NULL when the round could not tell (no data).
+CREATE TABLE IF NOT EXISTS probe_result (
+    at INTEGER NOT NULL, node TEXT NOT NULL, transport TEXT NOT NULL, ok INTEGER, latency_ms INTEGER,
+    error TEXT NOT NULL DEFAULT '', PRIMARY KEY (node, transport, at));
+CREATE TABLE IF NOT EXISTS probe_state (
+    node TEXT NOT NULL, transport TEXT NOT NULL, fails INTEGER NOT NULL DEFAULT 0, oks INTEGER NOT NULL DEFAULT 0,
+    first_fail_at INTEGER, first_ok_at INTEGER, down_since INTEGER, last_known_at INTEGER,
+    last_at INTEGER, last_ok INTEGER, last_latency_ms INTEGER, last_error TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (node, transport));
+CREATE TABLE IF NOT EXISTS incident (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, node TEXT NOT NULL, kind TEXT NOT NULL, started_at INTEGER NOT NULL,
+    ended_at INTEGER, transports TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS incident_node ON incident (node, started_at);
+CREATE TABLE IF NOT EXISTS status_daily (
+    node TEXT NOT NULL, day TEXT NOT NULL, known_seconds INTEGER NOT NULL DEFAULT 0,
+    unknown_seconds INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node, day));
+CREATE TABLE IF NOT EXISTS status_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 REPORT_SEQ_DAYS = 30
 

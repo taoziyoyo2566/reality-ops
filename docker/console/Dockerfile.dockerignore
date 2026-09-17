@@ -4,5 +4,6 @@
 !subs/__init__.py
 !subs/catalog.py
 !subs/links.py
+!subs/statuspage.py
 !console/
 console/**/__pycache__

@@ -162,6 +162,53 @@ class RenderTest(unittest.TestCase):
         with self.assertRaises(edge.ApplyError):
             edge.render(desired(metrics={"enabled": "yes"}), PRIVATE_KEY)
 
+    def test_probe_account_is_redirected_to_one_target(self):
+        probe = {"enabled": True, "user": "prober", "target": "cp.example.com:80"}
+        state = desired(probe=probe)
+        state["users"].append({"name": "prober", "uuid": "33333333-3333-4333-8333-333333333333", "short_id": "c3c3"})
+        files = edge.render(state, PRIVATE_KEY)
+        rules = files["30-routing.json"]["routing"]["rules"]
+        self.assertEqual([r["ruleTag"] for r in rules], ["api", "block-bt", "block-private", "probe", "default"])
+        self.assertEqual(rules[3], {"type": "field", "ruleTag": "probe", "user": ["prober.node1"], "outboundTag": "probe"})
+        outbounds = files["20-outbounds.json"]["outbounds"]
+        self.assertEqual(outbounds[-1], {"tag": "probe", "protocol": "freedom", "settings": {"redirect": "cp.example.com:80"}})
+        self.assertNotIn("redirect", json.dumps(outbounds[0]))
+        self.assertIn("c3c3", inbound(files, "vless-reality")["streamSettings"]["realitySettings"]["shortIds"])
+        # disabled, or absent: exactly the configuration without a probe
+        self.assertEqual(edge.render(desired(probe={"enabled": False}), PRIVATE_KEY), edge.render(desired(), PRIVATE_KEY))
+        cases = [
+            ({"enabled": "yes"}, "probe.enabled"),
+            ({"enabled": True, "user": "nobody", "target": "cp.example.com:80"}, "probe.user"),
+            ({"enabled": True, "user": "alice"}, "probe.target"),
+            ({"enabled": True, "user": "alice", "target": "cp.example.com"}, "probe.target"),
+            ({"enabled": True, "user": "alice", "target": "cp.example.com:0"}, "probe.target"),
+            ({"enabled": True, "user": "alice", "target": "http://cp.example.com:80"}, "probe.target"),
+        ]
+        for value, fragment in cases:
+            with self.subTest(probe=value), self.assertRaises(edge.ApplyError) as ctx:
+                edge.render(desired(probe=value), PRIVATE_KEY)
+            self.assertIn(fragment, str(ctx.exception))
+        routed = desired(probe={"enabled": True, "user": "alice", "target": "cp.example.com:80"},
+                         socks5=[{"name": "p1", "address": "192.0.2.1", "port": 1080, "users": ["alice"]}])
+        with self.assertRaises(edge.ApplyError) as ctx:
+            edge.render(routed, PRIVATE_KEY)
+        self.assertIn("must not be routed", str(ctx.exception))
+
+    def test_adding_the_probe_account_restarts(self):
+        before = edge.render(desired(), PRIVATE_KEY)
+        state = desired(probe={"enabled": True, "user": "prober", "target": "cp.example.com:80"})
+        state["users"].append({"name": "prober", "uuid": "33333333-3333-4333-8333-333333333333", "short_id": "a1a1a1a1"})
+        self.assertEqual(edge.classify(before, edge.render(state, PRIVATE_KEY)), "restart")
+
+    def test_private_addresses_are_blocked_by_name_as_well(self):
+        routing = edge.render(desired(), PRIVATE_KEY)["30-routing.json"]["routing"]
+        # roadmap C18: with IPIfNonMatch a domain pointing at 127.0.0.1 reached the node's own listeners,
+        # because the default rule always matches and nothing is resolved.
+        self.assertEqual(routing["domainStrategy"], "IPOnDemand")
+        block = next(r for r in routing["rules"] if r["ruleTag"] == "block-private")
+        self.assertEqual((block["ip"], block["outboundTag"]), (["geoip:private"], "blocked"))
+        self.assertLess(routing["rules"].index(block), len(routing["rules"]) - 1)
+
     def test_render_is_order_independent(self):
         state = desired()
         reordered = copy.deepcopy(state)
@@ -245,6 +292,15 @@ class GoldenTest(unittest.TestCase):
             xhttp={"enabled": True, "path": "/p-golden", "mode": "auto"},
             socks5=[{"name": "p1", "priority": 40, "address": "192.0.2.1", "port": 1080,
                      "users": ["alice"], "username": "u", "password": "p", "network": "tcp"}],
+        ),
+        "step3-probe": desired(
+            users=[
+                {"name": "bob", "uuid": "22222222-2222-4222-8222-222222222222", "short_id": "b0b0b0b0"},
+                {"name": "alice", "uuid": "11111111-1111-4111-8111-111111111111", "short_id": "a1a1a1a1"},
+                {"name": "status-probe", "uuid": "33333333-3333-4333-8333-333333333333", "short_id": "c3c3c3c3"},
+            ],
+            metrics={"enabled": True},
+            probe={"enabled": True, "user": "status-probe", "target": "cp.example.com:80"},
         ),
     }
 

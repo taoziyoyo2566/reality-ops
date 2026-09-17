@@ -2,7 +2,7 @@
 # 移除管理控制台（回滚用）。只触碰 console_root_dir 下的 compose 项目与文件，不触碰订阅服务、节点或旧系统。
 #   ./monitor_venv/bin/ansible-playbook -i inventory.ini console-remove.yml -K
 # 默认保留数据库（db/，含已发放的 token 与流量记录）与节点注册文件（registry/），重新部署后继续使用；
-# 追加 -e console_remove_all=true 一并删除。订阅服务继续提供最后一次发布的内容。
+# 追加 -e console_remove_all=true 一并删除。订阅服务继续提供最后一次发布的订阅内容；状态页数据会删除（不再更新）。
 # hosts 须与 group_vars/all/console.yml 的 console_host 一致。
 - hosts: spt
   gather_facts: false
@@ -26,7 +26,12 @@
       file:
         path: "{{ console_root_dir }}/{{ item }}"
         state: absent
-      loop: "{{ ['compose.yaml', '.image.tar', 'data', 'import', 'secrets'] + (['db', 'registry'] if (console_remove_all | bool) else []) }}"
+      loop: "{{ ['compose.yaml', '.image.tar', 'data', 'import', 'secrets', 'probe'] + (['db', 'registry'] if (console_remove_all | bool) else []) }}"
+
+    - name: 删除订阅服务数据目录中的状态页数据
+      file:
+        path: "{{ subs_root_dir }}/data/status.json"
+        state: absent
 
     - name: 全部删除时移除根目录
       file:
