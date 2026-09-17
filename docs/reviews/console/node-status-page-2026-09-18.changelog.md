@@ -1,7 +1,7 @@
 # 节点状态页：结果记录
 
 计划：[`plan-node-status-page-2026-09-18.md`](plan-node-status-page-2026-09-18.md)（2026-09-18 批准与实施）。
-路线图：[`roadmap-unified-2026-09-16.md`](../roadmap-unified-2026-09-16.md) §7 的 S6。
+路线图：[`roadmap-unified-2026-09-18.md`](../roadmap-unified-2026-09-18.md) §7 的 S6。
 
 ## 结果
 
@@ -52,5 +52,6 @@
 - 计划 §6.3 的退出条件（连续 24 小时无误报）尚未到时间。
 - `legend` 出现过一次 5535ms 的探测耗时（其余约 900ms），疑似节点偶发 DNS 超时；若重复出现，按 `dzire` 的做法在
   `edge_container_dns` 为该节点指定 DNS。
-- 旧系统（`reality_single`、`reality_multi` 模板，仍为 `IPIfNonMatch`）是否存在同样的 C18 路径未检查。
+- 旧系统（`reality_single`、`reality_multi` 模板，仍为 `IPIfNonMatch`）按 2026-09-18 的决定不检查、不修改，
+  随用户迁移完成、旧系统停用而关闭（路线图 [`2026-09-18 版`](../roadmap-unified-2026-09-18.md) §9 第 12 项）。
 - 探测流量会计入节点出站统计，不计入用户流量。

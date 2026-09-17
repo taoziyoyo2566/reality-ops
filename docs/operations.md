@@ -549,7 +549,7 @@ ansible-playbook -i inventory.ini deploy.yml --syntax-check
 
 ## 14. 新系统：xray_edge、订阅服务与管理控制台
 
-新系统与旧系统独立运行（路线图 `docs/reviews/roadmap-unified-2026-09-16.md` §2）。以下命令没有 `./ansible-playbook` 简写，都用原生写法；
+新系统与旧系统独立运行（路线图 `docs/reviews/roadmap-unified-2026-09-18.md` §2）。以下命令没有 `./ansible-playbook` 简写，都用原生写法；
 每台节点、每次部署都需要单独确认。实施合同：`docs/reviews/console/plan-console-phase1-2026-09-16.md`。
 
 ```bash

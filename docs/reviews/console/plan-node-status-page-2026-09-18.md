@@ -6,7 +6,7 @@ Created: 2026-09-18 JST
 
 Updated: 2026-09-18 JST
 
-上位计划：[`roadmap-unified-2026-09-16.md`](../roadmap-unified-2026-09-16.md) §7（S6 遥测与运维的一部分，见 §7.0）。
+上位计划：[`roadmap-unified-2026-09-18.md`](../roadmap-unified-2026-09-18.md) §7（S6 遥测与运维的一部分，见 §7.0）。
 前置：[`plan-console-phase1`](plan-console-phase1-2026-09-16.md)（P1，已完成）。相关合同：
 [`plan-single-instance-443`](../data-plane-edge/plan-single-instance-443-2026-09-15.md)（S3）、
 [`plan-subscription-service`](../subscription-service/plan-subscription-service-2026-09-15.md)（S4）。

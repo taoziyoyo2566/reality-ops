@@ -76,5 +76,5 @@ Overview 全部归独立项目
 
 ## 相关
 
-- 计划与缺陷台账：[`docs/reviews/roadmap-unified-2026-09-16.md`](../reviews/roadmap-unified-2026-09-16.md)
+- 计划与缺陷台账：[`docs/reviews/roadmap-unified-2026-09-18.md`](../reviews/roadmap-unified-2026-09-18.md)
 - 剥离前的发布侧历史证据：[`phase1-image-release-2026-08-26.md`](../reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md)

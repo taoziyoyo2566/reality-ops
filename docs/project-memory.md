@@ -45,7 +45,7 @@ Publisher-side history is retained in
 [`phase1-image-release-2026-08-26.md`](reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md)
 and in this file's git history; current publisher state is authoritative in the
 new repository. Planning lives in
-[`roadmap-unified-2026-09-16.md`](reviews/roadmap-unified-2026-09-16.md) (supersedes the 2026-08-27 version).
+[`roadmap-unified-2026-09-18.md`](reviews/roadmap-unified-2026-09-18.md) (supersedes the 2026-08-27 version).
 
 ## xray_edge Canary State
 
@@ -364,7 +364,7 @@ Contract: [`plan-subscription-service`](reviews/subscription-service/plan-subscr
 ## Management Console (P1) State
 
 Contract: [`plan-console-phase1`](reviews/console/plan-console-phase1-2026-09-16.md) (APPROVED 2026-09-17,
-D-C1 to D-C5). Roadmap position: P1 in [`roadmap-unified-2026-09-16.md`](reviews/roadmap-unified-2026-09-16.md) §7.0.
+D-C1 to D-C5). Roadmap position: P1 in [`roadmap-unified-2026-09-18.md`](reviews/roadmap-unified-2026-09-18.md) §7.0.
 
 - `[代码]` Implemented 2026-09-17 and committed as `ops@b4dd28a` (2026-09-18): `console/` (FastAPI web and
   report services, SQLite), `docker/console/`, `roles/console_service`, `console.yml`, `console-remove.yml`,
