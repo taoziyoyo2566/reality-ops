@@ -1,0 +1,19 @@
+{% if daily %}
+{% set top = namespace(v=1) %}
+{% for day, up, down in daily %}{% if up + down > top.v %}{% set top.v = up + down %}{% endif %}{% endfor %}
+<table>
+<thead><tr><th>日期（UTC）</th><th class="num">上行</th><th class="num">下行</th><th style="width:45%"></th></tr></thead>
+<tbody>
+{% for day, up, down in daily | reverse %}
+<tr>
+<td>{{ day }}</td>
+<td class="num">{{ up | bytes }}</td>
+<td class="num">{{ down | bytes }}</td>
+<td><div class="bar" style="width:{{ ((up + down) * 100 / top.v) | round(1) }}%"></div></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="muted">没有流量记录。</p>
+{% endif %}

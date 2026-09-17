@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}首页{% endblock %}
+{% block content %}
+<h1>首页</h1>
+
+<section>
+<h2>需要注意</h2>
+{% if alerts %}
+<ul class="alerts">{% for a in alerts %}<li class="warn">{{ a }}</li>{% endfor %}</ul>
+{% else %}
+<p class="ok">没有需要处理的问题。</p>
+{% endif %}
+</section>
+
+<div class="stats">
+  <div class="stat"><div class="muted">用户（已发放 / 档案）</div><div class="v">{{ issued }} / {{ user_count }}</div></div>
+  <div class="stat"><div class="muted">节点（订阅中显示 / 已登记）</div><div class="v">{{ shown }} / {{ node_count }}</div></div>
+  <div class="stat"><div class="muted">今日流量（UTC）</div><div class="v">{{ (today_total.values() | sum(attribute='up') + today_total.values() | sum(attribute='down')) | bytes }}</div></div>
+  <div class="stat"><div class="muted">本月流量 {{ month }}</div><div class="v">{{ (month_total.values() | sum(attribute='up') + month_total.values() | sum(attribute='down')) | bytes }}</div></div>
+</div>
+
+<section style="margin-top:14px">
+<h2>订阅发布</h2>
+{% if last_publish %}
+<p>最近一次：{{ last_publish.at | time }} ·
+{% if last_publish.ok %}<span class="ok">成功</span>{% else %}<span class="bad">失败</span>{% endif %}
+<br><span class="muted">{{ last_publish.detail }}</span></p>
+{% else %}
+<p class="muted">还没有发布过。</p>
+{% endif %}
+<form method="post" action="/publish" class="inline">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<button>立即重新发布</button>
+</form>
+<span class="muted">发放、重置、吊销和节点显示切换都会自动发布；节点注册文件变化后 30 秒内也会自动发布。</span>
+</section>
+{% endblock %}

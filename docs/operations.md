@@ -544,3 +544,84 @@ ANSIBLE_REMOTE_TEMP=/tmp/.ansible-remote \
 ANSIBLE_SSH_CONTROL_PATH_DIR=/tmp/.ansible/cp \
 ansible-playbook -i inventory.ini deploy.yml --syntax-check
 ```
+
+---
+
+## 14. 新系统：xray_edge、订阅服务与管理控制台
+
+新系统与旧系统独立运行（路线图 `docs/reviews/roadmap-unified-2026-09-16.md` §2）。以下命令没有 `./ansible-playbook` 简写，都用原生写法；
+每台节点、每次部署都需要单独确认。实施合同：`docs/reviews/console/plan-console-phase1-2026-09-16.md`。
+
+```bash
+cd ~/workspace/projects/reality-ops
+export SSH_AUTH_SOCK=/run/user/1000/openssh_agent        # 连接节点需要已载入节点密钥的 ssh-agent
+PB="./monitor_venv/bin/ansible-playbook -i inventory.ini --vault-password-file $HOME/.vault_pass -K"
+```
+
+### 14.1 首次上线顺序
+
+```bash
+$PB edge.yml --limit dzire      # 每台已部署新实例的节点各运行一次：更新工具镜像并向控制台登记（不重启 Xray）
+$PB subs.yml                    # 订阅服务只负责部署，把数据目录交给控制台写入
+$PB console.yml                 # 部署控制台；首次运行导入 vault_subs_tokens 与 console_initial_shown_nodes，发布一次
+```
+
+前提：Cloudflare 上 `report.taoziyoyo.com` 的路由在**控制台自己的隧道**里、指向 `http://report:8201`（不要加在订阅服务的隧道上），
+隧道 token 已写入 vault 的 `vault_console_tunnel_token`。新建隧道、写入 token、移动路由、轮换与删除的步骤见
+[`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md)。
+
+### 14.2 管理页面
+
+```bash
+ssh -L 8200:127.0.0.1:8200 spt   # 本机浏览器打开 http://127.0.0.1:8200
+```
+
+- 只接受 `group_vars/all/console.yml` 的 `console_allowed_hosts` 中的 Host；本地转发用了其他端口时，把 `127.0.0.1:<端口>` 加进去并重新运行 `console.yml`。
+- **用户**：发放、重置、吊销订阅地址（吊销需输入用户名确认），查看地址、二维码、最后拉取时间与流量。
+- **节点**：在线状态、443、错误日志末尾、各用户流量；“在订阅中显示 / 隐藏”切换后立即重新发布。
+- 用户增删改仍用 `generate_user.py` + `deploy.yml`（旧节点）+ `edge.yml`（新节点）；`edge.yml` 会提示新旧实例的用户差异，不会中止。
+  重新运行 `console.yml` 更新页面上的用户档案信息；节点登记变化后控制台 30 秒内自动重新发布订阅。
+
+### 14.3 开启节点上报
+
+```bash
+# group_vars/all/edge.yml：把节点加入 edge_report_nodes，然后
+$PB edge.yml --limit dzire      # 首次开启时 Xray 因增加 metrics 配置重启一次（数秒）
+$PB edge.yml --limit dzire -e edge_rotate_report_token=true   # 轮换该节点的上报 token
+```
+
+节点侧核对（只读）：
+
+```bash
+ssh dzire "sudo docker compose -f /opt/xray-edge/compose.yaml ps; sudo docker logs --tail 20 xray_edge_reporter"
+```
+
+### 14.4 移除（回滚）
+
+```bash
+$PB console-remove.yml                              # 保留 db/ 与 registry/；-e console_remove_all=true 全部删除
+$PB edge-remove.yml --limit dzire                   # 同时删除该节点的登记文件，控制台下次发布时不再包含它
+```
+
+控制台移除后订阅服务继续提供最后一次发布的内容。
+
+### 14.5 本地验证
+
+```bash
+python3 -m unittest discover -s tests/edge -p 'test_r*.py'               # 应用器与上报程序
+monitor_venv/bin/python tests/edge/test_compose.py
+monitor_venv/bin/python tests/console/test_compose.py
+monitor_venv/bin/python tests/edge/e2e_local.py                         # 节点端到端（Docker、外网）
+monitor_venv/bin/python tests/console/e2e_local.py                      # 控制台端到端（Docker、外网）
+# 控制台单元测试需要 docker/console/requirements.txt 的依赖，可在控制台镜像内运行：
+docker run --rm -v "$PWD":/repo:ro -w /repo --user 10002:10002 reality-console:console-e2e python tests/console/test_console.py
+```
+
+### 14.6 故障排查
+
+| 现象 | 先查 / 处理 |
+|---|---|
+| 首页“最近一次订阅发布失败：shown nodes without a registration file” | 显示中的节点没有登记文件：对该节点运行 `edge.yml`，或在节点页隐藏它 |
+| 节点“已开启上报，但还没有收到上报” | 节点上 `docker logs xray_edge_reporter`；HTTP 401 表示登记的 token 哈希与节点不一致，重新运行 `edge.yml`；`report.taoziyoyo.com` 返回 502 或 530 时按 [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md) §9 排查 |
+| `console.yml` 提示数据目录属主不是控制台 | 先运行 `subs.yml` |
+| 订阅地址返回 503 | 控制台两次发布之间的瞬间会出现一次；持续出现时看控制台首页的发布记录 |

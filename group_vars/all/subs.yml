@@ -1,6 +1,6 @@
 # S4 订阅服务（compose 项目，只部署在 subs_host）。
 # 实施合同：docs/reviews/subscription-service/plan-subscription-service-2026-09-15.md
-# 只被 subs.yml / subs-remove.yml 使用；monitor、generate_subs_gist.py 与旧订阅不读取任何 subs_* 变量。
+# 只被 subs.yml / subs-remove.yml 与 console.yml（写数据目录、读访问日志）使用；monitor、generate_subs_gist.py 与旧订阅不读取任何 subs_* 变量。
 
 subs_host: "spt"
 subs_root_dir: "/opt/reality-subs"
@@ -15,20 +15,9 @@ subs_cloudflared_image: "cloudflare/cloudflared:2026.9.1@sha256:b269e8abd07a5bf6
 # 用户页面中订阅地址的前缀。2026-09-16 操作者在 Cloudflare 为订阅隧道配置的公共主机名（指向 http://subs:8100）。
 subs_public_base_url: "https://sub.taoziyoyo.com"
 
-# 节点在订阅中的状态：legacy 输出旧链接，migrated 只输出 443 链接（§3.2）。未列出的节点为 legacy。
-# 向真实用户发放新地址之前，canary 节点可设为 migrated 供 test 验证；发放之后改动需逐台授权（§9）。
-subs_node_states:
-  dzire: migrated
-  usca: migrated
-  legend: migrated
-  kagoya: migrated
-
-# 本次发布的用户；每人需要 vault_subs_tokens 中的 token。真实用户的加入需另行授权（§9）。
-subs_enabled_users: ["test"]
-
-# 旧系统的每用户订阅文件（只读）与控制端私有构建目录（不在仓库内）。
-subs_legacy_dir: "/opt/reality/users"
-subs_build_dir: "{{ lookup('env', 'HOME') }}/.local/share/reality-ops/subs-build"
+# 订阅数据由管理控制台发布（D-C1、D-C2，2026-09-17）：用户与节点在控制台中管理，不再在此列出。
+# 控制端旧构建目录（subs.yml 汇总构建时使用），只用于清理。
+subs_legacy_build_dir: "{{ lookup('env', 'HOME') }}/.local/share/reality-ops/subs-build"
 subs_image_export_dir: "{{ lookup('env', 'HOME') }}/.local/share/reality-ops/subs-images"
 subs_repo_dir: "{{ playbook_dir }}"
 

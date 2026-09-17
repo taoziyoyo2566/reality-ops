@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}用户{% endblock %}
+{% block content %}
+<h1>用户</h1>
+<section>
+<table>
+<thead><tr>
+<th>用户</th><th>分组</th><th>可用的新节点</th><th>订阅</th><th>最后拉取</th><th class="num">本月流量 {{ month }}</th>
+</tr></thead>
+<tbody>
+{% for r in rows %}
+<tr>
+<td><a href="/users/{{ r.name }}">{{ r.name }}</a>{% if not r.profile %} <span class="bad">档案已不存在</span>{% endif %}</td>
+<td>{% for g in r.groups %}<span class="tag">{{ g }}</span>{% endfor %}</td>
+<td>{% if r.nodes %}{{ r.nodes | join(', ') }}{% else %}<span class="muted">—</span>{% endif %}</td>
+<td>{% if r.issued %}<span class="ok">已发放</span>{% else %}<span class="muted">未发放</span>{% endif %}</td>
+<td>{% if r.fetch %}{{ r.fetch.at | time }} <span class="muted">{{ r.fetch.fmt }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+<td class="num">{{ (r.traffic.up + r.traffic.down) | bytes }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</section>
+<p class="muted">用户档案来自仓库 <code>users/</code>，增删改用户在第一阶段仍用命令行完成；“可用的新节点”取自各节点最近一次部署的注册文件。</p>
+{% endblock %}

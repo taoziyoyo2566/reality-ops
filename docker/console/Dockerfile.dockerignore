@@ -1,0 +1,8 @@
+# 以仓库根目录为构建上下文时只放行镜像需要的文件，避免把用户档案、vault 或 venv 送入构建。
+*
+!docker/console/requirements.txt
+!subs/__init__.py
+!subs/catalog.py
+!subs/links.py
+!console/
+console/**/__pycache__

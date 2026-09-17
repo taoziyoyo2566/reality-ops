@@ -1,0 +1,133 @@
+---
+# 管理控制台 compose 项目：整个功能只占 console_root_dir（plan-console-phase1 §3.6）。
+# 前提：subs.yml 已把订阅服务数据目录交给控制台写入；各节点已由 edge.yml 登记到 console_registry_dir。
+- name: 只允许部署到 console_host，且控制台隧道 token 已设置
+  assert:
+    that:
+      - inventory_hostname == console_host
+      - vault_console_tunnel_token | default('') | length > 0
+    fail_msg: >-
+      控制台只部署到 console_host={{ console_host }}；vault_console_tunnel_token（控制台自己的隧道，
+      plan-console-phase1 §3.6）必须已写入 vault。
+
+- name: 创建控制台目录
+  file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ console_root_dir }}", owner: "0", group: "0", mode: "0755" }
+    - { path: "{{ console_root_dir }}/data", owner: "0", group: "{{ console_uid }}", mode: "0750" }
+    - { path: "{{ console_registry_dir }}", owner: "0", group: "{{ console_uid }}", mode: "0750" }
+    - { path: "{{ console_root_dir }}/db", owner: "{{ console_uid }}", group: "{{ console_uid }}", mode: "0700" }
+    - { path: "{{ console_root_dir }}/import", owner: "{{ console_uid }}", group: "{{ console_uid }}", mode: "0700" }
+    - { path: "{{ console_root_dir }}/secrets", owner: "0", group: "0", mode: "0700" }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: 读取订阅服务数据目录
+  stat:
+    path: "{{ subs_root_dir }}/data"
+  register: console_subs_data
+
+- name: 订阅服务数据目录必须已交给控制台写入（先运行 subs.yml）
+  assert:
+    that:
+      - console_subs_data.stat.exists
+      - console_subs_data.stat.uid == (console_uid | int)
+    fail_msg: "{{ subs_root_dir }}/data 的属主不是控制台（{{ console_uid }}）；请先运行 subs.yml。"
+
+- name: 控制台镜像
+  import_tasks: image.yml
+
+- name: 读取用户档案
+  delegate_to: localhost
+  become: false
+  find:
+    paths: "{{ console_repo_dir }}/users"
+    patterns: "*.yml,*.yaml"
+  register: console_user_files
+
+# 只导出非秘密字段；UUID 与节点凭据以各节点的注册文件为准。
+- name: 导出用户档案中的非秘密字段
+  vars:
+    profiles: "{{ query('file', *(console_user_files.files | map(attribute='path') | sort)) | map('from_yaml') | list }}"
+  copy:
+    dest: "{{ console_root_dir }}/data/users.json"
+    owner: "0"
+    group: "{{ console_uid }}"
+    mode: "0640"
+    content: >-
+      {{ {'users': profiles | map('dict2items')
+                            | map('selectattr', 'key', 'in', ['name', 'groups', 'hosts', 'deny_hosts'])
+                            | map('items2dict') | list} | to_nice_json(indent=1) }}
+  no_log: true
+  diff: false
+
+- name: 下发控制台隧道 token
+  copy:
+    content: "TUNNEL_TOKEN={{ vault_console_tunnel_token }}\n"
+    dest: "{{ console_root_dir }}/secrets/tunnel.env"
+    owner: "0"
+    group: "0"
+    mode: "0600"
+  no_log: true
+
+- name: 下发 compose 项目定义
+  template:
+    src: compose.yaml.j2
+    dest: "{{ console_root_dir }}/compose.yaml"
+    owner: "0"
+    group: "0"
+    mode: "0644"
+    validate: "docker compose -f %s config --quiet"
+
+- name: 运行控制台
+  community.docker.docker_compose_v2:
+    project_src: "{{ console_root_dir }}"
+    state: present
+    pull: missing
+    remove_orphans: true
+    wait: true
+    wait_timeout: 90
+
+# 只在控制台从未发放、从未显示过节点时生效（console.admin import-initial），使现有订阅地址与节点列表不变。
+- name: 首次导入已发放的 token 与显示中的节点
+  block:
+    - name: 写入导入文件（明文 token，导入后删除）
+      copy:
+        content: "{{ {'tokens': vault_subs_tokens | default({}), 'shown': console_initial_shown_nodes} | to_json }}"
+        dest: "{{ console_root_dir }}/import/initial.json"
+        owner: "{{ console_uid }}"
+        group: "{{ console_uid }}"
+        mode: "0600"
+      no_log: true
+
+    - name: 导入并发布
+      command: >-
+        docker compose -f {{ console_root_dir }}/compose.yaml run --rm -T --no-deps
+        web python -m console.admin import-initial /import/initial.json
+      register: console_import
+      changed_when: (console_import.stdout_lines | last | from_json).imported
+
+    - name: 导入结果
+      debug:
+        msg: "{{ console_import.stdout_lines | last | from_json }}"
+  always:
+    - name: 删除导入文件
+      file:
+        path: "{{ console_root_dir }}/import/initial.json"
+        state: absent
+
+- name: 核对两个服务健康（容器内请求 /healthz）
+  command: >-
+    docker compose -f {{ console_root_dir }}/compose.yaml exec -T {{ item.service }}
+    python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{{ item.port }}/healthz', timeout=5)"
+  loop:
+    - { service: web, port: "{{ console_web_port }}" }
+    - { service: report, port: "{{ console_report_port }}" }
+  loop_control:
+    label: "{{ item.service }}"
+  changed_when: false

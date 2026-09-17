@@ -1,0 +1,79 @@
+---
+# 控制台镜像：控制端构建，标签取构建输入的哈希；目标主机不是控制端时按镜像 ID 以 docker save/load 分发。
+- name: 按构建输入计算控制台镜像标签
+  set_fact:
+    console_image: >-
+      {{ console_repository }}:{{ ((
+           lookup('file', console_repo_dir ~ '/docker/console/Dockerfile')
+           ~ lookup('file', console_repo_dir ~ '/docker/console/Dockerfile.dockerignore')
+           ~ lookup('file', console_repo_dir ~ '/docker/console/requirements.txt')
+           ~ lookup('file', console_repo_dir ~ '/subs/__init__.py')
+           ~ lookup('file', console_repo_dir ~ '/subs/catalog.py')
+           ~ lookup('file', console_repo_dir ~ '/subs/links.py')
+           ~ (query('file', *(query('fileglob', console_repo_dir ~ '/console/*.py') | sort)) | join('\n'))
+           ~ (query('file', *(query('fileglob', console_repo_dir ~ '/console/templates/*.html') | sort)) | join('\n'))
+         ) | hash('sha256'))[:12] }}
+
+- name: 在控制端构建控制台镜像（该标签不存在时）
+  delegate_to: localhost
+  become: false
+  community.docker.docker_image_build:
+    name: "{{ console_image.split(':')[0] }}"
+    tag: "{{ console_image.split(':')[1] }}"
+    path: "{{ console_repo_dir }}"
+    dockerfile: docker/console/Dockerfile
+    rebuild: never
+
+- name: 读取控制端控制台镜像 ID
+  delegate_to: localhost
+  become: false
+  community.docker.docker_image_info:
+    name: "{{ console_image }}"
+  register: console_image_control
+
+- name: 读取目标主机上的控制台镜像
+  community.docker.docker_image_info:
+    name: "{{ console_image }}"
+  register: console_image_target
+
+- name: 分发控制台镜像
+  when: (console_image_target.images | default([]) | map(attribute='Id') | first | default('')) != console_image_control.images[0].Id
+  block:
+    - name: 创建控制端导出目录
+      delegate_to: localhost
+      become: false
+      file:
+        path: "{{ console_image_export_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: 在控制端导出控制台镜像
+      delegate_to: localhost
+      become: false
+      community.docker.docker_image_export:
+        names: ["{{ console_image }}"]
+        path: "{{ console_image_export_dir }}/{{ console_image | replace(':', '_') }}.tar"
+
+    - name: 复制控制台镜像到目标主机
+      copy:
+        src: "{{ console_image_export_dir }}/{{ console_image | replace(':', '_') }}.tar"
+        dest: "{{ console_root_dir }}/.image.tar"
+        owner: "0"
+        group: "0"
+        mode: "0600"
+
+    - name: 在目标主机载入控制台镜像
+      community.docker.docker_image_load:
+        path: "{{ console_root_dir }}/.image.tar"
+
+  always:
+    - name: 删除目标主机上的镜像文件
+      file:
+        path: "{{ console_root_dir }}/.image.tar"
+        state: absent
+
+- name: 核对目标主机控制台镜像 ID
+  community.docker.docker_image_info:
+    name: "{{ console_image }}"
+  register: console_image_check
+  failed_when: (console_image_check.images | default([]) | map(attribute='Id') | first | default('')) != console_image_control.images[0].Id

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>{% block title %}控制台{% endblock %} · Reality 控制台</title>
+<style>
+:root{--bg:#f6f6f4;--fg:#1c1c1a;--muted:#62625c;--card:#fff;--line:#dcdcd6;--accent:#1f5f8b;--warn:#9a4b00;--bad:#a3261f;--ok:#2f6f3e}
+@media (prefers-color-scheme:dark){:root{--bg:#151514;--fg:#ececE8;--muted:#a3a39c;--card:#1f1f1e;--line:#34342f;--accent:#7fb6dc;--warn:#e0a060;--bad:#f08a80;--ok:#8fcf9c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.55 system-ui,-apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif}
+header{border-bottom:1px solid var(--line);background:var(--card)}
+header .in,main{max-width:1080px;margin:0 auto;padding:0 16px}
+header .in{display:flex;gap:18px;align-items:center;height:48px;overflow-x:auto}
+header b{white-space:nowrap}
+nav a{color:var(--muted);text-decoration:none;margin-right:14px;white-space:nowrap}
+nav a.on{color:var(--fg);font-weight:600}
+main{padding-top:18px;padding-bottom:40px}
+h1{font-size:20px;margin:4px 0 14px}h2{font-size:16px;margin:0 0 10px}
+section{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:0 0 14px;overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top;white-space:nowrap}
+th{color:var(--muted);font-weight:500}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+a{color:var(--accent)}
+.muted{color:var(--muted)}.warn{color:var(--warn)}.bad{color:var(--bad)}.ok{color:var(--ok)}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:4px;padding:0 6px;margin-right:4px;font-size:12px;color:var(--muted)}
+.alerts li{margin:4px 0}
+.stats{display:flex;flex-wrap:wrap;gap:12px}
+.stat{min-width:150px;flex:1;border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--card)}
+.stat .v{font-size:22px;font-weight:600}
+form.inline{display:inline}
+button{font:inherit;padding:4px 12px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{color:var(--bad)}
+input[type=text]{font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+input.url{width:100%;font-family:ui-monospace,monospace;font-size:12px}
+.qr{background:#fff;display:inline-block;padding:6px;border-radius:6px;margin-top:10px}
+.bar{height:8px;background:var(--accent);border-radius:2px;min-width:1px}
+pre{white-space:pre-wrap;word-break:break-all;font-size:12px;margin:0}
+</style>
+</head>
+<body>
+<header><div class="in"><b>Reality 控制台</b>
+<nav>
+<a href="/" class="{{ 'on' if nav == 'home' }}">首页</a>
+<a href="/users" class="{{ 'on' if nav in ('users', 'user') }}">用户</a>
+<a href="/nodes" class="{{ 'on' if nav in ('nodes', 'node') }}">节点</a>
+<a href="/traffic" class="{{ 'on' if nav == 'traffic' }}">流量</a>
+<a href="/audit" class="{{ 'on' if nav == 'audit' }}">记录</a>
+</nav></div></header>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

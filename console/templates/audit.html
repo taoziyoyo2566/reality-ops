@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}记录{% endblock %}
+{% block content %}
+<h1>记录</h1>
+<section>
+<h2>管理员操作</h2>
+{% if entries %}
+<table>
+<thead><tr><th>时间</th><th>操作</th><th>对象</th><th>结果</th></tr></thead>
+<tbody>
+{% for e in entries %}
+<tr><td>{{ e.at | time }}</td><td>{{ e.action }}</td><td>{{ e.target }}</td><td style="white-space:normal">{{ e.detail }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}<p class="muted">没有记录。</p>{% endif %}
+</section>
+<section>
+<h2>订阅发布</h2>
+{% if publishes %}
+<table>
+<thead><tr><th>时间</th><th>结果</th><th>说明</th></tr></thead>
+<tbody>
+{% for p in publishes %}
+<tr><td>{{ p.at | time }}</td><td>{% if p.ok %}<span class="ok">成功</span>{% else %}<span class="bad">失败</span>{% endif %}</td><td style="white-space:normal">{{ p.detail }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}<p class="muted">没有记录。</p>{% endif %}
+</section>
+{% endblock %}

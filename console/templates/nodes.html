@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}节点{% endblock %}
+{% block content %}
+<h1>节点</h1>
+<section>
+<table>
+<thead><tr>
+<th>节点</th><th>订阅中</th><th>上报</th><th>最后上报</th><th>443</th><th class="num">用户数</th><th class="num">今日</th><th class="num">本月</th>
+</tr></thead>
+<tbody>
+{% for r in rows %}
+<tr>
+<td>{% if r.node %}<a href="/nodes/{{ r.name }}">{{ r.name }}</a> <span class="muted">{{ r.node.label if r.node.label != r.name }}</span>{% else %}{{ r.name }} <span class="bad">无注册文件</span>{% endif %}</td>
+<td>{% if r.shown %}<span class="ok">显示</span>{% else %}<span class="muted">隐藏</span>{% endif %}</td>
+<td>{% if not r.node or not r.node.report_enabled %}<span class="muted">未开启</span>{% elif r.online %}<span class="ok">在线</span>{% elif r.status %}<span class="bad">离线</span>{% else %}<span class="warn">未收到</span>{% endif %}</td>
+<td>{% if r.status %}{{ r.status.received_at | time }}{% else %}<span class="muted">—</span>{% endif %}</td>
+<td>{% if r.status %}{% if r.status.report.listening %}<span class="ok">监听</span>{% else %}<span class="bad">未监听</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+<td class="num">{{ r.node.users | length if r.node else '—' }}</td>
+<td class="num">{{ (r.today.up + r.today.down) | bytes }}</td>
+<td class="num">{{ (r.month.up + r.month.down) | bytes }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</section>
+{% if problems %}
+<section><h2>无法读取的注册文件</h2><ul>{% for p in problems %}<li class="bad">{{ p }}</li>{% endfor %}</ul></section>
+{% endif %}
+<p class="muted">节点由 <code>edge.yml</code> 部署时登记；部署、升级、增删节点在第一阶段仍用命令行完成。用户数取自注册文件（部署时已由应用器核对）。</p>
+{% endblock %}

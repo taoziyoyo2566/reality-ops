@@ -2,3 +2,4 @@
 *
 !roles/xray_edge/files/xray_edge_apply.py
 !docker/edge-tools/logrotate-loop.sh
+!docker/edge-tools/edge_reporter.py

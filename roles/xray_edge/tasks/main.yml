@@ -18,7 +18,9 @@
 - name: 计算新实例用户与 SOCKS5（只依赖控制端数据）
   import_tasks: desired.yml
 
-- name: 读取旧实例的用户集合（只输出用户名，不输出配置）
+# 新旧实例的用户集合只做比较提示，不中止部署（D-C5，plan-single-instance-443 §10 2026-09-17）：
+# 新系统独立运行，旧实例的用户变更由管理员另行对旧节点运行 deploy.yml。
+- name: 读取旧实例的用户集合（只读，只输出用户名，不输出配置）
   shell: |
     set -euo pipefail
     if [ '{{ reality_mode | default("single") }}' = multi ]; then
@@ -33,20 +35,21 @@
     executable: /bin/bash
   register: edge_old_users
   changed_when: false
+  # 节点没有旧实例时读取会失败，只影响下面的提示。
+  failed_when: false
   when: not (edge_skip_drift_check | bool)
 
-- name: 新实例用户集合必须与旧实例一致（不计额外用户与已登记的旧实例独有用户）
+- name: 提示新旧实例的用户差异（不计额外用户）
   vars:
-    old_names: "{{ edge_old_users.stdout | from_json | sort }}"
+    old_ok: "{{ (edge_old_users.rc | default(1)) == 0 }}"
+    old_names: "{{ (edge_old_users.stdout | from_json | sort) if old_ok else [] }}"
     new_names: "{{ reality_instances | map(attribute='name') | sort }}"
-  assert:
-    that:
-      - old_names | difference(edge_drift_old_only_users) | sort == new_names
-      - edge_drift_old_only_users | intersect(new_names) | length == 0
-    fail_msg: >-
-      新旧实例授权范围不一致，停止部署。仅旧实例有：{{ old_names | difference(new_names) }}；
-      仅新实例有：{{ new_names | difference(old_names) }}；已登记的旧实例独有用户：{{ edge_drift_old_only_users }}。
-      先确认用户档案是否已部署到旧实例。
+  debug:
+    msg: >-
+      {% if not old_ok %}未读取到旧实例用户（rc={{ edge_old_users.rc | default('?') }}），不做比较。
+      {% elif old_names == new_names %}新旧实例用户一致。
+      {% else %}新旧实例用户不同（只提示，不中止）。仅旧实例有：{{ old_names | difference(new_names) }}；
+      仅新实例有：{{ new_names | difference(old_names) }}。旧实例需要同步时，对该节点另行运行 deploy.yml。{% endif %}
   when: not (edge_skip_drift_check | bool)
 
 - name: 创建新实例目录
@@ -64,6 +67,7 @@
     - { path: "{{ edge_root_dir }}/logs", owner: "10000", group: "10000", mode: "0750" }
     - { path: "{{ edge_root_dir }}/rotate", owner: "0", group: "0", mode: "0755" }
     - { path: "{{ edge_root_dir }}/rotate/state", owner: "10000", group: "10000", mode: "0700" }
+    - { path: "{{ edge_root_dir }}/spool", owner: "10000", group: "10000", mode: "0700" }
   loop_control:
     label: "{{ item.path }}"
 
@@ -113,6 +117,7 @@
   command: >-
     docker compose -f {{ edge_root_dir }}/compose.yaml run --rm -T --pull never applier apply
     --root {{ edge_root_dir }} --container {{ edge_container_name }} --image {{ edge_xray_image }}
+    {{ '--rotate-report-token' if (edge_rotate_report_token | bool) else '' }}
   register: edge_apply
   changed_when: (edge_apply.stdout_lines | last | default('{}') | from_json).changed | default(false)
   failed_when: edge_apply.rc != 0
@@ -130,12 +135,20 @@
     - edge_existing.exists
     - (edge_existing.container.Config.Labels | default({}, true)).get('com.docker.compose.project') != edge_compose_project
 
-- name: 运行 compose 项目（xray 与 logrotate）
+- name: 运行 compose 项目（xray、logrotate 与开启时的 reporter）
   community.docker.docker_compose_v2:
     project_src: "{{ edge_root_dir }}"
     state: present
     pull: never
     remove_orphans: true
+  register: edge_compose
+
+# reporter 与 xray 共用网络命名空间；应用器重启 xray 后命名空间被替换，重启 reporter 使其加入新的命名空间。
+- name: xray 重启后重启 reporter
+  command: docker restart {{ edge_container_name }}_reporter
+  when:
+    - edge_report_enabled | bool
+    - (edge_apply.stdout_lines | last | default('{}') | from_json).action | default('none') in ['restart']
 
 - name: 核对运行中的用户与期望状态一致
   command: >-
@@ -144,9 +157,44 @@
   register: edge_verify
   changed_when: false
 
-- name: 记录节点公钥（非秘密，用于订阅）
+- name: 记录节点公钥与上报 token 哈希（均非秘密）
   set_fact:
     edge_public_key: "{{ (edge_verify.stdout_lines | last | from_json).public_key }}"
+    edge_report_token_sha256: "{{ (edge_verify.stdout_lines | last | from_json).report_token_sha256 }}"
+
+# 注册文件是控制台中节点与订阅数据的唯一来源（plan-console-phase1 §3.3）；含节点上用户的 UUID 与 XHTTP path。
+- name: 创建控制台注册目录
+  delegate_to: "{{ console_host }}"
+  file:
+    path: "{{ console_registry_dir }}"
+    state: directory
+    owner: "0"
+    group: "{{ console_uid }}"
+    mode: "0750"
+
+- name: 向管理控制台登记本节点
+  delegate_to: "{{ console_host }}"
+  copy:
+    dest: "{{ console_registry_dir }}/{{ inventory_hostname }}.json"
+    owner: "0"
+    group: "{{ console_uid }}"
+    mode: "0640"
+    content: >-
+      {{ {
+           'schema': 1,
+           'node': inventory_hostname,
+           'label': node_alias,
+           'endpoint': node_endpoint,
+           'port': edge_listen_port | int,
+           'sni': reality_server_names[0],
+           'public_key': edge_public_key,
+           'xhttp': {'enabled': edge_xhttp_enabled | bool, 'path': edge_xhttp_path, 'mode': edge_xhttp_mode},
+           'users': edge_users | sort(attribute='name'),
+           'report': {'enabled': edge_report_enabled | bool, 'token_sha256': edge_report_token_sha256},
+           'image': edge_xray_image
+         } | to_nice_json(indent=1) }}
+  no_log: true
+  diff: false
 
 - name: 清理 S3 形态的宿主机残留
   import_tasks: migrate_s3.yml

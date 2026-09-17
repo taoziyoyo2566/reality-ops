@@ -8,9 +8,11 @@ core, with the desired state fetched instead of pushed.
 """
 import argparse
 import copy
+import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -25,6 +27,8 @@ USER_INBOUND_TAGS = (REALITY_TAG, XHTTP_TAG)
 XHTTP_SOCKET = "@xray-edge-xhttp"
 API_LISTEN = "127.0.0.1"
 API_PORT = 10085
+# Read-only stats endpoint for the reporter (plan-console-phase1 §3.4); never published to the host.
+METRICS_LISTEN = "127.0.0.1:10086"
 CONTAINER_GID = 10000
 CONTAINER_UID = 10000
 
@@ -119,6 +123,10 @@ def validate(desired):
         _require(any(conditions), f"socks5 {pname} has no route condition")
         _require(profile.get("network", "") in SOCKS_NETWORKS, f"socks5 {pname} has an invalid network")
 
+    metrics = desired.get("metrics", {})
+    _require(isinstance(metrics, dict) and isinstance(metrics.get("enabled", False), bool),
+             "metrics.enabled must be a boolean")
+
     egress = desired.get("egress", {})
     _require(isinstance(egress, dict) and isinstance(egress.get("happy_eyeballs", False), bool),
              "egress.happy_eyeballs must be a boolean")
@@ -165,6 +173,8 @@ def render(desired, private_key):
             },
         },
     }
+    if (desired.get("metrics") or {}).get("enabled"):
+        base["metrics"] = {"listen": METRICS_LISTEN}
 
     reality_settings = {"decryption": "none", "clients": [
         {"id": u["uuid"], "email": _email(u, node), "flow": "xtls-rprx-vision", "level": 0} for u in users
@@ -343,6 +353,7 @@ class Node:
         self.conf = os.path.join(root, "conf.d")
         self.last_good = os.path.join(root, "last-good")
         self.keys = os.path.join(root, "keys")
+        self.secrets = os.path.join(root, "secrets")
         if not test_perms and os.geteuid() != 0:
             raise ApplyError("must run as root (use --test-perms only for local tests)")
 
@@ -382,6 +393,25 @@ class Node:
         self._secure_file(tmp, container_readable=False)
         os.replace(tmp, path)
         return private.group(1), public.group(1)
+
+    def report_token_digest(self, rotate=False, create=True):
+        """SHA-256 of the node's report token; the token itself never leaves this file.
+
+        apply creates the token when missing (or replaces it when rotating); verify only reads it.
+        """
+        path = os.path.join(self.secrets, "report-token")
+        if not create and not os.path.exists(path):
+            return None
+        self._secure_dir(self.secrets, container_readable=True)
+        if rotate or not os.path.exists(path):
+            fd, tmp = tempfile.mkstemp(dir=self.secrets)
+            with os.fdopen(fd, "w") as fh:
+                fh.write(secrets.token_urlsafe(32) + "\n")
+            self._secure_file(tmp, container_readable=True)
+            os.replace(tmp, path)
+        with open(path) as fh:
+            token = fh.read().strip()
+        return hashlib.sha256(token.encode("ascii")).hexdigest()
 
     # -- files -------------------------------------------------------------
     def read_live(self):
@@ -500,10 +530,12 @@ def cmd_apply(args):
     node = Node(args.root, args.container, args.image, args.test_perms)
     desired = load_desired(args.desired)
     private_key, public_key = node.keypair()
+    report_digest = node.report_token_digest(rotate=args.rotate_report_token)
     rendered = render(desired, private_key)
     live = node.read_live()
     action = classify(live, rendered)
-    result = {"changed": action != "none", "action": action, "public_key": public_key,
+    result = {"changed": action != "none" or args.rotate_report_token, "action": action, "public_key": public_key,
+              "report_token_sha256": report_digest,
               "users": len(desired["users"]), "xhttp": desired["xhttp"]["enabled"]}
     if action == "none":
         return result
@@ -543,7 +575,7 @@ def cmd_verify(args):
     private_key, public_key = node.keypair()
     status = verify(node, render(desired, private_key))
     return {"changed": False, "running": status["running"], "restarts": status["restarts"],
-            "public_key": public_key}
+            "public_key": public_key, "report_token_sha256": node.report_token_digest(create=False)}
 
 
 def main(argv=None):
@@ -553,6 +585,8 @@ def main(argv=None):
     parser.add_argument("--desired", default=None)
     parser.add_argument("--container", default="xray_edge")
     parser.add_argument("--image", required=True)
+    parser.add_argument("--rotate-report-token", action="store_true",
+                        help="apply only: replace the node's report token (re-run edge.yml so the console learns the new hash)")
     parser.add_argument("--test-perms", action="store_true",
                         help="local tests only: world-readable conf.d instead of root:10000 ownership")
     args = parser.parse_args(argv)

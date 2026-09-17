@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ name }}{% endblock %}
+{% block content %}
+<h1>节点 {{ name }} <span class="muted">{{ node.label if node.label != name }}</span></h1>
+
+<section>
+<h2>订阅</h2>
+<p>当前：{% if shown %}<span class="ok">在订阅中显示</span>{% else %}<span class="muted">不在订阅中</span>{% endif %}</p>
+<form method="post" action="/nodes/{{ name }}/show" class="inline">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="shown" value="{{ '0' if shown else '1' }}">
+<button class="{{ '' if shown else 'primary' }}">{{ '从订阅中隐藏' if shown else '在订阅中显示' }}</button>
+</form>
+<span class="muted">切换后立即重新发布；用户刷新订阅后生效。</span>
+</section>
+
+<section>
+<h2>部署信息</h2>
+<table>
+<tr><th>地址</th><td>{{ node.endpoint }}:{{ node.port }}</td></tr>
+<tr><th>SNI</th><td>{{ node.sni }}</td></tr>
+<tr><th>XHTTP</th><td>{{ '开启' if node.xhttp.enabled else '未开启' }}</td></tr>
+<tr><th>镜像</th><td><code>{{ node.image }}</code></td></tr>
+<tr><th>用户数</th><td>{{ node.users | length }}</td></tr>
+<tr><th>注册文件更新</th><td>{{ node.mtime | int | time }}</td></tr>
+<tr><th>上报</th><td>{{ '已开启' if node.report_enabled else '未开启' }}</td></tr>
+</table>
+</section>
+
+<section>
+<h2>运行状态</h2>
+{% if status %}
+<table>
+<tr><th>最后上报</th><td>{{ status.received_at | time }}
+  {% if now - status.received_at > offline_minutes * 60 %}<span class="bad">（已超过 {{ offline_minutes }} 分钟）</span>{% endif %}</td></tr>
+<tr><th>443</th><td>{% if status.report.listening %}<span class="ok">监听中</span>{% else %}<span class="bad">未监听</span>{% endif %}</td></tr>
+<tr><th>最近一次 Xray 重启</th><td>{{ status.xray_restart_at | time }} <span class="muted">（由流量计数归零推断）</span></td></tr>
+<tr><th>丢弃的上报</th><td>{{ status.report.dropped_reports }}</td></tr>
+</table>
+<h2 style="margin-top:12px">错误日志末尾</h2>
+{% if status.report.error_tail %}<pre>{{ status.report.error_tail | join('\n') }}</pre>{% else %}<p class="muted">空</p>{% endif %}
+{% else %}
+<p class="muted">还没有收到该节点的上报。</p>
+{% endif %}
+</section>
+
+<section>
+<h2>本月各用户流量 {{ month }}</h2>
+{% if per_user %}
+<table>
+<thead><tr><th>用户</th><th class="num">上行</th><th class="num">下行</th></tr></thead>
+<tbody>
+{% for u, up, down in per_user %}
+<tr><td><a href="/users/{{ u }}">{{ u }}</a></td><td class="num">{{ up | bytes }}</td><td class="num">{{ down | bytes }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="muted">没有流量记录。</p>
+{% endif %}
+</section>
+
+<section>
+<h2>近 31 天流量</h2>
+{% include "_daily.html" %}
+</section>
+{% endblock %}

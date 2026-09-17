@@ -155,6 +155,13 @@ class RenderTest(unittest.TestCase):
         with self.assertRaises(edge.ApplyError):
             edge.render(desired(egress={"happy_eyeballs": "yes"}), PRIVATE_KEY)
 
+    def test_metrics_listener_is_opt_in(self):
+        self.assertNotIn("metrics", edge.render(desired(), PRIVATE_KEY)["00-base.json"])
+        base = edge.render(desired(metrics={"enabled": True}), PRIVATE_KEY)["00-base.json"]
+        self.assertEqual(base["metrics"], {"listen": "127.0.0.1:10086"})
+        with self.assertRaises(edge.ApplyError):
+            edge.render(desired(metrics={"enabled": "yes"}), PRIVATE_KEY)
+
     def test_render_is_order_independent(self):
         state = desired()
         reordered = copy.deepcopy(state)
@@ -205,12 +212,30 @@ class ClassifyTest(unittest.TestCase):
                          {"reality": {"target": "www.example.net:443", "server_names": ["www.example.net"]}},
                          {"xhttp": {"enabled": True, "path": "/p", "mode": "auto"}},
                          {"log": {"level": "info"}},
-                         {"egress": {"happy_eyeballs": True}}):
+                         {"egress": {"happy_eyeballs": True}},
+                         {"metrics": {"enabled": True}}):
             with self.subTest(override=override):
                 self.assertEqual(edge.classify(self.live, edge.render(desired(**override), PRIVATE_KEY)), "restart")
 
     def test_key_rotation_restarts(self):
         self.assertEqual(edge.classify(self.live, edge.render(desired(), "OTHER-PLACEHOLDER")), "restart")
+
+
+class ReportTokenTest(unittest.TestCase):
+    def test_token_is_created_once_rotated_on_request_and_only_read_by_verify(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            node = edge.Node(root, "unused", "unused", test_perms=True)
+            self.assertIsNone(node.report_token_digest(create=False))
+            first = node.report_token_digest()
+            self.assertRegex(first, r"^[0-9a-f]{64}$")
+            self.assertEqual(node.report_token_digest(create=False), first)
+            self.assertEqual(node.report_token_digest(), first)
+            rotated = node.report_token_digest(rotate=True)
+            self.assertNotEqual(rotated, first)
+            token = open(os.path.join(root, "secrets", "report-token")).read().strip()
+            self.assertRegex(token, r"^[A-Za-z0-9_-]{43}$")
+            self.assertNotIn(token, rotated)
 
 
 class GoldenTest(unittest.TestCase):

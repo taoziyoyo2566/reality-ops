@@ -1,0 +1,13 @@
+---
+# 管理控制台第一阶段：部署 compose 项目到 console_host。
+#   ./monitor_venv/bin/ansible-playbook -i inventory.ini console.yml -K --vault-password-file ~/.vault_pass
+# 合同：docs/reviews/console/plan-console-phase1-2026-09-16.md
+# 顺序：各节点先用 edge.yml 登记（注册文件），再运行 subs.yml（把订阅数据目录交给控制台），最后运行本 playbook。
+# 管理页面只在宿主机 127.0.0.1:8200，经 ssh -L 8200:127.0.0.1:8200 <控制台主机> 访问。
+
+# hosts 须与 group_vars/all/console.yml 的 console_host 一致（play 目标解析时读不到 group_vars）；角色内 assert 核对。
+- hosts: spt
+  gather_facts: false
+  become: true
+  roles:
+    - console_service

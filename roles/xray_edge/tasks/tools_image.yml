@@ -9,6 +9,7 @@
            lookup('file', edge_repo_dir ~ '/docker/edge-tools/Dockerfile')
            ~ lookup('file', edge_repo_dir ~ '/docker/edge-tools/Dockerfile.dockerignore')
            ~ lookup('file', edge_repo_dir ~ '/docker/edge-tools/logrotate-loop.sh')
+           ~ lookup('file', edge_repo_dir ~ '/docker/edge-tools/edge_reporter.py')
            ~ lookup('file', edge_repo_dir ~ '/roles/xray_edge/files/xray_edge_apply.py')
          ) | hash('sha256'))[:12] }}
 

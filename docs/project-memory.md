@@ -19,7 +19,7 @@ tag contract. The contract and upgrade procedure live in
   digest (candidate `v26.3.27` =
   `sha256:fd502666d1a9ca7ea772e2c1638bb83e79bdc12c97cddd5e3755edc7485b3ec7`).
 - `[实测]` 2026-09-15 00:00 JST read-only snapshot of the 12 reachable inventory
-  nodes (`ali` refused SSH authentication): every `reality_*` container reports
+  nodes: every `reality_*` container reports
   Xray `26.3.27` with restart count 0. Ten nodes run the `fd502666` image;
   `spt` and `kagoya` run the older `b891c9781882` build (image created
   2026-08-27). On `spt` the local `latest` tag already points at `fd502666`, but
@@ -45,7 +45,7 @@ Publisher-side history is retained in
 [`phase1-image-release-2026-08-26.md`](reviews/roadmap-xray-xhttp-ipv6/phase1-image-release-2026-08-26.md)
 and in this file's git history; current publisher state is authoritative in the
 new repository. Planning lives in
-[`roadmap-unified-2026-08-27.md`](reviews/roadmap-unified-2026-08-27.md).
+[`roadmap-unified-2026-09-16.md`](reviews/roadmap-unified-2026-09-16.md) (supersedes the 2026-08-27 version).
 
 ## xray_edge Canary State
 
@@ -118,7 +118,7 @@ Live truth is the node; re-check with the commands below instead of trusting thi
   stream-one/stream-up/packet-up. v2rayN 7.24.9 parses `type=xhttp` links; Shadowrocket
   2.2.92 lists XHTTP support since 2.2.67 but not REALITY with XHTTP explicitly, so it needs
   a device test.
-- `[实测]` 2026-09-15 host DNS survey (12 reachable nodes, `ali` not reachable): only dzire
+- `[实测]` 2026-09-15 host DNS survey (12 reachable nodes): only dzire
   has a lossy resolver. netcup, legend, jp10 and kagoya use Tailscale `100.100.100.100`,
   which is also reachable from their `reality_core` container network.
 - Roadmap U5 feasibility (client-side IP leak protection, roadmap §7.2): STUN through
@@ -255,7 +255,7 @@ ssh dzire "sudo docker compose -f /opt/xray-edge/compose.yaml ps; sudo docker co
   kagoya 563 MB. Disk: **jp05 root 96% with 89 MB free, too little for the tools image**; hk02 13%
   free of 41 G; others fine. Docker daemon IPv6 (`fixed-cidr-v6`) is set on kagoya, hk01, hk02,
   jp10 and netcup, absent on ams, dcc, jp05 and spt, so those four have no IPv6 egress inside
-  containers. `ali` still refuses SSH.
+  containers.
 - `[实测]` 2026-09-16 08:05 JST `kagoya` got its first `xray_edge` (compose form, `edge.yml --limit
   kagoya`, rc 0, changed 13). The operator stopped authentik's Caddy first (`docker compose stop
   caddy`, restart policy `unless-stopped`, so it stays stopped across reboots), which freed 443 and
@@ -266,8 +266,6 @@ ssh dzire "sudo docker compose -f /opt/xray-edge/compose.yaml ps; sudo docker co
   forced IPv4, egress is kagoya's own IPv4, and the TLS fallback returns `edge01.yahoo.co.jp`.
   After the operator added an AAAA record the same link works over IPv6 with no node-side change:
   forced IPv6 returns 200, egress IPv6 equals the node's address, IPv6 fallback probe correct.
-  `[缺口]` authentik is down on 443/80 until it moves behind a Cloudflare tunnel; the runbook is
-  [`kagoya-authentik-cloudflare-tunnel`](runbooks/kagoya-authentik-cloudflare-tunnel.md), not yet executed.
 - `[实测]` 2026-09-16 08:33 JST forced one rotation on all four nodes
   (`docker compose exec logrotate logrotate -f ...`, operator authorized): each produced
   `access.log.1.gz` and `error.log.1.gz`, truncated `access.log` to 0 (dzire 712 B, usca 752 KB,
@@ -322,6 +320,13 @@ ssh dzire "sudo docker compose -f /opt/xray-edge/compose.yaml ps; sudo docker co
     IP (China direct rule, expected); after switching the client to global mode only dzire's IP was shown
     and the IPv6 check failed, matching dzire's lack of IPv6 egress (no real IPv6 exposed). Client and
     WebRTC/DNS items were not reported.
+  - `[操作者实测]` 2026-09-17: with the client (Shadowrocket) in global mode, the WebRTC check on ip125.com listed the
+    device's real public IP instead of the node's, with both the Vision and the XHTTP link. On usca the access log has no
+    UDP entries during the test (the last ones that day were NTP and DNS earlier, via `vless-xhttp`), so the STUN traffic
+    left the device outside the proxy. This contradicts the 2026-09-15 XHTTP result on dzire, which is not to be relied on.
+    Every WebRTC row showed the device's real IPv4 address, so IPv4 STUN traffic went out directly; the client's reason
+    is not identified. Deferred (operator, 2026-09-17): investigate first and choose a stable, reliable approach before
+    deciding how to implement it (roadmap U5, §7.2); it must not switch off WebRTC or other device functions.
   - Not yet done: device checks of legend and of an XHTTP node, Clash import of both modes, the
     privacy-mode ipleak check (IPv4, IPv6, WebRTC, DNS), real-user tokens and notification.
 
@@ -344,7 +349,7 @@ Contract: [`plan-subscription-service`](reviews/subscription-service/plan-subscr
   (the ACL decides; files it does not allow are left out and listed under `ignored`; a node the ACL
   allows without a legacy file still stops the build) was chosen on that wrong premise; the rule is
   kept because it removes nothing the ACL allows. Any local harness for these plays must run from
-  the repository root or set `playbook_dir`-independent paths. The old files have no entries for `ali`.
+  the repository root or set `playbook_dir`-independent paths.
 - The user page also explains that websites compare the device's system time zone with the exit
   IP's region (2026-09-16 operator request): prefer a node in a nearby time zone for accounts that
   matter, split mode is unaffected because domestic sites stay direct, and changing the device
@@ -354,6 +359,55 @@ Contract: [`plan-subscription-service`](reviews/subscription-service/plan-subscr
   domestic DoH (`223.5.5.5`, `119.29.29.29`) so that a node can be reached before the tunnel is
   up; the split profile makes Mihomo download GeoIP/GeoSite (about 21 MB) from its default
   jsdelivr URLs on first load, which may fail on some networks in China.
+
+## Management Console (P1) State
+
+Contract: [`plan-console-phase1`](reviews/console/plan-console-phase1-2026-09-16.md) (APPROVED 2026-09-17,
+D-C1 to D-C5). Roadmap position: P1 in [`roadmap-unified-2026-09-16.md`](reviews/roadmap-unified-2026-09-16.md) §7.0.
+
+- `[代码]` 2026-09-17 implemented in the working tree, **not deployed and not committed**: `console/` (FastAPI web and
+  report services, SQLite), `docker/console/`, `roles/console_service`, `console.yml`, `console-remove.yml`,
+  `group_vars/all/console.yml`; node side `docker/edge-tools/edge_reporter.py`, applier metrics listener and report
+  token, `reporter` compose service (off unless the node is in `edge_report_nodes`), node registration files written
+  by `edge.yml`; `subs.yml` now only deploys the subscription service, whose `data/` is handed to the console.
+  D-C5 (old/new user comparison only warns; `edge_drift_old_only_users` removed) is in the same working tree.
+- `[实测]` 2026-09-17 local verification: `tests/edge` render and reporter unit tests 33/33, `tests/edge/test_compose.py`
+  7/7, `tests/console/test_compose.py` 7/7, `tests/console/test_console.py` 19/19 (also inside the console image),
+  `tests/subs/test_subs.py` inside the subs image OK, `tests/test_socks5_gate.py` 7/7,
+  `tests/edge/e2e_local.py` 42/42 with the new tools image, `tests/console/e2e_local.py` 29/29 (real Xray node with
+  reporter, console web and report, subscription service, real client: issue, fetch, connect, traffic reported,
+  Xray restart with reporter self-restart and restart detection, report token rotation with the old token refused,
+  hide/show, rotate and revoke, no tokens in logs). Memory: web and report about 17-39 MiB each, reporter 7-15 MiB.
+  The registration and user-export templates were rendered with synthetic data and parsed by the console; the
+  export carries only `name`, `groups`, `hosts`, `deny_hosts`.
+- `[实测]` Xray v26.3.27 `/debug/vars` gives per-user cumulative counters (read only). A restart is detected from
+  Xray's `core: Xray ... started` line in `error.log` as well as from falling counters; the first e2e run showed that
+  counters alone miss a restart when new traffic exceeds the old totals.
+- `[上游]`+`[实测]` 2026-09-17: the v26.3.27 API listener is TCP only (`app/commander/commander.go`
+  `net.Listen("tcp", ...)`), and a dokodemo API inbound on a Unix socket did not come up locally, so the reporter can
+  still reach `127.0.0.1:10085` inside the shared network namespace. Accepted as a code-level constraint (plan §7).
+- `[实测]` 2026-09-17 22:40-22:52 JST deployed from the working tree (base `ops@2d55b3c`, not yet committed):
+  `edge.yml` on dzire, usca, legend and kagoya wrote their registration files (`/opt/reality-console/registry`);
+  `subs.yml` handed `/opt/reality-subs/data` to the console (`10002:10001`, setgid) and `db/` to its group, without
+  restarting the subscription service; `console.yml` started `reality_console_web` and `reality_console_report`
+  (healthy) and `reality_console_cloudflared`. The first import took the `test` token and showed the four nodes;
+  both publishes succeeded (4 nodes, 1 user); the `test` subscription fetched through `sub.taoziyoyo.com` has 6 links
+  (dzire and usca with XHTTP, legend, kagoya). `report.taoziyoyo.com`: `/healthz` 200, `/users` 404, `POST /report`
+  without a token 401.
+- `[实测]` 2026-09-17 23:05-23:35 JST node reporting enabled on dzire, then usca, legend and kagoya
+  (`edge_report_nodes`; each Xray restarted once for the metrics listener, `xray_edge` containers not recreated).
+  The reporter sends its own User-Agent because Cloudflare answers Python's default one with 403 (error 1010).
+  All four report every 5 minutes with 443 listening and no console alerts; `test` traffic from device use appears per
+  node.
+- `[实测]` 2026-09-18 00:14-00:38 JST drills: with `reality_console_report` stopped for 18 minutes the home page listed all
+  four nodes as not reporting; after the restart each node's spooled reports arrived within one cycle (sequence numbers
+  contiguous, one reporter instance per node, nothing dropped), traffic totals did not double-count and the alerts
+  cleared. Hiding `legend` in the console removed it from the `test` subscription on the device and showing it again
+  brought it back (5 then 6 links).
+  Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
+- Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while
+  `edge_report_nodes` is empty) → `subs.yml` → `console.yml` → add nodes to `edge_report_nodes` one at a time.
+  See `docs/operations.md` §14.
 
 ## Production State
 
@@ -390,7 +444,7 @@ Important details:
 
 ## Node Naming State
 
-Last updated: 2026-09-14 JST. Source: `inventory.ini` after `ops@91e171d` and the
+Last updated: 2026-09-17 JST. Source: `inventory.ini` after `ops@91e171d` and the
 test node retirement below, `host_vars/`, and local SSH config resolved
 with `ssh -G`. `inventory.ini` is authoritative; re-read it instead of trusting
 this list.
@@ -398,12 +452,11 @@ this list.
 `[reality_nodes]` hosts:
 
 ```text
-dzire, netcup, ams, dcc, legend, jp05, hk01, hk02, jp10, kagoya, usca, spt, ali
+dzire, netcup, ams, dcc, legend, jp05, hk01, hk02, jp10, kagoya, usca, spt
 ```
 
 Tier groups: `[free]` dzire, usca, netcup; `[basic]` jp05, legend, kagoya;
-`[normal]` jp10, hk01; `[premium]` ams, dcc, hk02. Feature groups: `[special]` spt;
-`[china]` ali.
+`[normal]` jp10, hk01; `[premium]` ams, dcc, hk02. Feature groups: `[special]` spt.
 
 Name changes since the previous record:
 

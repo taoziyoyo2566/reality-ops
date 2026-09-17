@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}流量{% endblock %}
+{% block content %}
+<h1>流量 {{ month }}</h1>
+<form method="get" action="/traffic">
+<label>月份
+<select name="month">
+{% for m in months %}<option value="{{ m }}" {{ 'selected' if m == month }}>{{ m }}</option>{% endfor %}
+</select></label>
+<button>查看</button>
+</form>
+
+<div class="stats" style="margin:14px 0">
+{% for node, t in by_node | dictsort %}
+<div class="stat"><div class="muted">{{ node }}</div><div class="v">{{ (t.up + t.down) | bytes }}</div></div>
+{% endfor %}
+</div>
+
+<section>
+<h2>按用户</h2>
+{% if by_user %}
+<table>
+<thead><tr><th>用户</th><th class="num">上行</th><th class="num">下行</th><th class="num">合计</th></tr></thead>
+<tbody>
+{% for u, t in by_user | dictsort %}
+<tr><td><a href="/users/{{ u }}">{{ u }}</a></td><td class="num">{{ t.up | bytes }}</td><td class="num">{{ t.down | bytes }}</td><td class="num">{{ (t.up + t.down) | bytes }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}<p class="muted">没有流量记录。</p>{% endif %}
+</section>
+
+<section>
+<h2>按用户和节点</h2>
+{% if matrix %}
+<table>
+<thead><tr><th>用户</th><th>节点</th><th class="num">上行</th><th class="num">下行</th></tr></thead>
+<tbody>
+{% for u, n, up, down in matrix %}
+<tr><td>{{ u }}</td><td><a href="/nodes/{{ n }}">{{ n }}</a></td><td class="num">{{ up | bytes }}</td><td class="num">{{ down | bytes }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}<p class="muted">没有流量记录。</p>{% endif %}
+</section>
+
+<section>
+<h2>近 31 天全部流量</h2>
+{% include "_daily.html" %}
+</section>
+<p class="muted">流量来自各节点上报的 Xray 用户计数，只含代理载荷，不含 TLS/TCP 开销；日期按 UTC。</p>
+{% endblock %}

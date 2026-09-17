@@ -1,0 +1,36 @@
+# 管理控制台（compose 项目，只部署在 console_host）。
+# 实施合同：docs/reviews/console/plan-console-phase1-2026-09-16.md
+# console.yml / console-remove.yml 使用全部变量；edge.yml 用 console_host、console_registry_dir、console_uid 登记节点，
+# edge_report_url 用 console_report_host。
+
+console_host: "spt"
+console_root_dir: "/opt/reality-console"
+console_registry_dir: "{{ console_root_dir }}/registry"
+console_compose_project: "reality-console"
+console_container_name: "reality_console"
+console_repository: "reality-console"
+console_uid: 10002
+
+# 管理页面只发布到宿主机 127.0.0.1，经 SSH 隧道访问；上报服务只在内部网络，由控制台自己的隧道转发。
+console_web_port: 8200
+# 管理页面接受的 Host；经 ssh -L 转发到本机其他端口时，在此加入对应的 127.0.0.1:<端口>。
+console_allowed_hosts: ["127.0.0.1:8200", "localhost:8200"]
+console_report_port: 8201
+# 2026-09-17 操作者决定（D-C4）；Cloudflare 上由控制台隧道转发到 http://report:8201，隧道 token 在 vault_console_tunnel_token。
+console_report_host: "report.taoziyoyo.com"
+console_cloudflared_image: "{{ subs_cloudflared_image }}"
+
+# 节点超过该分钟数未上报时首页提示离线。
+console_offline_minutes: 15
+console_backup_keep: 14
+
+console_memory_limit: "128m"
+console_docker_log_max_size: "10m"
+console_docker_log_max_file: "3"
+
+# 首次部署时导入（数据库为空时才生效）：vault_subs_tokens 中已发放的 token 与在订阅中显示的节点，
+# 使现有订阅地址与节点列表不变。
+console_initial_shown_nodes: ["dzire", "usca", "legend", "kagoya"]
+
+console_repo_dir: "{{ playbook_dir }}"
+console_image_export_dir: "{{ lookup('env', 'HOME') }}/.local/share/reality-ops/console-images"

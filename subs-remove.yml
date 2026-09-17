@@ -1,5 +1,6 @@
 ---
-# 移除订阅服务（回滚用）。只触碰 subs_root_dir 下的 compose 项目与文件，不触碰 monitor、旧订阅或 Gist。
+# 移除订阅服务（回滚用）。只触碰 subs_root_dir 下的 compose 项目与文件，不触碰 monitor、旧订阅、Gist 或管理控制台；
+# 删除 data/ 后控制台的下一次发布会失败并在其首页提示，重新部署订阅服务后恢复。
 #   ./monitor_venv/bin/ansible-playbook -i inventory.ini subs-remove.yml -K
 #   访问日志（db/）默认保留，作为迁移时判断用户是否已换地址的依据；追加 -e subs_remove_db=true 一并删除。
 # hosts 须与 group_vars/all/subs.yml 的 subs_host 一致（play 目标解析时读不到 group_vars）。
@@ -33,9 +34,9 @@
         state: absent
       when: subs_remove_db | bool
 
-    - name: 删除控制端构建产物
+    - name: 删除控制端旧构建目录
       delegate_to: localhost
       become: false
       file:
-        path: "{{ subs_build_dir }}"
+        path: "{{ subs_legacy_build_dir }}"
         state: absent

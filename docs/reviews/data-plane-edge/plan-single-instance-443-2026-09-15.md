@@ -263,3 +263,9 @@ canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`e
   [`plan-edge-compose-2026-09-15.md`](plan-edge-compose-2026-09-15.md)：`xray_edge` 改由 compose 管理（运行参数不变），日志轮转改为
   compose 内容器，应用器进入固定版本的工具镜像，删除 `/opt/xray-edge` 之外的新数据面文件。影响：§3.1 组成、§3.6 日志与 §3.9 移除
   的实现方式以修订合同为准；三台 canary 逐台迁移，各自另行授权。
+- **2026-09-17 · 新旧用户集合比较改为只提示（D-C5）。** 起因：2026-09-16 操作者决定新系统作为独立产品建设、不迁移旧用户
+  （[`roadmap-unified-2026-09-16.md`](../roadmap-unified-2026-09-16.md) §2）。§3.4 的比较原本保证迁移前后用户权限不变，
+  不迁移后这一目的不再成立，却使每次用户变更都必须先对旧节点运行 `deploy.yml`，`edge_drift_old_only_users` 的例外也会变成永久。
+  操作者批准：`edge.yml` 仍只读取旧实例用户，但只列出差异、不中止部署；节点没有旧实例时跳过比较；删除 `edge_drift_old_only_users`。
+  影响：§3.4“不一致时停止”与 §7 中“集合比较是止损手段”改为提示；ACL 副本与 `deploy.yml` 的一致性靠提示发现（按决定 9，`deploy.yml` 不再变更）。
+  `shuaiqi` 在旧实例上的访问保留，直到操作者另行对旧节点运行 `deploy.yml`，每次部署都会提示。

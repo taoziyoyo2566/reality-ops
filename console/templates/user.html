@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}{{ name }}{% endblock %}
+{% block content %}
+<h1>用户 {{ name }}</h1>
+
+<section>
+<h2>订阅地址</h2>
+{% if token %}
+<p class="muted">发放于 {{ token.issued_at | time }}{% if token.rotated_at %}，最近重置 {{ token.rotated_at | time }}{% endif %}。
+地址包含个人凭据，只发给该用户本人。</p>
+<input class="url" type="text" readonly value="{{ url }}">
+<div class="qr">{{ qr | safe }}</div>
+<p>最后拉取：{% if fetch %}{{ fetch.at | time }}（{{ fetch.fmt }}，近 90 天 {{ fetch.count }} 次）{% else %}<span class="muted">还没有拉取记录</span>{% endif %}</p>
+<form method="post" action="/users/{{ name }}/rotate" class="inline">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<button>重置地址</button>
+</form>
+<span class="muted">重置后旧地址立即失效，用户需要重新导入。</span>
+<form method="post" action="/users/{{ name }}/revoke" style="margin-top:12px">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="text" name="confirm" placeholder="输入用户名 {{ name }} 以确认" autocomplete="off">
+<button class="danger">吊销订阅</button>
+</form>
+{% elif profile %}
+<p>尚未发放订阅地址。</p>
+<form method="post" action="/users/{{ name }}/issue" class="inline">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<button class="primary">发放订阅地址</button>
+</form>
+{% else %}
+<p class="bad">用户档案已不存在，只能吊销。</p>
+{% endif %}
+</section>
+
+<section>
+<h2>可用的新节点</h2>
+{% if node_rows %}
+<table>
+<thead><tr><th>节点</th><th>显示名</th><th>订阅中</th><th>XHTTP</th><th class="num">本月流量 {{ month }}</th></tr></thead>
+<tbody>
+{% for n in node_rows %}
+<tr>
+<td><a href="/nodes/{{ n.name }}">{{ n.name }}</a></td>
+<td>{{ n.label }}</td>
+<td>{% if n.shown %}<span class="ok">显示</span>{% else %}<span class="muted">隐藏</span>{% endif %}</td>
+<td>{{ '开' if n.xhttp else '—' }}</td>
+<td class="num">{{ (n.traffic.up + n.traffic.down) | bytes }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="muted">该用户不在任何已登记节点上。</p>
+{% endif %}
+</section>
+
+{% if profile %}
+<section>
+<h2>档案</h2>
+<p>分组：{% for g in profile.groups %}<span class="tag">{{ g }}</span>{% else %}<span class="muted">—（默认 all）</span>{% endfor %}</p>
+<p>单独允许：{{ profile.hosts | join(', ') or '—' }} · 单独禁止：{{ profile.deny_hosts | join(', ') or '—' }}</p>
+</section>
+{% endif %}
+
+<section>
+<h2>近 31 天流量</h2>
+{% include "_daily.html" %}
+</section>
+{% endblock %}

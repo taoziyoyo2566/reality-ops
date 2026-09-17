@@ -1,8 +1,9 @@
 ---
-# 移除 xray_edge 新实例（回滚用）。只触碰 xray_edge 自己的 compose 项目、容器、目录、S3 形态残留与控制端测试链接，
+# 移除 xray_edge 新实例（回滚用）。只触碰 xray_edge 自己的 compose 项目、容器、目录、S3 形态残留、控制台注册文件与控制端测试链接，
 # 不触碰旧 single/multi 实例，也不删除镜像（重新部署时无需再次分发）。节点 REALITY 密钥默认保留，便于重新部署后公钥不变：
 #   ./monitor_venv/bin/ansible-playbook -i inventory.ini edge-remove.yml --limit dzire -K
-#   追加 -e edge_remove_keys=true 同时删除密钥（之后重新部署会生成新公钥，已导入的测试链接失效）。
+#   追加 -e edge_remove_keys=true 同时删除密钥与上报 token（之后重新部署会生成新公钥，已导入的测试链接失效）。
+# 删除注册文件后，控制台下次发布订阅时不再包含该节点。
 - hosts: reality_nodes
   gather_facts: false
   become: true
@@ -35,6 +36,7 @@
       loop:
         - "{{ edge_container_name }}"
         - "{{ edge_container_name }}_logrotate"
+        - "{{ edge_container_name }}_reporter"
 
     - name: 停用 S3 形态的日志轮转 timer
       systemd:
@@ -61,13 +63,19 @@
       file:
         path: "{{ edge_root_dir }}/{{ item }}"
         state: absent
-      loop: "{{ ['compose.yaml', '.tools-image.tar', 'bin', 'state', 'conf.d', 'last-good', 'logs', 'rotate'] + (['keys'] if (edge_remove_keys | bool) else []) }}"
+      loop: "{{ ['compose.yaml', '.tools-image.tar', 'bin', 'state', 'conf.d', 'last-good', 'logs', 'rotate', 'spool'] + (['keys', 'secrets'] if (edge_remove_keys | bool) else []) }}"
 
     - name: 密钥也删除时移除根目录
       file:
         path: "{{ edge_root_dir }}"
         state: absent
       when: edge_remove_keys | bool
+
+    - name: 删除控制台注册文件
+      delegate_to: "{{ console_host }}"
+      file:
+        path: "{{ console_registry_dir }}/{{ inventory_hostname }}.json"
+        state: absent
 
     - name: 删除控制端测试订阅链接
       delegate_to: localhost

@@ -26,10 +26,13 @@ TOOLS = "reality-edge-tools:0123456789ab"
 def render(node, ports, **overrides):
     env = jinja2.Environment(undefined=jinja2.StrictUndefined, keep_trailing_newline=True)
     env.filters["to_json"] = json.dumps
+    # Ansible's bool filter: real booleans pass through, strings follow Ansible's truthy words.
+    env.filters["bool"] = lambda v: v if isinstance(v, bool) else str(v).strip().lower() in ("yes", "on", "1", "true")
     variables = {k: v for k, v in GROUP_VARS.items() if isinstance(v, (str, int, list, dict))}
     variables.update({
         "ansible_managed": "test", "edge_node_name": node, "edge_published_ports": ports,
-        "edge_tools_image": TOOLS,
+        "edge_tools_image": TOOLS, "edge_report_enabled": False,
+        "edge_report_url": "https://report.example.test/report",
     })
     variables.update(overrides)
     return env.from_string(TEMPLATE.read_text()).render(**variables)
@@ -96,11 +99,31 @@ class ComposeTemplateTest(unittest.TestCase):
         self.assertEqual(rotate["command"][-1], str(GROUP_VARS["edge_logrotate_interval"]))
         self.assertIn("/opt/xray-edge/rotate/logrotate.conf:/rotate/logrotate.conf:ro", rotate["volumes"])
 
+    def test_reporter_only_when_enabled_and_confined(self):
+        self.assertNotIn("reporter", yaml.safe_load(render("usca", USCA_PORTS))["services"])
+        services = yaml.safe_load(render("usca", USCA_PORTS, edge_report_enabled=True))["services"]
+        reporter = services["reporter"]
+        self.assertEqual(reporter["image"], TOOLS)
+        self.assertEqual(reporter["network_mode"], "service:xray")
+        self.assertEqual(reporter["user"], "10000:10000")
+        self.assertTrue(reporter["read_only"])
+        self.assertEqual(reporter["cap_drop"], ["ALL"])
+        self.assertEqual(sorted(reporter["volumes"]), [
+            "/opt/xray-edge/logs:/var/log/xray:ro",
+            "/opt/xray-edge/secrets:/run/report:ro",
+            "/opt/xray-edge/spool:/spool",
+        ])
+        env = reporter["environment"]
+        self.assertEqual((env["REPORT_NODE"], env["REPORT_URL"], env["REPORT_INTERVAL"]),
+                         ("usca", "https://report.example.test/report", str(GROUP_VARS["edge_report_interval"])))
+        # the xray service itself is unchanged by enabling the reporter
+        self.assertEqual(services["xray"], yaml.safe_load(render("usca", USCA_PORTS))["services"]["xray"])
+
     @unittest.skipUnless(shutil.which("docker"), "docker not available")
     def test_compose_reads_the_file_as_intended(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp, "compose.yaml")
-            path.write_text(render("usca", USCA_PORTS))
+            path.write_text(render("usca", USCA_PORTS, edge_report_enabled=True))
             proc = subprocess.run(["docker", "compose", "-f", str(path), "--profile", "tools", "config", "--format", "json"],
                                   capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -114,6 +137,7 @@ class ComposeTemplateTest(unittest.TestCase):
         self.assertEqual(xray["ulimits"]["nofile"], {"soft": 65535, "hard": 65535})
         self.assertEqual([v["read_only"] for v in xray["volumes"] if v["target"] == "/etc/xray/conf.d"], [True])
         self.assertEqual(services["applier"]["entrypoint"], ["python3", "/usr/local/bin/xray_edge_apply.py"])
+        self.assertEqual(services["reporter"]["network_mode"], "service:xray")
 
 
 if __name__ == "__main__":

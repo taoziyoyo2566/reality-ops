@@ -57,6 +57,36 @@ services:
     mem_limit: "32m"
     logging: {{ logging | to_json }}
 
+{% if edge_report_enabled | bool %}
+  # 节点上报（plan-console-phase1 §3.4）：与 xray 共用网络命名空间，只读取 metrics（127.0.0.1:10086），
+  # 不调用 Xray API；上报 token 所在目录只读挂载，轮换后无需重建容器。
+  reporter:
+    image: {{ edge_tools_image | to_json }}
+    container_name: {{ (edge_container_name ~ '_reporter') | to_json }}
+    restart: unless-stopped
+    network_mode: "service:xray"
+    depends_on: [xray]
+    user: "10000:10000"
+    command: ["python3", "/usr/local/bin/edge-reporter"]
+    environment:
+      REPORT_URL: {{ edge_report_url | to_json }}
+      REPORT_NODE: {{ edge_node_name | to_json }}
+      REPORT_INTERVAL: {{ edge_report_interval | int | string | to_json }}
+      REPORT_TOKEN_FILE: "/run/report/report-token"
+      LISTEN_PORT: {{ edge_listen_port | int | string | to_json }}
+    volumes:
+      - {{ (edge_root_dir ~ '/logs:/var/log/xray:ro') | to_json }}
+      - {{ (edge_root_dir ~ '/secrets:/run/report:ro') | to_json }}
+      - {{ (edge_root_dir ~ '/spool:/spool') | to_json }}
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 16
+    mem_limit: "48m"
+    logging: {{ logging | to_json }}
+
+{% endif %}
   # 一次性运行：docker compose run --rm applier apply|verify ...；up 不启动。
   # 应用器以 docker run -v 挂载候选目录，路径由宿主机 Docker 解析，所以根目录必须同路径挂载。
   applier:
