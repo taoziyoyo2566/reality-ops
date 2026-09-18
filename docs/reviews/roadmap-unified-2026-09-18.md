@@ -536,7 +536,7 @@ AND 没有优先级更高的显式拒绝
 | S6 遥测与运维 | 进行中 | P1 的节点上报、离线提示与备份是起步部分；节点状态页已上线（2026-09-18，4 台节点探测正常），见 [`plan-node-status-page`](console/plan-node-status-page-2026-09-18.md) 与 [Changelog](console/node-status-page-2026-09-18.changelog.md)；剩 24 小时观察 |
 | S7 新系统扩展与用户迁移 | 节点 11/12 台，用户迁移未开始 | 2026-09-19 全部 `edge_nodes` 已部署（新增 netcup、ams、dcc、jp05、hk01、hk02、jp10，jp05 的旧实例已移除）；新节点尚未在订阅中显示；`spt` 为控制端不部署；用户迁移可用 2a 的批量发放开始 |
 | S8 功能演进 | 出站竞速试点中 | `usca`、`legend` 已启用；“IPv4 变慢时选 IPv6”尚未观察到 |
-| P2 控制台第二阶段 | 2a、2b 已上线 | [`plan-console-phase2`](console/plan-console-phase2-2026-09-18.md)（2026-09-18 批准，D-P2-1～D-P2-9）：2a 网页管理用户已上线（2026-09-19，33 人导入，11 台节点名单一致）；2b 节点自动生效已上线（2026-09-19，11 台节点均已同步，网页上的用户变化约一分钟内到节点）；2c Telegram bot 未开始 |
+| P2 控制台第二阶段 | 2a、2b 已上线 | [`plan-console-phase2`](console/plan-console-phase2-2026-09-18.md)（2026-09-18 批准，D-P2-1～D-P2-9）：2a 网页管理用户已上线（2026-09-19，33 人导入，11 台节点名单一致）；2b 节点自动生效已上线（2026-09-19，11 台节点均已同步，网页上的用户变化约一分钟内到节点）；2c Telegram bot 本地验证完成，待创建 bot 并部署（[`runbooks/telegram-bot.md`](../runbooks/telegram-bot.md)） |
 | P3–P4 控制台后续阶段 | 未计划 | 依赖关系见 §7.0 |
 
 2026-09-15 按决定 8 调整顺序：S3 数据面新实例先由新的 Ansible 实现落地并验证，不等待 S2；

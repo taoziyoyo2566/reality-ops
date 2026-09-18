@@ -1,9 +1,10 @@
 # {{ ansible_managed | default('managed by reality-ops') }}
 # 管理控制台 compose 项目。合同：docs/reviews/console/plan-console-phase1-2026-09-16.md §3.1、§3.6；
-# 状态页：docs/reviews/console/plan-node-status-page-2026-09-18.md §3.3、§3.6
+# 状态页：docs/reviews/console/plan-node-status-page-2026-09-18.md §3.3、§3.6；bot：plan-console-phase2-2026-09-18.md §3.5
 {% set logging = {"driver": "json-file", "options": {"max-size": console_docker_log_max_size | string, "max-file": console_docker_log_max_file | string}} %}
 {% set hardening = {"read_only": true, "tmpfs": ["/tmp"], "cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"], "pids_limit": 64, "mem_limit": console_memory_limit, "logging": logging} %}
 {% set status_on = status_enabled | bool %}
+{% set bot_on = console_bot_enabled | bool %}
 {% set status_env = {
      "STATUS_ENABLED": status_on | string | lower,
      "STATUS_CHECK_URL": status_check_url,
@@ -33,6 +34,7 @@ services:
       CONSOLE_ALLOWED_HOSTS: {{ console_allowed_hosts | join(',') | to_json }}
       CONSOLE_OFFLINE_MINUTES: {{ console_offline_minutes | string | to_json }}
       CONSOLE_BACKUP_KEEP: {{ console_backup_keep | string | to_json }}
+      CONSOLE_BOT_ENABLED: {{ bot_on | string | lower | to_json }}
 {% for key, value in status_env.items() %}
       {{ key }}: {{ value | to_json }}
 {% endfor %}
@@ -94,6 +96,39 @@ services:
       retries: 3
       start_period: 120s
 {% for key, value in (hardening | combine({"pids_limit": 128, "mem_limit": status_memory_limit})).items() %}
+    {{ key }}: {{ value | to_json }}
+{% endfor %}
+
+{% endif %}
+{% if bot_on %}
+  # Telegram bot（plan-console-phase2 §3.5）：长轮询，不开放端口，只连 Telegram；token 与管理员列表在 /run/bot。
+  # 写订阅服务的数据目录（重置、发放后立即发布），只读其访问日志（最后拉取时间）。
+  bot:
+    image: {{ console_image | to_json }}
+    container_name: {{ (console_container_name ~ '_bot') | to_json }}
+    restart: unless-stopped
+    user: {{ (console_uid ~ ':' ~ console_uid) | to_json }}
+    command: ["python", "-m", "console.bot"]
+    environment:
+      CONSOLE_PUBLIC_BASE_URL: {{ subs_public_base_url | to_json }}
+      BOT_API_URL: {{ console_bot_api_url | to_json }}
+{% for key, value in status_env.items() %}
+      {{ key }}: {{ value | to_json }}
+{% endfor %}
+    volumes:
+      - {{ (console_registry_dir ~ ':/registry:ro') | to_json }}
+      - {{ (console_root_dir ~ '/db:/db') | to_json }}
+      - {{ (subs_root_dir ~ '/data:/subs-data') | to_json }}
+      - {{ (subs_root_dir ~ '/db:/subs-db:ro') | to_json }}
+      - {{ (console_root_dir ~ '/bot:/run/bot:ro') | to_json }}
+    networks: [egress]
+    healthcheck:
+      test: ["CMD", "python", "-m", "console.bot", "--check"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+{% for key, value in hardening.items() %}
     {{ key }}: {{ value | to_json }}
 {% endfor %}
 

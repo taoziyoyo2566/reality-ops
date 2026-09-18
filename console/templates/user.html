@@ -56,6 +56,38 @@
 </form>
 </section>
 
+{% if bot_enabled or record.telegram_id is not none %}
+<section id="telegram">
+<h2>Telegram</h2>
+{% if record.telegram_id is not none %}
+<p><span class="ok">已绑定</span> Telegram 账号（ID {{ record.telegram_id }}）。用户可在 bot 中取订阅地址、查看流量与到期日、重置地址。</p>
+<form method="post" action="/users/{{ name }}/telegram/unbind" class="inline">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<button>解除绑定</button>
+</form>
+{% else %}
+<p class="muted">未绑定。</p>
+{% endif %}
+{% if bind_url %}
+<p>绑定链接（{{ bind_link.expires_at | time }} 前有效，只能使用一次）：</p>
+<input class="url" type="text" readonly value="{{ bind_url }}">
+<p class="muted">只发给 {{ name }} 本人；对方点开后在 Telegram 中按“开始”即完成绑定。{% if record.telegram_id is not none %}使用后改绑到新的账号。{% endif %}</p>
+<form method="post" action="/users/{{ name }}/telegram/link-delete" class="inline">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<button>作废链接</button>
+</form>
+{% elif bot_username %}
+<form method="post" action="/users/{{ name }}/telegram/link" class="inline">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<button{% if record.telegram_id is none %} class="primary"{% endif %}>{{ '生成新的绑定链接' if record.telegram_id is not none else '生成绑定链接' }}</button>
+</form>
+<span class="muted">链接 24 小时内有效，只能使用一次。</span>
+{% else %}
+<p class="warn">bot 还没有成功连上 Telegram，暂时不能生成绑定链接（首页会提示 bot 的状态）。</p>
+{% endif %}
+</section>
+{% endif %}
+
 <section id="edit">
 <h2>编辑</h2>
 <form method="post" action="/users/{{ name }}/edit">

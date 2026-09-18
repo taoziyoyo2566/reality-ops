@@ -505,6 +505,15 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   shows no alerts, and no status probe failed during the rollout. A node's first sync right after enabling gets 409
   (its agent starts before the console sees the new registration); the console shows that error for one more cycle,
   because it records the state the agent reported in its request, and it clears after about a minute.
+- `[代码]` 2026-09-19 working tree, 2c, not deployed: `console/bot.py` is the Telegram bot (compose service `bot`, only
+  when `vault_console_bot_token` is set; admins are `vault_console_bot_admin_ids`). It long-polls with stdlib `urllib`,
+  answers private chats only, keeps its offset, username and heartbeat in the `settings` table, and binds accounts
+  with one-time codes in `bot_links`. `publish.publish` now takes an `flock` on `/db/publish.lock`: web requests, the
+  watcher thread and the bot publish from different threads and processes, and two unserialized publishes could leave
+  `tokens.json` and `catalog.json` from different rounds.
+- `[实测]` 2026-09-19 local, 2c: `tests/console/test_bot.py` 22/22, compose 13/13, console unit tests 20 + 35 + 15 + 5;
+  console e2e 72/72 with the bot container against `tests/console/fake_telegram.py` on the egress network. The bot
+  container used about 17 MiB. `spt` reached `api.telegram.org` directly (HTTP 302 in 0.4 s, plan §5 item 5).
 - `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while

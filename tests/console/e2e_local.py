@@ -8,7 +8,8 @@ admin pages, connects a real Xray client with the published link, and follows th
 It also restarts Xray (the reporter must rejoin its network), rotates the report token, hides the node and
 revokes the subscription. The status service probes the node through Vision and XHTTP with the probe account;
 the check breaks XHTTP only (partial), stops Xray (outage), hides the node (maintenance) and cuts the status
-service's network (no data).
+service's network (no data). The Telegram bot runs against a fake Bot API (tests/console/fake_telegram.py) on the
+console's egress network: binding with a link from the admin page, /sub, /reset, and admin permissions.
 
 Needs Docker with Compose and outbound HTTP/HTTPS. Run with a Python that has Jinja2 and PyYAML:
   monitor_venv/bin/python tests/console/e2e_local.py [--keep]
@@ -72,6 +73,9 @@ PROBE = {"name": "status-probe", "uuid": "44444444-4444-4444-8444-444444444444",
 STATUS_URL = console_compose.group_vars("status")["status_check_url"]
 PROBE_TARGET = console_compose.group_vars("status")["status_probe_target"]
 XHTTP_PATH = "/xp-e2e"
+TELEGRAM = "console_e2e_telegram"
+BOT_TOKEN = "123456:e2e-fake-bot-token-value"
+BOT_ADMIN, BOT_USER = 1001, 2002
 
 results = []
 
@@ -135,6 +139,7 @@ class Layout:
         self.web_port = free_port()
         self.subs_port = free_port()
         self.client_port = free_port()
+        self.telegram_port = free_port()
 
     def as_root(self, script, stdin=None, check=True):
         return run(["docker", "run", "--rm", "-i", "--network", "none", "-v", f"{self.root}:{self.root}",
@@ -152,12 +157,14 @@ class Layout:
             f" install -d -m 0755 {n}/rotate; install -d -o 10000 -g 10000 -m 0700 {n}/rotate/state {n}/spool;"
             f" install -d -m 0755 {c}; install -d -o 0 -g 10002 -m 0750 {c}/data {c}/registry;"
             f" install -d -o 10002 -g 10002 -m 0700 {c}/db {c}/import; install -d -m 0700 {c}/secrets;"
-            f" install -d -o 0 -g 10002 -m 0750 {c}/probe;"
+            f" install -d -o 0 -g 10002 -m 0750 {c}/probe {c}/bot;"
             f" install -d -m 0755 {s}; install -d -o 10002 -g 10001 -m 2750 {s}/data;"
             f" install -d -o 10001 -g 10002 -m 0750 {s}/db; install -d -m 0700 {s}/secrets")
         self.put(f"{c}/secrets/tunnel.env", "TUNNEL_TOKEN=unused\n")
         self.put(f"{c}/probe/probe.json", json.dumps({"uuid": PROBE["uuid"], "short_id": PROBE["short_id"]}),
                  "0:10002", "0640")
+        self.put(f"{c}/bot/token", BOT_TOKEN + "\n", "0:10002", "0640")
+        self.put(f"{c}/bot/config.json", json.dumps({"admins": [BOT_ADMIN]}), "0:10002", "0640")
         self.put(f"{c}/data/users.json", json.dumps({"users": [
             {"name": u, "groups": ["free"], "hosts": [], "deny_hosts": []} for u in USERS]}), "0:10002", "0640")
         self.put(f"{self.node}/rotate/logrotate.conf", "", mode="0644")
@@ -171,7 +178,8 @@ class Layout:
             console_root_dir=c, console_registry_dir=f"{c}/registry", subs_root_dir=s,
             console_web_port=self.web_port, console_allowed_hosts=[f"127.0.0.1:{self.web_port}"],
             console_compose_project=CONSOLE_PROJECT, console_container_name="console_e2e", console_image=CONSOLE,
-            subs_public_base_url="https://sub.example.test", status_interval=INTERVAL, status_timeout=4)
+            subs_public_base_url="https://sub.example.test", status_interval=INTERVAL, status_timeout=4,
+            console_bot_enabled=True, console_bot_api_url="http://telegram:8081")
         self.put(f"{c}/compose.yaml", console, mode="0644")
 
     def node_compose_file(self, report_url, sync=False):
@@ -221,7 +229,7 @@ class Layout:
         for where in (self.node, self.console, self.subs):
             if os.path.exists(os.path.join(where, "compose.yaml")):
                 self.compose(where, "--profile", "tools", "down", "--remove-orphans", check=False)
-        run(["docker", "rm", "-f", CLI, SRV, f"{SRV}_logrotate", f"{SRV}_reporter"], check=False)
+        run(["docker", "rm", "-f", CLI, SRV, f"{SRV}_logrotate", f"{SRV}_reporter", TELEGRAM], check=False)
         self.as_root("rm -rf ./* ./.[!.]*", check=False)
 
 
@@ -450,6 +458,91 @@ def check_sync(layout, admin, server_ip, public_key, report_url):
     record("the node page shows the sync as done", status == 200 and "已同步" in page)
 
 
+def check_bot(layout, admin):
+    """plan-console-phase2 §6.1 item 1 and §6.2 item 4, locally: the bot container against a fake Bot API."""
+    control = f"http://127.0.0.1:{layout.telegram_port}/control"
+    run(["docker", "run", "-d", "--name", TELEGRAM, "--network", f"{CONSOLE_PROJECT}_egress", "--network-alias",
+         "telegram", "-p", f"127.0.0.1:{layout.telegram_port}:8081", "-e", f"FAKE_TOKEN={BOT_TOKEN}",
+         "-v", f"{REPO}/tests/console/fake_telegram.py:/fake.py:ro", "--entrypoint", "python", CONSOLE, "/fake.py"])
+    layout.compose(layout.console, "up", "-d", "bot")
+
+    def calls():
+        status, body = http("GET", control + "/calls")
+        return json.loads(body) if status == 200 else []
+
+    def say(sender, text, chat_type="private", chat=None):
+        doc = {"message": {"message_id": 1, "date": int(time.time()), "text": text,
+                           "from": {"id": sender, "is_bot": False, "first_name": "e2e"},
+                           "chat": {"id": chat or sender, "type": chat_type}}}
+        http("POST", control + "/update", json.dumps(doc).encode(), {"Content-Type": "application/json"})
+
+    def reply(chat_id, since, method="sendMessage"):
+        found = wait_for(lambda: [c["params"] for c in calls()[since:] if c["method"] == method
+                                  and str(c["params"].get("chat_id")) == str(chat_id)], 20, 0.5)
+        return found[-1] if found else {}
+
+    record("the bot reaches the Bot API and passes its health check", wait_for(
+        lambda: run(["docker", "exec", "console_e2e_bot", "python", "-m", "console.bot", "--check"],
+                    check=False).returncode == 0, 60, 2))
+    record("the bot runs as 10002 on a read-only root, without published ports",
+           inspect("console_e2e_bot", "{{.Config.User}}") == "10002:10002"
+           and inspect("console_e2e_bot", "{{.HostConfig.ReadonlyRootfs}}") == "true"
+           and inspect("console_e2e_bot", "{{json .HostConfig.PortBindings}}") in ("{}", "null"))
+
+    admin.post("/users/carol/telegram/link")
+    match = re.search(r"https://t\.me/e2e_test_bot\?start=([A-Za-z0-9_-]{32})", admin.get("/users/carol")[1])
+    record("the user page shows a binding link with the bot's name", match)
+    n = len(calls())
+    say(BOT_USER, f"/start {match.group(1) if match else 'x'}")
+    record("opening the link binds carol's Telegram account", "已绑定用户 carol" in reply(BOT_USER, n).get("text", ""))
+    record("the user page shows the binding", f"ID {BOT_USER}" in admin.get("/users/carol")[1])
+
+    token = admin.token("carol")
+    n = len(calls())
+    say(BOT_USER, "/sub")
+    photo = reply(BOT_USER, n, "sendPhoto")
+    record("/sub sends carol's address and QR code, protected from forwarding",
+           token and f"/s/{token}" in photo.get("caption", "") and photo.get("protect_content") == "true"
+           and photo.get("photo", {}).get("png"), {k: v for k, v in photo.items() if k != "caption"})
+
+    n = len(calls())
+    say(BOT_USER, "/reset")
+    ask = reply(BOT_USER, n)
+    data = next((b["callback_data"] for b in (ask.get("reply_markup") or {}).get("inline_keyboard", [[]])[0]
+                 if b["callback_data"].startswith("y:")), "y:none")
+    n = len(calls())
+    http("POST", control + "/update", json.dumps({"callback_query": {
+        "id": "1", "from": {"id": BOT_USER, "is_bot": False, "first_name": "e2e"}, "data": data,
+        "message": {"message_id": 5, "date": int(time.time()), "chat": {"id": BOT_USER, "type": "private"}}}}).encode(),
+         {"Content-Type": "application/json"})
+    photo = reply(BOT_USER, n, "sendPhoto")
+    new_token = admin.token("carol")
+    record("/reset after confirmation rotates the address and sends the new one",
+           new_token and new_token != token and f"/s/{new_token}" in photo.get("caption", ""))
+    record("the old address stops working and the new one works at once",
+           subscription(layout.subs_port, token)[0] == 404 and subscription(layout.subs_port, new_token)[0] == 200)
+
+    n = len(calls())
+    say(BOT_USER, "/disable carol")
+    record("a user cannot run admin commands", reply(BOT_USER, n).get("text") == "只有管理员可以使用这个命令。")
+    n = len(calls())
+    say(BOT_ADMIN, "/user carol")
+    text = reply(BOT_ADMIN, n).get("text", "")
+    record("an admin can look a user up without seeing the address",
+           "carol（启用）" in text and "Telegram：已绑定" in text and new_token not in text, text[:80])
+    n = len(calls())
+    say(BOT_ADMIN, "/adduser dave free")
+    record("an admin can add a user", "已新增 dave" in reply(BOT_ADMIN, n).get("text", "")
+           and admin.get("/users/dave")[0] == 200)
+    n = len(calls())
+    say(BOT_USER, "/me", chat_type="group", chat=-100)
+    time.sleep(4)
+    record("messages in groups are ignored", not [c for c in calls()[n:] if str(c["params"].get("chat_id")) == "-100"])
+    logs = run(["docker", "logs", "console_e2e_bot"], check=False)
+    record("the bot token and addresses never appear in the bot log",
+           BOT_TOKEN not in logs.stdout + logs.stderr and new_token not in logs.stdout + logs.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--keep", action="store_true")
@@ -583,13 +676,15 @@ def main():
                and subscription(layout.subs_port, new_token)[0] == 200)
         check_status(layout, admin, new_token, server_ip, public_key, out.get("report_token_sha256"), published)
         check_sync(layout, admin, server_ip, public_key, report_url)
+        check_bot(layout, admin)
 
         admin.post("/users/alice/revoke", confirm="alice")
         record("revoking returns 404", subscription(layout.subs_port, new_token)[0] == 404)
         console_logs = layout.compose(layout.console, "logs", check=False).stdout
         record("subscription tokens never appear in console logs", token not in console_logs and new_token not in console_logs)
         mem = run(["docker", "stats", "--no-stream", "--format", "{{.Name}} {{.MemUsage}}",
-                   "console_e2e_web", "console_e2e_report", "console_e2e_status", reporter], check=False).stdout.strip().replace("\n", "; ")
+                   "console_e2e_web", "console_e2e_report", "console_e2e_status", "console_e2e_bot", reporter],
+                   check=False).stdout.strip().replace("\n", "; ")
         record("memory use recorded", bool(mem), mem)
     finally:
         if args.keep:

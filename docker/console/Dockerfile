@@ -1,4 +1,4 @@
-# 管理控制台镜像（web、report、status 三个服务共用）。合同：docs/reviews/console/plan-console-phase1-2026-09-16.md §3.6、
+# 管理控制台镜像（web、report、status、bot 四个服务共用）。合同：docs/reviews/console/plan-console-phase1-2026-09-16.md §3.6、
 # docs/reviews/console/plan-node-status-page-2026-09-18.md §3.3
 # 构建（仓库根目录为上下文，只放行下方 COPY 的文件，见 Dockerfile.dockerignore）：
 #   docker build -f docker/console/Dockerfile -t reality-console:local .

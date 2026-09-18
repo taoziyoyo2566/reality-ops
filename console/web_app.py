@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 
 from subs import statuspage
 
-from . import auth, config, db, publish as pub, queries, registry as reg, status as stat, users as users_mod
+from . import auth, bot as bot_mod, config, db, publish as pub, queries, registry as reg, status as stat, users as users_mod
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 TEMPLATES = os.path.join(os.path.dirname(__file__), "templates")
@@ -50,14 +50,6 @@ class FormData(dict):
 
     def getlist(self, key):
         return list(self._all.get(key, []))
-
-
-def human_bytes(n):
-    n = float(n or 0)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if n < 1024 or unit == "TiB":
-            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
-        n /= 1024
 
 
 def make_timefmt(offset_hours, label):
@@ -131,7 +123,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     csrf = hmac.new(secret, b"console-form", hashlib.sha256).hexdigest()
     timefmt = make_timefmt(float(os.environ.get("CONSOLE_UTC_OFFSET_HOURS", "9")),
                            os.environ.get("CONSOLE_TZ_LABEL", "JST"))
-    templates.env.filters["bytes"] = human_bytes
+    templates.env.filters["bytes"] = queries.human_bytes
     templates.env.filters["time"] = timefmt
     st = status_settings or config.status_from_env()
     templates.env.filters["stime"] = make_timefmt(st.utc_offset_hours, st.tz_label)
@@ -245,7 +237,8 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             return page(request, "home.html",
                         alerts=(queries.alerts(settings, conn, nodes, problems, users)
                                 + user_alerts(conn, nodes, users, managed)
-                                + stat.alerts(conn, st, nodes, db.now())),
+                                + stat.alerts(conn, st, nodes, db.now())
+                                + (bot_mod.alerts(conn, db.now()) if settings.bot_enabled else [])),
                         user_count=len(users), issued=len(db.tokens(conn)),
                         node_count=len(nodes), shown=len(db.shown_nodes(conn) & set(nodes)),
                         month=month, month_total=queries.traffic_by_node(conn, month),
@@ -350,7 +343,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                                                 known_nodes=nodes)
                 with db.transaction(conn):
                     users_mod.create(conn, name, fields)
-                    db.audit(conn, "user-create", name, describe(fields), actor=actor(request))
+                    db.audit(conn, "user-create", name, users_mod.describe(fields), actor=actor(request))
             except users_mod.UserError as exc:
                 return page(request, "user_new.html", tier_options=users_mod.known_tiers(conn),
                             node_names=sorted(nodes), error=str(exc),
@@ -387,8 +380,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             existing = db.tokens(conn)
             for name in names:
                 if name in users and name not in existing and user_state(users[name], day) in ("active", "unknown"):
-                    conn.execute("INSERT INTO tokens (user, token, issued_at) VALUES (?, ?, ?)",
-                                 (name, pub.new_token(), db.now()))
+                    db.issue_token(conn, name, pub.new_token())
                     issued.append(name)
             if issued:
                 ok, detail = pub.publish(settings, conn, registry, f"批量发放 {len(issued)} 人")
@@ -413,7 +405,10 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             daily = queries.daily_totals(conn, user=name)
             usable = set(users_mod.user_nodes(conn, record, nodes)) if (managed and record) else None
             tier_options = users_mod.known_tiers(conn) if managed else []
+            bot = bot_mod.state(conn)
+            link = users_mod.bind_link(conn, name) if managed and record else None
         url = subscription_url(token["token"]) if token else None
+        bind_url = f"https://t.me/{bot['username']}?start={link['code']}" if link and bot["username"] else None
         names = sorted(nodes) if usable is not None else sorted(n for n, node in nodes.items() if name in node.users)
         node_rows = [{"name": n, "label": nodes[n].label, "shown": n in shown, "xhttp": nodes[n].xhttp["enabled"],
                       "deployed": name in nodes[n].users, "allowed": usable is None or n in usable,
@@ -423,17 +418,8 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                     state=user_state(record, day) if name in users else "unknown", token=token, url=url,
                     qr=qr_svg(url) if url else None, node_rows=node_rows, month=month, daily=daily,
                     fetch=queries.last_fetches(settings.subs_access_db).get(name), error=error,
-                    tier_options=tier_options, node_names=sorted(nodes))
-
-    def describe(fields):
-        parts = [f"档位 {','.join(fields['tiers'])}"]
-        if fields["allow_nodes"]:
-            parts.append(f"允许 {','.join(fields['allow_nodes'])}")
-        if fields["deny_nodes"]:
-            parts.append(f"禁止 {','.join(fields['deny_nodes'])}")
-        if fields["expires_on"]:
-            parts.append(f"到期 {fields['expires_on']}")
-        return "；".join(parts)
+                    tier_options=tier_options, node_names=sorted(nodes), bot_enabled=settings.bot_enabled,
+                    bot_username=bot["username"], bind_link=link, bind_url=bind_url)
 
     @app.post("/users/{name}/edit")
     async def user_edit(request: Request, name: str):
@@ -450,7 +436,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                                                 known_nodes=nodes)
                 with db.transaction(conn):
                     users_mod.update(conn, name, fields)
-                    db.audit(conn, "user-edit", name, describe(fields), actor=actor(request))
+                    db.audit(conn, "user-edit", name, users_mod.describe(fields), actor=actor(request))
             except users_mod.UserError as exc:
                 return back(f"/users/{name}?error=" + urllib.parse.quote(str(exc)) + "#edit")
             # expiry decides whether the subscription is served
@@ -504,15 +490,14 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
         with db.connect(settings.db_path) as conn:
             _, _, users, _ = view_context(conn)
             existing = db.token_rows(conn).get(name)
-            now = db.now()
             if action == "issue":
                 if existing or name not in users or user_state(users[name], day) not in ("active", "unknown"):
                     return back(f"/users/{name}")
-                conn.execute("INSERT INTO tokens (user, token, issued_at) VALUES (?, ?, ?)", (name, pub.new_token(), now))
+                db.issue_token(conn, name, pub.new_token())
             elif action == "rotate":
                 if not existing:
                     return back(f"/users/{name}")
-                conn.execute("UPDATE tokens SET token = ?, rotated_at = ? WHERE user = ?", (pub.new_token(), now, name))
+                db.rotate_token(conn, name, pub.new_token())
             elif action == "revoke":
                 if data.get("confirm") != name:
                     return back(f"/users/{name}")
@@ -532,6 +517,41 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     @app.post("/users/{name}/revoke")
     async def revoke(request: Request, name: str):
         return await change_token(request, name, "revoke")
+
+    async def change_telegram(request, name, action):
+        """Binding link and binding of a user's Telegram account (plan-console-phase2 §3.5)."""
+        data = await form(request)
+        if data is None:
+            return refused()
+        with db.connect(settings.db_path) as conn:
+            _, _, _, managed = view_context(conn)
+            if not managed or not NAME_RE.match(name) or users_mod.get(conn, name) is None:
+                return back("/users")
+            if action == "link":
+                if not bot_mod.state(conn)["username"]:
+                    return back(f"/users/{name}#telegram")
+                users_mod.new_bind_link(conn, name)
+                detail = "生成绑定链接"
+            elif action == "link-delete":
+                users_mod.drop_bind_link(conn, name)
+                detail = "作废绑定链接"
+            else:
+                users_mod.unbind(conn, name)
+                detail = "解除 Telegram 绑定"
+            db.audit(conn, "telegram-" + action, name, detail, actor=actor(request))
+        return back(f"/users/{name}#telegram")
+
+    @app.post("/users/{name}/telegram/link")
+    async def telegram_link(request: Request, name: str):
+        return await change_telegram(request, name, "link")
+
+    @app.post("/users/{name}/telegram/link-delete")
+    async def telegram_link_delete(request: Request, name: str):
+        return await change_telegram(request, name, "link-delete")
+
+    @app.post("/users/{name}/telegram/unbind")
+    async def telegram_unbind(request: Request, name: str):
+        return await change_telegram(request, name, "unbind")
 
     @app.get("/nodes", response_class=HTMLResponse)
     def nodes_page(request: Request):

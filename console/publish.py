@@ -3,8 +3,13 @@
 The console is the only writer. The catalog holds only registered nodes the administrator shows; users are the
 ones holding a token. A node that is shown but has no registration file stops the publish, so a missing file
 never silently drops a node from everyone's subscription.
+
+The web pages, their watcher and the bot publish from different threads and processes; a lock file next to the
+database makes each publish read the data and write both files before the next one starts.
 """
+import contextlib
 import datetime
+import fcntl
 import json
 import os
 import secrets
@@ -74,8 +79,23 @@ def _unchanged(directory, catalog, token_doc):
     return strip(old_catalog) == strip(catalog) and old_tokens == token_doc
 
 
+@contextlib.contextmanager
+def _locked(settings):
+    fd = os.open(os.path.join(os.path.dirname(settings.db_path), "publish.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def publish(settings, conn, registry, reason):
     """Write both files and log the result; returns (ok, detail). Never raises for data problems."""
+    with _locked(settings):
+        return _publish(settings, conn, registry, reason)
+
+
+def _publish(settings, conn, registry, reason):
     nodes, problems, _ = registry.current()
     # the users each node actually runs: what its agent reported, or its last deployment (plan-console-phase2 §3.3)
     nodes = users_mod.effective_nodes(conn, nodes)

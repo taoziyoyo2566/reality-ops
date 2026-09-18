@@ -18,6 +18,14 @@
     fail_msg: "status_probe_nodes 不为空：vault_status_probe_uuid 与 vault_status_probe_short_id 必须已设置（docs/operations.md §14.8）。"
   when: (status_enabled | bool) and (status_probe_nodes | length > 0)
 
+- name: 开启 Telegram bot 时，管理员必须是 Telegram 数字用户 ID 列表
+  assert:
+    that:
+      - console_bot_admin_ids is sequence and console_bot_admin_ids is not string
+      - console_bot_admin_ids | reject('integer') | list | length == 0
+    fail_msg: "vault_console_bot_admin_ids 必须是数字列表，例如 [123456789]；还不知道 ID 时先设为 []（docs/runbooks/telegram-bot.md）。"
+  when: console_bot_enabled | bool
+
 - name: 检测地址必须是 http://（status 服务经本机 HTTP 代理端口访问）
   assert:
     that: status_check_url is match('^http://[^/:]+(:[0-9]+)?/')
@@ -39,6 +47,7 @@
     - { path: "{{ console_root_dir }}/import", owner: "{{ console_uid }}", group: "{{ console_uid }}", mode: "0700" }
     - { path: "{{ console_root_dir }}/secrets", owner: "0", group: "0", mode: "0700" }
     - { path: "{{ console_root_dir }}/probe", owner: "0", group: "{{ console_uid }}", mode: "0750" }
+    - { path: "{{ console_root_dir }}/bot", owner: "0", group: "{{ console_uid }}", mode: "0750" }
   loop_control:
     label: "{{ item.path }}"
 
@@ -107,6 +116,30 @@
     state: absent
   when: not ((status_enabled | bool) and (status_probe_uuid | length > 0))
 
+- name: 下发 Telegram bot 的 token 与管理员列表
+  copy:
+    content: "{{ item.content }}"
+    dest: "{{ console_root_dir }}/bot/{{ item.name }}"
+    owner: "0"
+    group: "{{ console_uid }}"
+    mode: "0640"
+  loop:
+    - { name: token, content: "{{ console_bot_token }}\n" }
+    - { name: config.json, content: "{{ {'admins': console_bot_admin_ids | map('int') | list} | to_json }}\n" }
+  loop_control:
+    label: "{{ item.name }}"
+  register: console_bot_files
+  no_log: true
+  diff: false
+  when: console_bot_enabled | bool
+
+- name: 未开启 bot 时删除其 token 与管理员列表
+  file:
+    path: "{{ console_root_dir }}/bot/{{ item }}"
+    state: absent
+  loop: [token, config.json]
+  when: not (console_bot_enabled | bool)
+
 - name: 下发 compose 项目定义
   template:
     src: compose.yaml.j2
@@ -124,6 +157,11 @@
     remove_orphans: true
     wait: true
     wait_timeout: 90
+
+# bot 只在启动时读取 token 与管理员列表；compose 不会因为挂载的文件变化而重建容器。
+- name: token 或管理员列表变化后重启 bot
+  command: docker compose -f {{ console_root_dir }}/compose.yaml restart bot
+  when: (console_bot_enabled | bool) and (console_bot_files is changed)
 
 # 放在 compose 之后：status 容器停止前的最后一轮可能再次写入。
 - name: 关闭状态页时删除已发布的状态数据
@@ -211,3 +249,12 @@
   register: console_status_check
   until: console_status_check.rc == 0
   when: status_enabled | bool
+
+- name: 核对 bot 已连上 Telegram（token 无效或连不上时失败，原因见 docker logs reality_console_bot）
+  command: docker compose -f {{ console_root_dir }}/compose.yaml exec -T bot python -m console.bot --check
+  changed_when: false
+  retries: 9
+  delay: 10
+  register: console_bot_check
+  until: console_bot_check.rc == 0
+  when: console_bot_enabled | bool

@@ -24,10 +24,16 @@ ALL = "all"
 STATUSES = ("active", "disabled")
 NOTE_MAX = 200
 EXPIRY_WARN_DAYS = 7
+BIND_SECONDS = 86400
+BIND_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{32}$")
 
 
 class UserError(ValueError):
     """A request the console refuses; the message is shown to the administrator."""
+
+
+class InvalidLink(UserError):
+    """A Telegram binding code that does not exist (any more) or has expired."""
 
 
 def _require(cond, msg):
@@ -57,6 +63,11 @@ def load(conn):
 
 def get(conn, name):
     row = conn.execute("SELECT * FROM users WHERE name = ?", (name,)).fetchone()
+    return _decode(row) if row else None
+
+
+def by_telegram(conn, telegram_id):
+    row = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
     return _decode(row) if row else None
 
 
@@ -259,10 +270,71 @@ def set_status(conn, name, status):
 
 
 def delete(conn, name):
-    """Remove the user and their subscription token; traffic and audit history stay."""
+    """Remove the user, their subscription token and binding link; traffic and audit history stay."""
     _require(get(conn, name) is not None, f"没有用户 {name}")
     conn.execute("DELETE FROM users WHERE name = ?", (name,))
     conn.execute("DELETE FROM tokens WHERE user = ?", (name,))
+    conn.execute("DELETE FROM bot_links WHERE user = ?", (name,))
+
+
+def describe(fields):
+    """One line for the audit log and the bot: tiers, exceptions and expiry."""
+    parts = [f"档位 {','.join(fields['tiers'])}"]
+    if fields["allow_nodes"]:
+        parts.append(f"允许 {','.join(fields['allow_nodes'])}")
+    if fields["deny_nodes"]:
+        parts.append(f"禁止 {','.join(fields['deny_nodes'])}")
+    if fields["expires_on"]:
+        parts.append(f"到期 {fields['expires_on']}")
+    return "；".join(parts)
+
+
+# --------------------------------------------------------------------------
+# Telegram binding (plan §3.5): the administrator hands a one-time link to the user
+# --------------------------------------------------------------------------
+
+def bind_link(conn, name):
+    """The user's unexpired binding link {user, code, created_at, expires_at}, or None."""
+    row = conn.execute("SELECT * FROM bot_links WHERE user = ? AND expires_at > ?", (name, db.now())).fetchone()
+    return dict(row) if row else None
+
+
+def new_bind_link(conn, name):
+    """A new one-time code for `name`, valid BIND_SECONDS; it replaces the user's previous one."""
+    _require(get(conn, name) is not None, f"没有用户 {name}")
+    now = db.now()
+    code = secrets.token_urlsafe(24)
+    conn.execute("INSERT OR REPLACE INTO bot_links (user, code, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                 (name, code, now, now + BIND_SECONDS))
+    return {"user": name, "code": code, "created_at": now, "expires_at": now + BIND_SECONDS}
+
+
+def drop_bind_link(conn, name):
+    conn.execute("DELETE FROM bot_links WHERE user = ?", (name,))
+
+
+def redeem_bind_link(conn, code, telegram_id):
+    """Bind a Telegram account with a one-time code and return the user's name.
+
+    One Telegram account belongs to one user: an account bound elsewhere must be unbound first. A user who was bound
+    to another account moves to this one (the administrator made the new link for that).
+    """
+    with db.transaction(conn):
+        row = None
+        if isinstance(code, str) and BIND_CODE_RE.match(code):
+            row = conn.execute("SELECT * FROM bot_links WHERE code = ?", (code,)).fetchone()
+        if row is None or row["expires_at"] <= db.now():
+            raise InvalidLink("绑定链接无效或已过期，请向管理员索取新的链接。")
+        current = by_telegram(conn, telegram_id)
+        if current is not None and current["name"] != row["user"]:
+            raise UserError(f"这个 Telegram 账号已绑定用户 {current['name']}。先发送 /unbind 解除，再打开新的链接。")
+        conn.execute("UPDATE users SET telegram_id = ?, updated_at = ? WHERE name = ?", (telegram_id, db.now(), row["user"]))
+        conn.execute("DELETE FROM bot_links WHERE user = ?", (row["user"],))
+    return row["user"]
+
+
+def unbind(conn, name):
+    conn.execute("UPDATE users SET telegram_id = NULL, updated_at = ? WHERE name = ?", (db.now(), name))
 
 
 def set_node_tiers(conn, node, tiers):

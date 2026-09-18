@@ -16,6 +16,7 @@ class Settings:
     offline_minutes: int
     allowed_hosts: tuple
     auth_mode: str = "none"
+    bot_enabled: bool = False
 
 
 def from_env(env=None):
@@ -34,6 +35,24 @@ def from_env(env=None):
         allowed_hosts=tuple(h.strip() for h in env.get("CONSOLE_ALLOWED_HOSTS", "127.0.0.1:8200,localhost:8200").split(",")
                             if h.strip()),
         auth_mode=env.get("CONSOLE_AUTH_MODE", "none"),
+        bot_enabled=env.get("CONSOLE_BOT_ENABLED", "false").lower() == "true",
+    )
+
+
+@dataclass(frozen=True)
+class BotSettings:
+    """Telegram bot (plan-console-phase2 §3.5); the token and the admin list are files from console.yml."""
+    token_file: str
+    config_file: str
+    api_url: str
+
+
+def bot_from_env(env=None):
+    env = os.environ if env is None else env
+    return BotSettings(
+        token_file=env.get("BOT_TOKEN_FILE", "/run/bot/token"),
+        config_file=env.get("BOT_CONFIG_FILE", "/run/bot/config.json"),
+        api_url=env.get("BOT_API_URL", "https://api.telegram.org").rstrip("/"),
     )
 
 

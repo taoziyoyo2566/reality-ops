@@ -24,6 +24,14 @@ console_cloudflared_image: "{{ subs_cloudflared_image }}"
 console_offline_minutes: 15
 console_backup_keep: 14
 
+# Telegram bot（plan-console-phase2 §3.5）：vault 中写入 vault_console_bot_token 后由 console.yml 开启，删除即关闭。
+# 管理员是 Telegram 数字用户 ID（vault_console_bot_admin_ids，列表）；向 bot 发送 /id 可查到自己的 ID。
+# 步骤见 docs/runbooks/telegram-bot.md。
+console_bot_token: "{{ vault_console_bot_token | default('') }}"
+console_bot_enabled: "{{ console_bot_token | length > 0 }}"
+console_bot_admin_ids: "{{ vault_console_bot_admin_ids | default([]) }}"
+console_bot_api_url: "https://api.telegram.org"
+
 console_memory_limit: "128m"
 console_docker_log_max_size: "10m"
 console_docker_log_max_file: "3"

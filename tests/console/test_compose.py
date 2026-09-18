@@ -128,6 +128,46 @@ class ConsoleComposeTest(unittest.TestCase):
         dockerfile = (REPO / "docker/console/Dockerfile").read_text()
         self.assertIn(f"FROM {edge['edge_xray_image']} AS xray", dockerfile)
 
+    def test_bot_only_with_a_token(self):
+        self.assertNotIn("bot", self.services)
+        self.assertEqual(self.services["web"]["environment"]["CONSOLE_BOT_ENABLED"], "false")
+        raw = yaml.safe_load((REPO / "group_vars/all/console.yml").read_text())
+        self.assertEqual(raw["console_bot_token"], "{{ vault_console_bot_token | default('') }}")
+        self.assertEqual(raw["console_bot_enabled"], "{{ console_bot_token | length > 0 }}")
+        self.assertEqual(raw["console_bot_admin_ids"], "{{ vault_console_bot_admin_ids | default([]) }}")
+
+    def test_bot_service(self):
+        services = yaml.safe_load(render(console_bot_enabled=True))["services"]
+        bot = services["bot"]
+        self.assertEqual(bot["command"], ["python", "-m", "console.bot"])
+        self.assertEqual((bot["user"], bot["image"], bot["networks"]), ("10002:10002", IMAGE, ["egress"]))
+        self.assertNotIn("ports", bot)
+        self.assertEqual(sorted(bot["volumes"]), [
+            "/opt/reality-console/bot:/run/bot:ro", "/opt/reality-console/db:/db",
+            "/opt/reality-console/registry:/registry:ro", "/opt/reality-subs/data:/subs-data",
+            "/opt/reality-subs/db:/subs-db:ro"])
+        self.assertEqual(bot["healthcheck"]["test"], ["CMD", "python", "-m", "console.bot", "--check"])
+        self.assertTrue(bot["read_only"])
+        self.assertEqual((bot["cap_drop"], bot["security_opt"]), (["ALL"], ["no-new-privileges:true"]))
+        env = bot["environment"]
+        self.assertEqual((env["CONSOLE_PUBLIC_BASE_URL"], env["BOT_API_URL"]),
+                         ("https://sub.taoziyoyo.com", "https://api.telegram.org"))
+        self.assertNotIn("BOT_TOKEN", " ".join(env))                     # the token is a mounted file only
+        web_env = services["web"]["environment"]
+        self.assertEqual(web_env["CONSOLE_BOT_ENABLED"], "true")
+        self.assertEqual({k: v for k, v in env.items() if k.startswith("STATUS_")},
+                         {k: v for k, v in web_env.items() if k.startswith("STATUS_")})
+
+    def test_role_writes_bot_files_for_the_container_only(self):
+        tasks = yaml.safe_load((REPO / "roles/console_service/tasks/main.yml").read_text())
+        files = next(t for t in tasks if t["name"] == "下发 Telegram bot 的 token 与管理员列表")
+        self.assertEqual((files["copy"]["owner"], files["copy"]["group"], files["copy"]["mode"]),
+                         ("0", "{{ console_uid }}", "0640"))
+        self.assertTrue(files["no_log"])
+        dirs = next(t for t in tasks if t["name"] == "创建控制台目录")["loop"]
+        self.assertIn({"path": "{{ console_root_dir }}/bot", "owner": "0", "group": "{{ console_uid }}", "mode": "0750"},
+                      dirs)
+
     def test_only_web_is_published_and_only_on_loopback(self):
         self.assertEqual(self.services["web"]["ports"], ["127.0.0.1:8200:8200"])
         self.assertNotIn("ports", self.services["report"])
@@ -159,7 +199,7 @@ class ConsoleComposeTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which("docker"), "docker not available")
     def test_compose_reads_the_file_as_intended(self):
         with tempfile.TemporaryDirectory() as tmp:
-            text = render(console_root_dir=tmp, console_registry_dir=f"{tmp}/registry")
+            text = render(console_root_dir=tmp, console_registry_dir=f"{tmp}/registry", console_bot_enabled=True)
             pathlib.Path(tmp, "secrets").mkdir()
             pathlib.Path(tmp, "secrets", "tunnel.env").write_text("TUNNEL_TOKEN=x\n")
             path = pathlib.Path(tmp, "compose.yaml")
@@ -173,6 +213,7 @@ class ConsoleComposeTest(unittest.TestCase):
                          [("127.0.0.1", "8200", 8200)])
         self.assertEqual(web["mem_limit"], str(128 * 1024 * 1024))
         self.assertEqual(sorted(services["report"]["networks"]), ["internal"])
+        self.assertEqual(sorted(services["bot"]["networks"]), ["egress"])
 
 
 class SubsHandOverTest(unittest.TestCase):

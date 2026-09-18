@@ -1,4 +1,4 @@
-"""Console database (SQLite, WAL). The web and report services open it from separate processes."""
+"""Console database (SQLite, WAL). The web, report, status and bot services open it from separate processes."""
 import contextlib
 import os
 import sqlite3
@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS node_sync (
     node TEXT PRIMARY KEY, checked_at INTEGER NOT NULL, desired TEXT NOT NULL, applied TEXT, running TEXT,
     pending TEXT NOT NULL DEFAULT '[]', error TEXT NOT NULL DEFAULT '');
+-- Telegram bot (plan-console-phase2 §3.5): one unexpired one-time binding code per user.
+CREATE TABLE IF NOT EXISTS bot_links (
+    user TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
 """
 REPORT_SEQ_DAYS = 30
 
@@ -116,6 +119,24 @@ def tokens(conn):
 
 def token_rows(conn):
     return {r["user"]: dict(r) for r in conn.execute("SELECT * FROM tokens")}
+
+
+def issue_token(conn, user, token):
+    conn.execute("INSERT INTO tokens (user, token, issued_at) VALUES (?, ?, ?)", (user, token, now()))
+
+
+def rotate_token(conn, user, token):
+    conn.execute("UPDATE tokens SET token = ?, rotated_at = ? WHERE user = ?", (token, now(), user))
+
+
+def setting(conn, key):
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_setting(conn, key, value):
+    conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, str(value)))
 
 
 def shown_nodes(conn):

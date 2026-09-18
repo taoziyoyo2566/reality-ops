@@ -60,6 +60,14 @@ def last_fetches(path, days=90):
     return result
 
 
+def human_bytes(n):
+    n = float(n or 0)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024 or unit == "TiB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
 def node_status(conn):
     return {r["node"]: {"received_at": r["received_at"], "period_to": r["period_to"],
                         "report": json.loads(r["report"]), "xray_restart_at": r["xray_restart_at"]}
