@@ -21,14 +21,14 @@
 <input type="text" name="confirm" placeholder="输入用户名 {{ name }} 以确认" autocomplete="off">
 <button class="danger">吊销订阅</button>
 </form>
-{% elif profile %}
+{% elif known %}
 <p>尚未发放订阅地址。</p>
 <form method="post" action="/users/{{ name }}/issue" class="inline">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <button class="primary">发放订阅地址</button>
 </form>
 {% else %}
-<p class="bad">用户档案已不存在，只能吊销。</p>
+<p class="bad">该用户已不在任何节点上，档案也不存在，只能吊销。</p>
 {% endif %}
 </section>
 
@@ -53,6 +53,14 @@
 <p class="muted">该用户不在任何已登记节点上。</p>
 {% endif %}
 </section>
+
+{% if known and not profile %}
+<section>
+<h2>档案</h2>
+<p class="muted">控制台还没有这个用户的档案信息（分组、单独允许 / 禁止）。它在部署控制台时从仓库 <code>users/</code> 导出，
+运行 <code>console.yml</code> 可更新；不影响发放订阅。</p>
+</section>
+{% endif %}
 
 {% if profile %}
 <section>

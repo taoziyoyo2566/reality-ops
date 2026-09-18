@@ -10,7 +10,7 @@
 <tbody>
 {% for r in rows %}
 <tr>
-<td><a href="/users/{{ r.name }}">{{ r.name }}</a>{% if not r.profile %} <span class="bad">档案已不存在</span>{% endif %}</td>
+<td><a href="/users/{{ r.name }}">{{ r.name }}</a>{% if not r.profile %} <span class="warn">档案未同步</span>{% endif %}</td>
 <td>{% for g in r.groups %}<span class="tag">{{ g }}</span>{% endfor %}</td>
 <td>{% if r.nodes %}{{ r.nodes | join(', ') }}{% else %}<span class="muted">—</span>{% endif %}</td>
 <td>{% if r.issued %}<span class="ok">已发放</span>{% else %}<span class="muted">未发放</span>{% endif %}</td>
@@ -21,5 +21,7 @@
 </tbody>
 </table>
 </section>
-<p class="muted">用户档案来自仓库 <code>users/</code>，增删改用户在第一阶段仍用命令行完成；“可用的新节点”取自各节点最近一次部署的注册文件。</p>
+<p class="muted">用户来自各节点最近一次部署的注册文件，分组等档案信息来自仓库 <code>users/</code>（部署控制台时导出）。
+新用户跑完 <code>edge.yml</code> 就能在这里发放订阅；“档案未同步”表示控制台还没有这个人的档案信息，
+运行 <code>console.yml</code> 可更新，若其档案确已删除则应吊销其订阅。增删改用户在第一阶段仍用命令行完成。</p>
 {% endblock %}

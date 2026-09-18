@@ -451,6 +451,9 @@ Contract: [`plan-node-status-page`](reviews/console/plan-node-status-page-2026-0
   Fix in the working tree: routing `domainStrategy` `IPOnDemand` (S3 contract §10). `[实测]` node e2e 44/44 and console
   e2e 49/49 with the fix: literal IP, a name pointing at loopback and one pointing at the Docker gateway are all
   refused, SOCKS5 routing per user unchanged. Old-system templates still use `IPIfNonMatch` and were not checked.
+- `[代码]` 2026-09-18 working tree, not deployed: the console takes its user list from the node registration files as
+  well as the exported profiles, so a user is issuable right after `edge.yml` (`console.yml` only refreshes profile
+  details). Users without exported profile details show “档案未同步”.
 - `[实测]` 2026-09-18 deployed: `edge.yml` on `dzire` first, then the rest (each Xray restarted once); `subs.yml` and
   `console.yml` on `spt`. All four nodes probe normally (6 targets, no alerts, availability 100%); latest probe
   `usca` 141ms, `kagoya` 420ms, `dzire` 927ms, `legend` 880-950ms with one 5535ms round (probably an occasional DNS

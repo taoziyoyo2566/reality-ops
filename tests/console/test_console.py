@@ -402,6 +402,21 @@ class WebAppTest(unittest.TestCase):
         self.assertEqual(actions, ["revoke", "rotate", "issue"])
         self.assertNotIn(second, page)
 
+    def test_a_user_deployed_to_a_node_can_be_issued_before_the_profiles_are_exported(self):
+        self.env.write_users(["alice", "bob"])          # `test` is on alpha but not in the exported profiles
+        with Server(self.app) as srv:
+            page = srv.request("GET", "/users")[1]
+            self.assertIn(">test</a> <span class=\"warn\">档案未同步", page)
+            status, page, _ = srv.request("GET", "/users/test")
+            self.assertEqual(status, 200)
+            self.assertIn("发放订阅地址", page)
+            self.assertIn("控制台还没有这个用户的档案信息", page)
+            self.assertEqual(self.post(srv, "/users/test/issue", csrf=self.csrf)[0], 303)
+            self.assertIsNotNone(self.token("test"))
+            self.assertEqual(self.post(srv, "/users/ghost/issue", csrf=self.csrf)[0], 303)
+            self.assertIsNone(self.token("ghost"))      # neither a profile nor a node
+            self.assertEqual(srv.request("GET", "/users/ghost")[0], 404)
+
     def test_node_toggle_and_pages(self):
         with self.env.conn() as conn:
             conn.execute("INSERT INTO tokens (user, token, issued_at) VALUES ('bob', ?, 1)", ("b" * 43,))

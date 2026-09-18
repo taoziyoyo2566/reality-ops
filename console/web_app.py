@@ -148,8 +148,15 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
         return f"{settings.public_base_url}/s/{token}"
 
     def view_context():
+        """Nodes, unreadable registration files, and {user: profile or None}.
+
+        A user deployed to a node counts even when the exported profiles are older than the deployment, so a new
+        user can be issued an address right after `edge.yml`, without waiting for the next `console.yml` run.
+        """
         nodes, problems, _ = registry.current()
-        users = queries.load_users(settings.users_file)
+        profiles = queries.load_users(settings.users_file)
+        users = {name: None for node in nodes.values() for name in node.users}
+        users.update(profiles)
         return nodes, problems, users
 
     @app.get("/healthz")
@@ -181,7 +188,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
         rows = []
         for name in sorted(set(users) | set(tokens)):
             rows.append({
-                "name": name, "profile": name in users,
+                "name": name, "profile": users.get(name) is not None,
                 "groups": (users.get(name) or {}).get("groups", []),
                 "nodes": sorted(n for n, node in nodes.items() if name in node.users),
                 "issued": name in tokens, "fetch": fetches.get(name),
@@ -207,7 +214,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
         node_rows = [{"name": n, "label": node.label, "shown": n in shown, "xhttp": node.xhttp["enabled"],
                       "traffic": per_node.get(n, {"up": 0, "down": 0})}
                      for n, node in sorted(nodes.items()) if name in node.users]
-        return page(request, "user.html", name=name, profile=users.get(name), token=token, url=url,
+        return page(request, "user.html", name=name, profile=users.get(name), known=name in users, token=token, url=url,
                     qr=qr_svg(url) if url else None, node_rows=node_rows, month=month, daily=daily,
                     fetch=queries.last_fetches(settings.subs_access_db).get(name))
 
@@ -217,7 +224,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             return refused()
         if not NAME_RE.match(name):
             return PlainTextResponse("not found\n", status_code=404)
-        users = queries.load_users(settings.users_file)
+        _, _, users = view_context()
         with db.connect(settings.db_path) as conn:
             existing = db.token_rows(conn).get(name)
             now = db.now()

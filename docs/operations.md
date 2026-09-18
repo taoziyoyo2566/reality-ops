@@ -584,7 +584,7 @@ ssh -N -L 8200:127.0.0.1:8200 <spt>
 
 | 要做的事 | 在哪里 | 说明 |
 |---|---|---|
-| 给用户发订阅地址 | 用户 → 点用户名 → 发放订阅地址 | 页面显示地址与二维码，只发给本人；用户须已有档案（`users/*.yml`） |
+| 给用户发订阅地址 | 用户 → 点用户名 → 发放订阅地址 | 页面显示地址与二维码，只发给本人；用户须已部署到至少一台新系统节点 |
 | 地址泄露，要换 | 用户详情 → 重置地址 | 旧地址立即失效，用户需重新导入 |
 | 停用某用户的订阅 | 用户详情 → 输入用户名 → 吊销订阅 | 订阅地址返回 404；**节点上的账号不受影响**，已导入的节点仍能用，要停止访问须修改用户档案并部署 |
 | 看某用户是否在用 | 用户列表 / 用户详情 | 最后拉取时间、各节点本月流量、近 31 天每日流量 |
@@ -597,7 +597,8 @@ ssh -N -L 8200:127.0.0.1:8200 <spt>
 
 第一阶段不在控制台里做的事：
 
-- 新增、修改、删除用户：`generate_user.py` 修改档案 → 旧节点 `deploy.yml` → 新节点 `edge.yml` → `console.yml`（更新页面上的档案信息）。
+- 新增、修改、删除用户：`generate_user.py` 修改档案 → 旧节点 `deploy.yml` → 新节点 `edge.yml`，之后就能在控制台发放订阅
+  （用户列表取自节点登记文件）。`console.yml` 只用于更新页面上的档案信息（分组、单独允许 / 禁止），不影响发放。
   `edge.yml` 会提示新旧实例的用户差异，不会中止；节点登记变化后控制台 30 秒内自动重新发布订阅。
 - 部署、升级、增删节点：`edge.yml` / `edge-remove.yml`；开启节点上报见 §14.3。
 
@@ -757,3 +758,20 @@ ssh <spt> "sudo docker compose -f /opt/reality-console/compose.yaml ps status; s
 - 停用状态页：`status_enabled: false` 后运行 `console.yml`，停止 `status` 服务并删除 `status.json`；历史数据保留在控制台数据库。
 - 移除某节点的探测账号：在 `group_vars/all/status.yml` 把 `status_probe_nodes` 改成明确的列表（去掉该节点），
   再 `$PB edge.yml --limit <节点>`（Xray 重启一次）；该节点从状态页消失，历史保留。
+
+### 14.9 在节点上移除旧系统
+
+路线图 2026-09-18：用户迁到新系统后停用旧系统。`legacy-remove.yml` 只移除旧实例，节点保留给新系统，不修改仓库中的
+`users/`、inventory 或 host_vars（`decommission.yml` 用于节点整台下线，会改用户档案，不适用于这种情况）。
+
+```bash
+$PB legacy-remove.yml -e '{"legacy_remove_nodes": ["jp05"]}' --check -e ansible_become=false   # 先预览（不改动、不用 sudo）
+$PB legacy-remove.yml -e '{"legacy_remove_nodes": ["jp05"], "legacy_free_space": true}'
+```
+
+- 删除：`reality_*` 容器、`/opt/reality`（旧配置、日志、旧监控）、旧监控 agent（用户 `reality-monitor-agent`、其定时任务、
+  `/usr/local/bin/traffic_agent.py`）、`/etc/logrotate.d/reality-xray`。`legacy_free_space` 另清理 journald 日志（保留 50MB）与 apt 缓存。
+- 保留：新实例与 Xray 镜像（同一 digest）、`/etc/sysctl.d/99-reality-optimizations.conf`（BBR 等）、`/etc/docker/daemon.json`
+  （Docker IPv6，新实例的 IPv6 监听依赖它）、已安装的软件包。
+- 影响：该节点上的旧订阅链接随即失效；尚未拿到新订阅地址的用户失去这台节点，其他旧节点不受影响。
+- `spt`（控制台与订阅服务所在主机）被拒绝执行。

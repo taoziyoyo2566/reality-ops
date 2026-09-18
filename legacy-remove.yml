@@ -1,0 +1,100 @@
+---
+# 在节点上移除旧系统（single / multi 实例与旧监控 agent），节点保留给新系统使用。
+# 路线图 2026-09-18：用户迁到新系统后停用旧系统。必须明确列出节点，逐台执行：
+#   ./monitor_venv/bin/ansible-playbook -i inventory.ini legacy-remove.yml -K --vault-password-file ~/.vault_pass \
+#     -e '{"legacy_remove_nodes": ["jp05"], "legacy_free_space": true}'
+# legacy_free_space：同时清理 journald 日志（保留 50MB）与 apt 缓存，用于磁盘紧张的节点。
+#
+# 删除：reality_* 容器、/opt/reality（旧配置、日志、旧监控）、旧监控 agent（用户、定时任务、脚本）、/etc/logrotate.d/reality-xray。
+# 保留：新实例（/opt/xray-edge、xray_edge* 容器）；Xray 镜像（新实例用同一 digest）；
+#       /etc/sysctl.d/99-reality-optimizations.conf（BBR 等网络优化，新实例同样使用）；
+#       /etc/docker/daemon.json（Docker IPv6，新实例的 IPv6 监听依赖它）；已安装的软件包。
+# 本 playbook 不修改仓库中的 users/、inventory 或 host_vars（与 decommission.yml 不同：节点并未下线）。
+- hosts: reality_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  vars:
+    legacy_remove_nodes: []
+    legacy_free_space: false
+  tasks:
+    - name: 必须明确列出节点，且不能包含控制台或订阅服务所在主机
+      run_once: true
+      delegate_to: localhost
+      become: false
+      assert:
+        that:
+          - legacy_remove_nodes | length > 0
+          - legacy_remove_nodes | difference(groups['reality_nodes']) | length == 0
+          - console_host not in legacy_remove_nodes
+          - subs_host not in legacy_remove_nodes
+        fail_msg: >-
+          用 -e '{"legacy_remove_nodes": ["节点名"]}' 列出要移除旧系统的节点（必须在 reality_nodes 中）；
+          {{ console_host }}、{{ subs_host }} 上运行着控制台与订阅服务，不能在此移除。
+
+    - name: 移除旧系统（只处理列出的节点）
+      when: inventory_hostname in legacy_remove_nodes
+      block:
+        - name: 读取移除前的磁盘
+          command: df -h /
+          register: legacy_disk_before
+          changed_when: false
+          check_mode: false
+
+        - name: 列出旧实例容器
+          shell: "docker ps -a --filter 'name=^reality_' --format '{% raw %}{{.Names}}{% endraw %}'"
+          register: legacy_containers
+          changed_when: false
+          check_mode: false
+
+        - name: 停止并删除旧实例容器
+          command:
+            argv: "{{ ['docker', 'rm', '-f'] + legacy_containers.stdout_lines }}"
+          when: legacy_containers.stdout_lines | length > 0
+
+        - name: 检查旧监控 agent 用户
+          getent:
+            database: passwd
+            key: reality-monitor-agent
+            fail_key: false
+
+        - name: 删除旧监控 agent 的定时任务
+          cron:
+            name: "Reality Traffic Report"
+            user: reality-monitor-agent
+            state: absent
+          when: (ansible_facts.getent_passwd | default({})).get('reality-monitor-agent') is not none
+
+        - name: 删除旧监控 agent 用户
+          user:
+            name: reality-monitor-agent
+            state: absent
+
+        - name: 删除旧系统文件
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ reality_root_dir }}"
+            - /usr/local/bin/traffic_agent.py
+            - /etc/logrotate.d/reality-xray
+
+        - name: 清理 journald 日志与 apt 缓存
+          when: legacy_free_space | bool
+          shell: |
+            journalctl --vacuum-size=50M >/dev/null 2>&1 || true
+            apt-get clean >/dev/null 2>&1 || true
+          changed_when: true
+
+        - name: 读取移除后的磁盘
+          command: df -h /
+          register: legacy_disk_after
+          changed_when: false
+          check_mode: false
+
+        - name: 结果
+          debug:
+            msg:
+              - "删除的容器：{{ legacy_containers.stdout_lines | join(', ') or '无' }}"
+              - "移除前：{{ legacy_disk_before.stdout_lines | last }}"
+              - "移除后：{{ legacy_disk_after.stdout_lines | last }}"

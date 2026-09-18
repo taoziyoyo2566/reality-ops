@@ -2,8 +2,10 @@
 # 实施合同：docs/reviews/data-plane-edge/plan-single-instance-443-2026-09-15.md
 # 只被 edge.yml / edge-remove.yml 使用；旧实现不读取任何 edge_* 变量。
 
-# 允许运行新实例的节点；edge.yml 对未列出的节点直接失败。
-edge_nodes: ["dzire", "usca", "legend", "kagoya"]
+# 允许运行新实例的节点；edge.yml 只处理这里列出的主机，其余跳过。
+# 上报、状态页探测都跟随这个列表，新增节点部署后自动纳入。
+# jp05 磁盘小：先用 legacy-remove.yml 移除其旧系统（docs/operations.md §14.9），再运行 edge.yml。
+edge_nodes: ["dzire", "usca", "legend", "kagoya", "netcup", "ams", "dcc", "hk01", "hk02", "jp10", "jp05"]
 
 # 只加入新实例、不改用户档案的额外用户（canary 测试账号）。不得与该节点的 ACL 结果重复。
 edge_extra_users: ["test"]
