@@ -160,6 +160,9 @@
            'users': edge_users | sort(attribute='name'),
            'report': {'enabled': edge_report_enabled | bool, 'token_sha256': edge_report_token_sha256},
            'status_probe': edge_status_probe_enabled | bool,
+           'sync': edge_sync_enabled | bool,
+           'short_ids': ((edge_desired_users | map(attribute='short_id') | list) + (edge_extra_short_ids | default([])))
+                        | unique | sort,
            'image': edge_xray_image
          } | to_nice_json(indent=1) }}
   no_log: true

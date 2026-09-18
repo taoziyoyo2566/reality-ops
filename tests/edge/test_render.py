@@ -209,6 +209,21 @@ class RenderTest(unittest.TestCase):
         self.assertEqual((block["ip"], block["outboundTag"]), (["geoip:private"], "blocked"))
         self.assertLess(routing["rules"].index(block), len(routing["rules"]) - 1)
 
+    def test_extra_short_ids_are_accepted_before_any_user_has_them(self):
+        state = desired(reality={"target": "www.example.com:443", "server_names": ["www.example.com"],
+                                 "extra_short_ids": ["c0ffee00", "a1a1a1a1"]})
+        reality = inbound(edge.render(state, PRIVATE_KEY), "vless-reality")
+        self.assertEqual(reality["streamSettings"]["realitySettings"]["shortIds"], ["a1a1a1a1", "b0b0b0b0", "c0ffee00"])
+        self.assertEqual(edge.render(desired(), PRIVATE_KEY), edge.render(
+            desired(reality={"target": "www.example.com:443", "server_names": ["www.example.com"], "extra_short_ids": []}),
+            PRIVATE_KEY))
+        before = edge.render(desired(), PRIVATE_KEY)
+        self.assertEqual(edge.classify(before, edge.render(state, PRIVATE_KEY)), "restart")
+        bad = desired(reality={"target": "www.example.com:443", "server_names": ["www.example.com"],
+                               "extra_short_ids": ["xyz"]})
+        with self.assertRaises(edge.ApplyError):
+            edge.render(bad, PRIVATE_KEY)
+
     def test_render_is_order_independent(self):
         state = desired()
         reordered = copy.deepcopy(state)

@@ -79,6 +79,11 @@ edge_logrotate_interval: 3600
 edge_user_source: "console"
 # 在控制台所在主机上执行控制台命令的前缀（edge.yml 经它读取每台节点的用户名单）。
 edge_console_exec: "docker compose -f {{ console_root_dir }}/compose.yaml exec -T web"
+# 节点 agent 每 edge_sync_interval 秒向控制台取本节点的用户名单，经 Xray API 增删（plan-console-phase2 §3.3、D-P2-4）。
+# 需要控制台来源与节点上报；关闭后运行 edge.yml，agent 只上报。
+edge_sync_enabled: "{{ edge_user_source == 'console' and (edge_report_enabled | bool) }}"
+edge_sync_url: "https://{{ console_report_host }}/sync"
+edge_sync_interval: 60
 
 # 测试订阅链接写到控制端此目录（不在仓库内；目录 0700、文件 0600）。
 edge_subs_dir: "{{ lookup('env', 'HOME') }}/.local/share/reality-ops/edge-subs"

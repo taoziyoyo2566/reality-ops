@@ -32,7 +32,7 @@
 <td>{% for g in r.tiers %}<span class="tag">{{ g }}</span>{% endfor %}</td>
 <td>{% if r.state == 'active' %}<span class="ok">启用</span>{% elif r.state == 'disabled' %}<span class="muted">停用</span>{% elif r.state == 'expired' %}<span class="bad">已到期</span>{% elif managed %}<span class="warn">不在控制台</span>{% else %}<span class="warn">档案未同步</span>{% endif %}</td>
 <td>{{ r.expires_on or '—' }}</td>
-<td class="num">{{ r.nodes | length }}{% if r.pending %} <span class="warn" title="{{ r.pending | join(', ') }}">待部署</span>{% endif %}</td>
+<td class="num">{{ r.nodes | length }}{% if r.pending %} <span class="warn" title="{{ r.pending | join(', ') }}">待生效</span>{% endif %}</td>
 <td>{% if r.issued %}<span class="ok">已发放</span>{% else %}<span class="muted">未发放</span>{% endif %}</td>
 <td>{% if r.fetch %}{{ r.fetch.at | time }} <span class="muted">{{ r.fetch.fmt }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
 <td class="num">{{ (r.traffic.up + r.traffic.down) | bytes }}</td>
@@ -46,5 +46,5 @@
 <span class="muted">只有启用且未发放的用户可以勾选；清单只在页面上显示和下载，不保存在服务器上。</span></p>
 </section>
 </form>
-<p class="muted">“可用节点”按档位与单独允许 / 禁止计算；“待部署”表示该用户在某些节点上的状态与控制台不一致，运行 <code>edge.yml</code> 后生效。</p>
+<p class="muted">“可用节点”按档位与单独允许 / 禁止计算；“待生效”表示该用户在某些节点上与控制台还不一致：开启用户同步的节点约一分钟内生效，其余节点运行 <code>edge.yml</code> 后生效。</p>
 {% endblock %}

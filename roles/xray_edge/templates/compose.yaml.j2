@@ -74,6 +74,12 @@ services:
       REPORT_INTERVAL: {{ edge_report_interval | int | string | to_json }}
       REPORT_TOKEN_FILE: "/run/report/report-token"
       LISTEN_PORT: {{ edge_listen_port | int | string | to_json }}
+      # 用户同步（plan-console-phase2 §3.3）：经本机 Xray API 增删用户，不改配置文件、不重启。
+      SYNC_ENABLED: {{ (edge_sync_enabled | bool) | string | lower | to_json }}
+      SYNC_URL: {{ edge_sync_url | to_json }}
+      SYNC_INTERVAL: {{ edge_sync_interval | int | string | to_json }}
+      SYNC_KEEP: {{ ([status_probe_user] if (edge_status_probe_enabled | bool) else []) | join(',') | to_json }}
+      XHTTP_ENABLED: {{ (edge_xhttp_enabled | bool) | string | lower | to_json }}
     volumes:
       - {{ (edge_root_dir ~ '/logs:/var/log/xray:ro') | to_json }}
       - {{ (edge_root_dir ~ '/secrets:/run/report:ro') | to_json }}
@@ -82,8 +88,8 @@ services:
     tmpfs: ["/tmp"]
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
-    pids_limit: 16
-    mem_limit: "48m"
+    pids_limit: 32
+    mem_limit: "96m"
     logging: {{ logging | to_json }}
 
 {% endif %}

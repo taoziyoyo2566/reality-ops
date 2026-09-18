@@ -487,6 +487,24 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   by layer digests, because ams and dcc use the classic `overlay2` store whose image IDs differ from the containerd
   store's for the same image. First report of a freshly deployed node gets 401 (the reporter starts before the node is
   registered) and succeeds on the retry five minutes later.
+- `[代码]` 2026-09-19, 2b: the node reporter is now the node agent (`docker/edge-tools/edge_reporter.py`
+  class `Sync`): every `edge_sync_interval` (60 s) it posts the users running on the node to `POST /sync` on the report
+  service and applies the console's list for that node with `xray api inbounduser / rmu / adu` (tools image now carries
+  `/usr/local/bin/xray` from `edge_xray_image`); it refuses an empty list or removing more than half the users at once and
+  never touches `SYNC_KEEP` (the probe account). The desired state gains `reality.extra_short_ids` (the console's shared
+  short id), registration files gain `sync` and `short_ids`; the console builds subscriptions from the users each syncing
+  node reports (`users.effective_nodes`), republishes when those change, records `node_sync`, and holds back users whose
+  short id the node is not configured for (pending, needs `edge.yml`).
+- `[实测]` 2026-09-19 local: `tests/edge/test_agent.py` 6/6, `tests/console/test_sync.py` 5/5, console unit tests
+  20 + 35 + 15, edge compose 9/9; console e2e 59/59 with a real node and agent: a user created in the web page was on the
+  node 2 s later (sync interval 5 s in the test), connected with the shared short id without an Xray restart, was
+  removed when disabled (new connections refused), and was added back by the agent after an Xray restart; the probe
+  account was never touched.
+- `[实测]` 2026-09-19 2b rollout: `console.yml`, then `edge.yml` on all 11 nodes (15.5 min, `serial: 1`; one Xray
+  restart per node for the shared short id). Afterwards all 11 nodes report synced with no pending users, console home
+  shows no alerts, and no status probe failed during the rollout. A node's first sync right after enabling gets 409
+  (its agent starts before the console sees the new registration); the console shows that error for one more cycle,
+  because it records the state the agent reported in its request, and it clears after about a minute.
 - `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while

@@ -78,7 +78,8 @@ def node_users(settings, node):
             print(json.dumps({"error": "the console has no users yet; run console.yml to import them"}))
             return 3
         users = users_mod.node_users(conn, node, day)
-    print(json.dumps({"node": node, "day": day, "users": users}))
+        short_ids = [users_mod.shared_short_id(conn)]
+    print(json.dumps({"node": node, "day": day, "users": users, "short_ids": short_ids}))
     return 0
 
 

@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Report per-user traffic and node status from an xray_edge node to the console (plan-console-phase1 §3.4).
+"""Node agent for xray_edge: reports traffic and status to the console, and keeps this node's users in line with
+the console (plan-console-phase1 §3.4, plan-console-phase2 §3.3).
 
-Reads only Xray's metrics endpoint (/debug/vars, read-only) and never the Xray API, which can add or remove users.
-Each report carries an instance id (new whenever the spool state is lost) and a sequence number; unsent reports
-stay in the spool directory and are retried in order, and the console ignores a report it has already stored.
+Reports: per-user counters from Xray's metrics endpoint (/debug/vars, read-only) every REPORT_INTERVAL. Each report
+carries an instance id (new whenever the spool state is lost) and a sequence number; unsent reports stay in the spool
+directory and are retried in order, and the console ignores a report it has already stored.
+
+User sync (SYNC_ENABLED): every SYNC_INTERVAL the agent posts the users running here to SYNC_URL and receives the
+console's list for this node; differences are applied through the Xray API (add / remove users, never a restart, never
+the configuration files). It refuses an empty list and removing more than half of the users at once; those need a
+deployment (edge.yml). Users named in SYNC_KEEP (the status probe account) are never touched.
 
 Environment:
   REPORT_URL         https://<report host>/report
@@ -15,6 +21,12 @@ Environment:
   SPOOL_MAX          unsent reports kept before the oldest is dropped (default 2016, one week at 5 minutes)
   ERROR_LOG          Xray error log (default /var/log/xray/error.log)
   LISTEN_PORT        port whose listening state is reported (default 443)
+  SYNC_ENABLED       "true" to keep users in line with the console (default false)
+  SYNC_URL           https://<report host>/sync
+  SYNC_INTERVAL      seconds between syncs (default 60)
+  SYNC_KEEP          comma-separated users the agent never adds or removes
+  XHTTP_ENABLED      "true" when the node has the XHTTP inbound
+  XRAY_BIN           default /usr/local/bin/xray;  XRAY_API default 127.0.0.1:10085
 
 The reporter shares Xray's network namespace. When Xray restarts, that namespace is replaced and the reporter
 loses it, so after MAX_METRICS_FAILURES failed readings in a row it exits and Docker restarts it into the new one.
@@ -24,6 +36,7 @@ import datetime
 import json
 import os
 import secrets
+import subprocess
 import sys
 import time
 import urllib.error
@@ -267,6 +280,170 @@ def run_once(cfg, spool):
     return True
 
 
+# --------------------------------------------------------------------------
+# User sync (plan-console-phase2 §3.3)
+# --------------------------------------------------------------------------
+
+REALITY_TAG = "vless-reality"
+XHTTP_TAG = "vless-xhttp"
+XHTTP_LISTEN = "@xray-edge-xhttp"
+VISION_FLOW = "xtls-rprx-vision"
+MIN_REMOVALS_REFUSED = 4
+
+
+class SyncError(Exception):
+    """A sync step that failed; the message is safe to log and send (no user ids)."""
+
+
+def xray_api(cfg, command, *args, stdin=None):
+    # Go flag parsing stops at the first positional argument, so -s must precede emails or files.
+    try:
+        proc = subprocess.run([cfg["xray_bin"], "api", command, "-s", cfg["xray_api"], *args], input=stdin,
+                              capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SyncError(f"xray api {command}: {type(exc).__name__}") from None
+    if proc.returncode != 0:
+        raise SyncError(f"xray api {command} failed (rc={proc.returncode})")
+    return proc.stdout
+
+
+def inbound_tags(cfg):
+    return [REALITY_TAG] + ([XHTTP_TAG] if cfg["xhttp"] else [])
+
+
+def running_users(cfg, tag):
+    """{user name: uuid} of this node's users on one inbound (emails are <user>.<node>)."""
+    try:
+        data = json.loads(xray_api(cfg, "inbounduser", f"-tag={tag}") or "{}")
+    except ValueError:
+        raise SyncError("xray api inbounduser: unreadable output") from None
+    suffix = f".{cfg['node']}"
+    users = {}
+    for user in data.get("users") or []:
+        email = user.get("email") or ""
+        if email.endswith(suffix):
+            users[email[:-len(suffix)]] = str((user.get("account") or {}).get("id", "")).lower()
+    return users
+
+
+def sync_plan(desired, running, keep):
+    """(remove, add) names for one inbound; a changed UUID is removed, then added. Users in keep are left alone."""
+    want = {n: u["uuid"].lower() for n, u in desired.items() if n not in keep}
+    have = {n: uid for n, uid in running.items() if n not in keep}
+    remove = sorted(n for n in have if want.get(n) != have[n])
+    add = sorted(n for n in want if have.get(n) != want[n])
+    return remove, add
+
+
+def check_plan(desired, running, remove, add, keep):
+    """Refuse changes a deployment should make instead of the agent."""
+    have = [n for n in running if n not in keep]
+    if not [n for n in desired if n not in keep] and have:
+        raise SyncError("refusing an empty user list; deploy with edge.yml if this is intended")
+    dropped = set(remove) - set(add)
+    if len(dropped) >= MIN_REMOVALS_REFUSED and len(dropped) * 2 > len(have):
+        raise SyncError(f"refusing to remove {len(dropped)} of {len(have)} users at once; deploy with edge.yml")
+
+
+def apply_tag(cfg, tag, desired, remove, add):
+    node = cfg["node"]
+    if remove:
+        xray_api(cfg, "rmu", f"-tag={tag}", *[f"{n}.{node}" for n in remove])
+    if add:
+        clients = []
+        for name in add:
+            client = {"id": desired[name]["uuid"], "email": f"{name}.{node}", "level": 0}
+            if tag == REALITY_TAG:
+                client["flow"] = VISION_FLOW
+            clients.append(client)
+        inbound = {"tag": tag, "protocol": "vless", "settings": {"decryption": "none", "clients": clients}}
+        # adu parses a complete inbound object and rejects one without port or listen.
+        if tag == REALITY_TAG:
+            inbound["port"] = cfg["listen_port"]
+        else:
+            inbound["listen"] = XHTTP_LISTEN
+        xray_api(cfg, "adu", "stdin:", stdin=json.dumps({"inbounds": [inbound]}))
+
+
+def post_json(url, token, doc):
+    body = json.dumps(doc).encode()
+    req = urllib.request.Request(url, data=body, method="POST", headers={
+        "Content-Type": "application/json", "Authorization": f"Bearer {token}", "User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.status, json.load(resp)
+    except urllib.error.HTTPError as exc:
+        return exc.code, None
+
+
+class Sync:
+    """Keeps the last list received from the console (memory only) and whether the node runs exactly that list."""
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.keep = set(cfg["sync_keep"])
+        self.version = None
+        self.desired = None
+        self.verified = False
+        self.error = ""
+
+    def running(self):
+        return {tag: running_users(self.cfg, tag) for tag in inbound_tags(self.cfg)}
+
+    def exchange(self, token, running):
+        names = sorted(n for n in running.get(REALITY_TAG, {}) if n not in self.keep) if running is not None else None
+        status, doc = post_json(self.cfg["sync_url"], token, {
+            "schema": SCHEMA, "node": self.cfg["node"], "applied": self.version if self.verified else None,
+            "running": names, "error": self.error[:200]})
+        if status != 200 or not isinstance(doc, dict) or not isinstance(doc.get("version"), str):
+            raise SyncError(f"console answered HTTP {status}")
+        if not doc.get("unchanged"):
+            users = doc.get("users")
+            if not isinstance(users, list):
+                raise SyncError("console sent no user list")
+            self.desired = {u["name"]: u for u in users}
+            self.version = doc["version"]
+        elif self.desired is None:
+            raise SyncError("console said unchanged but no list is held")
+
+    def reconcile(self, running):
+        """Apply the held list to every inbound; True when something was changed."""
+        changed = False
+        for tag in inbound_tags(self.cfg):
+            remove, add = sync_plan(self.desired, running[tag], self.keep)
+            check_plan(self.desired, running[tag], remove, add, self.keep)
+            if remove or add:
+                apply_tag(self.cfg, tag, self.desired, remove, add)
+                log(f"sync {tag}: removed {len(remove)}, added {len(add)} (list {self.version})")
+                changed = True
+        return changed
+
+    def tick(self, token):
+        """One sync cycle; False when Xray's API is unreachable (the agent may have lost Xray's namespace)."""
+        try:
+            running = self.running()
+        except SyncError as exc:
+            self.verified, self.error = False, str(exc)
+            log(f"sync: {exc}")
+            return False
+        try:
+            self.exchange(token, running)
+            changed = self.reconcile(running)
+            if changed:
+                running = self.running()
+                self.reconcile(running)            # verify: nothing should be left to change
+                self.verified, self.error = True, ""
+                self.exchange(token, running)       # tell the console right away what now runs here
+            self.verified, self.error = True, ""
+        except SyncError as exc:
+            self.verified, self.error = False, str(exc)
+            log(f"sync: {exc}")
+        except (OSError, ValueError) as exc:
+            self.verified, self.error = False, f"console unreachable: {type(exc).__name__}"
+            log(f"sync: {self.error}")
+        return True
+
+
 def config_from_env(env):
     return {
         "url": env["REPORT_URL"],
@@ -278,23 +455,49 @@ def config_from_env(env):
         "spool_max": int(env.get("SPOOL_MAX", "2016")),
         "error_log": env.get("ERROR_LOG", "/var/log/xray/error.log"),
         "listen_port": int(env.get("LISTEN_PORT", "443")),
+        "sync_enabled": env.get("SYNC_ENABLED", "false").lower() == "true",
+        "sync_url": env.get("SYNC_URL", ""),
+        "sync_interval": int(env.get("SYNC_INTERVAL", "60")),
+        "sync_keep": [n for n in env.get("SYNC_KEEP", "").split(",") if n],
+        "xhttp": env.get("XHTTP_ENABLED", "false").lower() == "true",
+        "xray_bin": env.get("XRAY_BIN", "/usr/local/bin/xray"),
+        "xray_api": env.get("XRAY_API", "127.0.0.1:10085"),
     }
+
+
+def read_token(cfg):
+    try:
+        with open(cfg["token_file"]) as fh:
+            return fh.read().strip()
+    except OSError:
+        return None
 
 
 def main():
     cfg = config_from_env(os.environ)
     spool = Spool(cfg["spool_dir"], cfg["spool_max"])
-    log(f"node {cfg['node']}, every {cfg['interval']}s")
+    sync = Sync(cfg) if cfg["sync_enabled"] and cfg["sync_url"] else None
+    log(f"node {cfg['node']}, reports every {cfg['interval']}s"
+        + (f", user sync every {cfg['sync_interval']}s" if sync else ""))
     once = "--once" in sys.argv[1:]
     failures = 0
+    next_report = 0.0
     while True:
-        failures = 0 if run_once(cfg, spool) else failures + 1
+        ok = True
+        if time.monotonic() >= next_report:
+            ok = run_once(cfg, spool)
+            next_report = time.monotonic() + (cfg["interval"] if ok else min(cfg["interval"], 30))
+        if sync:
+            token = read_token(cfg)
+            ok = (sync.tick(token) if token else True) and ok
+        failures = 0 if ok else failures + 1
         if once:
             return 0 if failures == 0 else 1
         if failures >= MAX_METRICS_FAILURES:
-            log("metrics unreachable repeatedly; exiting so Docker restarts the reporter with Xray's network")
+            log("Xray unreachable repeatedly; exiting so Docker restarts the agent with Xray's network")
             return 1
-        time.sleep(cfg["interval"] if failures == 0 else min(cfg["interval"], 30))
+        pause = min(cfg["sync_interval"], cfg["interval"]) if sync else cfg["interval"]
+        time.sleep(pause if failures == 0 else min(pause, 30))
 
 
 if __name__ == "__main__":

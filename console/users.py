@@ -5,7 +5,9 @@ tiers; `tier_rules` maps a node tier to the user tiers it accepts; a user whose 
 node; `allow` adds nodes and `deny` removes them, deny first. Only active users whose expiry date has not passed
 are put on nodes and in subscriptions.
 """
+import dataclasses
 import datetime
+import hashlib
 import json
 import re
 import secrets
@@ -111,6 +113,58 @@ def user_nodes(conn, user, nodes):
     """Registered nodes the user may use (ignoring status and expiry)."""
     tiers_of_nodes, tier_rules = node_tiers(conn), rules(conn)
     return [n for n in sorted(nodes) if can_use(user, n, tiers_of_nodes, tier_rules)]
+
+
+def node_payload(conn, node, day):
+    """What the node agent should run: (version, users, pending names).
+
+    A user whose short id the node was not configured with at its last deployment cannot connect when added through
+    the API, so it waits for the next deployment (pending) instead of being sent.
+    """
+    wanted = node_users(conn, node.name, day)
+    allowed = set(node.short_ids) or {u["short_id"] for u in node.users.values()}
+    users = [u for u in wanted if u["short_id"] in allowed]
+    pending = [u["name"] for u in wanted if u["short_id"] not in allowed]
+    version = hashlib.sha256(json.dumps(users, sort_keys=True).encode()).hexdigest()[:16]
+    return version, users, pending
+
+
+def sync_rows(conn):
+    rows = {}
+    for r in conn.execute("SELECT * FROM node_sync"):
+        row = dict(r)
+        row["running"] = json.loads(row["running"]) if row["running"] is not None else None
+        row["pending"] = json.loads(row["pending"])
+        rows[row["node"]] = row
+    return rows
+
+
+def record_sync(conn, node, desired, applied, running, pending, error):
+    conn.execute(
+        "INSERT OR REPLACE INTO node_sync (node, checked_at, desired, applied, running, pending, error) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (node, db.now(), desired, applied, None if running is None else json.dumps(sorted(running)),
+         json.dumps(sorted(pending)), error))
+
+
+def effective_nodes(conn, nodes):
+    """Registered nodes with the users they actually run.
+
+    For a node whose agent syncs, that is the list it last reported (credentials from the console); otherwise the
+    registration file's list, i.e. the last deployment. Subscriptions and pending changes are built from this.
+    """
+    if not imported(conn):
+        return nodes
+    known = load(conn)
+    running = {n: r["running"] for n, r in sync_rows(conn).items() if r["running"] is not None}
+    out = {}
+    for name, node in nodes.items():
+        if node.sync and name in running:
+            users = {n: {"uuid": known[n]["uuid"], "short_id": known[n]["short_id"]} for n in running[name] if n in known}
+            out[name] = dataclasses.replace(node, users=users)
+        else:
+            out[name] = node
+    return out
 
 
 def differences(conn, nodes, day):

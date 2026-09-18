@@ -23,8 +23,13 @@
 <button>保存</button></p>
 </form>
 <p>按控制台应有 {{ wanted }} 个用户，节点上现有 {{ node.users | length }} 个。
-{% if diff %}<span class="warn">下次运行 <code>edge.yml</code> 时：{% if diff.add %}增加 {{ diff.add | join('、') }}；{% endif %}{% if diff.remove %}移除 {{ diff.remove | join('、') }}；{% endif %}{% if diff.change %}更新凭据 {{ diff.change | join('、') }}；{% endif %}</span>
+{% if diff %}<span class="warn">{{ '同步完成后（约一分钟）' if node.sync else '下次运行 <code>edge.yml</code> 时' | safe }}：{% if diff.add %}增加 {{ diff.add | join('、') }}；{% endif %}{% if diff.remove %}移除 {{ diff.remove | join('、') }}；{% endif %}{% if diff.change %}更新凭据 {{ diff.change | join('、') }}；{% endif %}</span>
 {% else %}<span class="ok">与控制台一致。</span>{% endif %}</p>
+<p>用户同步：<span class="{{ sync[1] }}">{{ sync[0] }}</span>
+{% if sync_row %}<span class="muted">· 最近联系 {{ sync_row.checked_at | time }} · 节点运行 {{ sync_row.running | length if sync_row.running is not none else '—' }} 人</span>
+{% if sync_row.error %}<br><span class="bad">{{ sync_row.error }}</span>{% endif %}
+{% if sync_row.pending %}<br><span class="warn">需要运行 <code>edge.yml</code> 后才能加入：{{ sync_row.pending | join('、') }}（节点尚未配置其 short_id）</span>{% endif %}{% endif %}
+{% if not node.sync %}<span class="muted">（未开启时，控制台里的用户变化在运行 <code>edge.yml</code> 后生效）</span>{% endif %}</p>
 </section>
 {% endif %}
 

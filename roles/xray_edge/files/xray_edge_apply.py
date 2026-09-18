@@ -79,6 +79,10 @@ def validate(desired):
     _require(1 <= int(reality["target"].rsplit(":", 1)[1]) <= 65535, "reality.target port must be 1-65535")
     names = _str_list(reality.get("server_names"), "reality.server_names")
     _require(len(names) > 0, "reality.server_names must not be empty")
+    # Short ids accepted before any user has them: users the node agent adds through the API later
+    # (plan-console-phase2 §3.3, D-P2-5) connect without a restart.
+    extra = _str_list(reality.get("extra_short_ids", []), "reality.extra_short_ids")
+    _require(all(SHORT_ID_RE.match(s) for s in extra), "reality.extra_short_ids must be short ids")
 
     port = (desired.get("listen") or {}).get("port")
     _require(isinstance(port, int) and 1 <= port <= 65535, "listen.port must be 1-65535")
@@ -216,7 +220,8 @@ def render(desired, private_key):
                     "xver": 0,
                     "serverNames": list(desired["reality"]["server_names"]),
                     "privateKey": private_key,
-                    "shortIds": sorted({u["short_id"] for u in users}),
+                    "shortIds": sorted({u["short_id"] for u in users}
+                                       | set(desired["reality"].get("extra_short_ids", []))),
                 },
             },
             "sniffing": _sniffing(),

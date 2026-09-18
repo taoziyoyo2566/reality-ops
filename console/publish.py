@@ -77,6 +77,8 @@ def _unchanged(directory, catalog, token_doc):
 def publish(settings, conn, registry, reason):
     """Write both files and log the result; returns (ok, detail). Never raises for data problems."""
     nodes, problems, _ = registry.current()
+    # the users each node actually runs: what its agent reported, or its last deployment (plan-console-phase2 §3.3)
+    nodes = users_mod.effective_nodes(conn, nodes)
     tokens = db.tokens(conn)
     if users_mod.imported(conn):
         # a disabled or expired user's address stops working until the user is active again (plan-console-phase2 §3.1)

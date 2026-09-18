@@ -118,6 +118,29 @@ class ComposeTemplateTest(unittest.TestCase):
                          ("usca", "https://report.example.test/report", str(GROUP_VARS["edge_report_interval"])))
         # the xray service itself is unchanged by enabling the reporter
         self.assertEqual(services["xray"], yaml.safe_load(render("usca", USCA_PORTS))["services"]["xray"])
+        self.assertEqual(env["SYNC_ENABLED"], "false")
+
+    def test_agent_user_sync(self):
+        services = yaml.safe_load(render("usca", USCA_PORTS, edge_report_enabled=True, edge_sync_enabled=True,
+                                         edge_sync_url="https://report.example.test/sync", edge_xhttp_enabled=True,
+                                         edge_status_probe_enabled=True, status_probe_user="status-probe"))["services"]
+        agent = services["reporter"]
+        env = agent["environment"]
+        self.assertEqual((env["SYNC_ENABLED"], env["SYNC_URL"], env["SYNC_INTERVAL"], env["SYNC_KEEP"], env["XHTTP_ENABLED"]),
+                         ("true", "https://report.example.test/sync", "60", "status-probe", "true"))
+        # still no Docker socket, no configuration files, read-only and unprivileged
+        self.assertNotIn("docker.sock", " ".join(agent["volumes"]))
+        self.assertNotIn("conf.d", " ".join(agent["volumes"]))
+        self.assertTrue(agent["read_only"])
+        self.assertEqual((agent["pids_limit"], agent["mem_limit"]), (32, "96m"))
+        self.assertEqual(GROUP_VARS["edge_sync_url"], "https://{{ console_report_host }}/sync")
+        self.assertEqual(GROUP_VARS["edge_sync_enabled"],
+                         "{{ edge_user_source == 'console' and (edge_report_enabled | bool) }}")
+
+    def test_tools_image_carries_the_nodes_xray(self):
+        dockerfile = (REPO / "docker/edge-tools/Dockerfile").read_text()
+        self.assertIn(f"FROM {GROUP_VARS['edge_xray_image']} AS xray", dockerfile)
+        self.assertIn("COPY --from=xray /usr/bin/xray /usr/local/bin/xray", dockerfile)
 
     @unittest.skipUnless(shutil.which("docker"), "docker not available")
     def test_compose_reads_the_file_as_intended(self):

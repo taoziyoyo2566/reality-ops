@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS node_tiers (node TEXT PRIMARY KEY, tiers TEXT NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS tier_rules (tier TEXT PRIMARY KEY, accepts TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- Node agent user sync (plan-console-phase2 §3.3): what the node last reported and what it was sent.
+CREATE TABLE IF NOT EXISTS node_sync (
+    node TEXT PRIMARY KEY, checked_at INTEGER NOT NULL, desired TEXT NOT NULL, applied TEXT, running TEXT,
+    pending TEXT NOT NULL DEFAULT '[]', error TEXT NOT NULL DEFAULT '');
 """
 REPORT_SEQ_DAYS = 30
 

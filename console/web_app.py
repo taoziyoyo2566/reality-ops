@@ -37,6 +37,7 @@ SECURITY_HEADERS = {
                                 "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"),
 }
 WATCH_SECONDS = 30
+SYNC_STALE_SECONDS = 300
 STATUS_NAMES = {"active": "启用", "disabled": "停用", "expired": "已到期", "unknown": "不在控制台"}
 
 
@@ -84,24 +85,30 @@ class Watcher:
         self.st = st or config.status_from_env()
         self.published_stamp = None
         self.published_day = None
+        self.published_sync = None
         self.last_backup_day = None
 
     def tick(self):
         _, _, stamp = self.registry.current()
         user_day = users_mod.today(self.st.utc_offset_hours)
         with db.connect(self.settings.db_path) as conn:
+            # the users node agents report running (plan-console-phase2 §3.3) decide what subscriptions contain
+            synced = conn.execute("SELECT group_concat(node || '=' || coalesce(running, ''), ';') "
+                                  "FROM (SELECT node, running FROM node_sync ORDER BY node)").fetchone()[0]
             initialized = bool(db.tokens(conn)) or bool(db.shown_nodes(conn))
-            if initialized and (stamp != self.published_stamp or user_day != self.published_day):
+            if initialized and (stamp, user_day, synced) != (self.published_stamp, self.published_day, self.published_sync):
                 if self.published_stamp is None:
                     reason = "控制台启动"
                 elif stamp != self.published_stamp:
                     reason = "注册文件变化"
+                elif synced != self.published_sync:
+                    reason = "节点用户同步"
                 else:
                     reason = "日期变更（到期检查）"
                 ok, detail = pub.publish(self.settings, conn, self.registry, reason)
                 db.audit(conn, "publish", "catalog", detail, actor="控制台")
                 # a failed publish is logged once, not every tick
-                self.published_stamp, self.published_day = stamp, user_day
+                self.published_stamp, self.published_day, self.published_sync = stamp, user_day, synced
         day = queries.today()
         if day != self.last_backup_day:
             db.backup(self.settings.db_path, self.settings.backup_dir, self.settings.backup_keep, day)
@@ -179,7 +186,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
         """
         nodes, problems, _ = registry.current()
         if users_mod.imported(conn):
-            return nodes, problems, users_mod.load(conn), True
+            return users_mod.effective_nodes(conn, nodes), problems, users_mod.load(conn), True
         profiles = queries.load_users(settings.users_file)
         records = {name: None for node in nodes.values() for name in node.users}
         records.update({name: {"name": name, "tiers": p.get("groups") or [users_mod.ALL],
@@ -204,13 +211,27 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
         return request.state.actor.name
 
     def pending_users(conn, nodes, managed, day):
-        """{user: [nodes where the next deployment changes them]} (managed users only)."""
+        """{user: [nodes where the user is not yet as the console says]} (managed users only)."""
         out = {}
         if managed:
             for node, diff in users_mod.differences(conn, nodes, day).items():
                 for name in diff["add"] + diff["remove"] + diff["change"]:
                     out.setdefault(name, []).append(node)
         return out
+
+    def sync_state(node, row, now):
+        """(label, css class) of a node's user sync."""
+        if not node.sync:
+            return "未开启", "muted"
+        if row is None:
+            return "未联系", "warn"
+        if now - row["checked_at"] > SYNC_STALE_SECONDS:
+            return f"{(now - row['checked_at']) // 60} 分钟未联系", "bad"
+        if row["error"]:
+            return "失败", "bad"
+        if row["applied"] == row["desired"]:
+            return "已同步", "ok"
+        return "同步中", "warn"
 
     @app.get("/healthz")
     def healthz():
@@ -236,11 +257,32 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             return ["用户尚未导入控制台：运行 console.yml 完成导入后才能在网页上新增和编辑用户"]
         out = []
         day = today()
+        now = db.now()
+        rows = users_mod.sync_rows(conn)
+        waiting = {n: set(r["pending"]) for n, r in rows.items() if nodes.get(n) and nodes[n].sync}
         diff = users_mod.differences(conn, nodes, day)
-        if diff:
-            parts = [f"{n}（+{len(d['add'])} −{len(d['remove'])}{' 改' + str(len(d['change'])) if d['change'] else ''}）"
-                     for n, d in diff.items()]
-            out.append(f"{len(diff)} 台节点上的用户与控制台不一致，运行 edge.yml 后生效：{'、'.join(parts)}")
+
+        def summary(items):
+            return "、".join(f"{n}（+{len(d['add'])} −{len(d['remove'])}{' 改' + str(len(d['change'])) if d['change'] else ''}）"
+                            for n, d in items)
+        deploy = [(n, d) for n, d in diff.items() if not nodes[n].sync]
+        syncing = [(n, dict(d, add=[u for u in d["add"] if u not in waiting.get(n, set())]))
+                   for n, d in diff.items() if nodes[n].sync]
+        syncing = [(n, d) for n, d in syncing if any(d.values())]
+        if deploy:
+            out.append(f"{len(deploy)} 台节点上的用户与控制台不一致，运行 edge.yml 后生效：{summary(deploy)}")
+        if syncing:
+            out.append(f"{len(syncing)} 台节点正在同步用户（约一分钟内生效）：{summary(syncing)}")
+        for name, node in sorted(nodes.items()):
+            if not node.sync:
+                continue
+            row = rows.get(name)
+            if row is None or now - row["checked_at"] > SYNC_STALE_SECONDS:
+                out.append(f"节点 {name} 的用户同步超过 {SYNC_STALE_SECONDS // 60} 分钟没有联系控制台")
+            elif row["error"]:
+                out.append(f"节点 {name} 用户同步失败：{row['error']}")
+            if row and row["pending"]:
+                out.append(f"{len(row['pending'])} 个用户需要运行 edge.yml 后才能加入节点 {name}（节点尚未配置其 short_id）")
         limit = (datetime.date.fromisoformat(day) + datetime.timedelta(days=users_mod.EXPIRY_WARN_DAYS)).isoformat()
         for name, u in sorted(users.items()):
             if u and u["status"] == "active" and u.get("expires_on") and day <= u["expires_on"] <= limit:
@@ -497,6 +539,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             nodes, problems, _, _ = view_context(conn)
             status = queries.node_status(conn)
             shown = db.shown_nodes(conn)
+            sync_rows = users_mod.sync_rows(conn)
             day_traffic = queries.traffic_by_node(conn, queries.today())
             month = queries.traffic_by_node(conn, queries.this_month())
         now = db.now()
@@ -505,7 +548,8 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             node = nodes.get(name)
             st = status.get(name)
             online = bool(st) and now - st["received_at"] <= settings.offline_minutes * 60
-            rows.append({"name": name, "node": node, "shown": name in shown, "status": st, "online": online,
+            sync = sync_state(node, sync_rows.get(name), now) if node else ("—", "muted")
+            rows.append({"name": name, "node": node, "shown": name in shown, "status": st, "online": online, "sync": sync,
                          "today": day_traffic.get(name, {"up": 0, "down": 0}), "month": month.get(name, {"up": 0, "down": 0})})
         return page(request, "nodes.html", rows=rows, problems=problems)
 
@@ -522,9 +566,10 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             node_tier = users_mod.node_tiers(conn).get(name, []) if managed else []
             diff = users_mod.differences(conn, {name: nodes[name]}, today()).get(name) if managed else None
             wanted = len(users_mod.node_users(conn, name, today())) if managed else None
+            sync_row = users_mod.sync_rows(conn).get(name)
             return page(request, "node.html", name=name, node=nodes[name], shown=name in db.shown_nodes(conn),
                         incidents=incidents, managed=managed, tier_rules=tier_rules, node_tier=node_tier, diff=diff,
-                        wanted=wanted,
+                        wanted=wanted, sync_row=sync_row, sync=sync_state(nodes[name], sync_row, db.now()),
                         status=queries.node_status(conn).get(name), per_user=per_user, month=month,
                         daily=queries.daily_totals(conn, node=name), offline_minutes=settings.offline_minutes,
                         now=db.now())

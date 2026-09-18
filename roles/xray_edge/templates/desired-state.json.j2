@@ -4,7 +4,8 @@
   "node": {{ inventory_hostname | to_json }},
   "reality": {
     "target": {{ reality_dest | to_json }},
-    "server_names": {{ reality_server_names | to_json }}
+    "server_names": {{ reality_server_names | to_json }},
+    "extra_short_ids": {{ edge_extra_short_ids | default([]) | to_json }}
   },
   "listen": {"port": {{ edge_listen_port | int }}},
   "xhttp": {

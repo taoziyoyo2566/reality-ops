@@ -49,7 +49,7 @@
 <input type="hidden" name="csrf" value="{{ csrf }}">
 {% if record.status == 'active' %}
 <input type="hidden" name="status" value="disabled"><button>停用</button>
-<span class="muted">停用后订阅地址立即暂停；节点上的账号在下次运行 <code>edge.yml</code> 后移除。</span>
+<span class="muted">停用后订阅地址立即暂停，节点上的账号随后移除（开启同步的节点约一分钟内）。</span>
 {% else %}
 <input type="hidden" name="status" value="active"><button class="primary">启用</button>
 {% endif %}
@@ -90,13 +90,13 @@
 <td>{{ n.label }}</td>
 <td>{% if n.shown %}<span class="ok">显示</span>{% else %}<span class="muted">隐藏</span>{% endif %}</td>
 <td>{{ '开' if n.xhttp else '—' }}</td>
-<td>{% if n.allowed and n.deployed %}<span class="ok">已部署</span>{% elif n.allowed %}<span class="warn">待部署</span>{% else %}<span class="warn">待移除</span>{% endif %}</td>
+<td>{% if n.allowed and n.deployed %}<span class="ok">已在节点上</span>{% elif n.allowed %}<span class="warn">待加入</span>{% else %}<span class="warn">待移除</span>{% endif %}</td>
 <td class="num">{{ (n.traffic.up + n.traffic.down) | bytes }}</td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
-<p class="muted">“待部署 / 待移除”在下次运行 <code>edge.yml</code> 后生效。</p>
+<p class="muted">“待加入 / 待移除”：开启用户同步的节点约一分钟内生效，其余节点运行 <code>edge.yml</code> 后生效。</p>
 {% else %}
 <p class="muted">该用户不在任何已登记节点上。</p>
 {% endif %}
@@ -110,7 +110,7 @@
 {% if managed and record %}
 <section id="delete">
 <h2>删除用户</h2>
-<p class="muted">删除会吊销订阅地址，下次运行 <code>edge.yml</code> 后从节点移除；流量与操作记录保留。只想暂时停用请用上面的“停用”。</p>
+<p class="muted">删除会吊销订阅地址并从节点移除（开启同步的节点约一分钟内）；流量与操作记录保留。只想暂时停用请用上面的“停用”。</p>
 <form method="post" action="/users/{{ name }}/delete">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="text" name="confirm" placeholder="输入用户名 {{ name }} 以确认" autocomplete="off">

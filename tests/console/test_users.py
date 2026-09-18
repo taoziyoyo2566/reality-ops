@@ -225,7 +225,7 @@ class WebTest(unittest.TestCase):
                                                             "expires_on": "", "deny_nodes": ["alpha"]})
             self.assertEqual(status, 303)
             page = srv.request("GET", "/users/carol")[1]
-            self.assertIn("待部署", page)                          # beta will get carol at the next edge.yml
+            self.assertIn("待加入", page)                          # beta will get carol at the next edge.yml
             self.assertIn("发放订阅地址", page)
             status, page, _ = self.post(srv, "/users/new", {"name": "carol", "tiers": ["free"]})
             self.assertIn("用户 carol 已存在", page)

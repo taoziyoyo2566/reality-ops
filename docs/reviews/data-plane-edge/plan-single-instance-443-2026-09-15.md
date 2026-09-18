@@ -289,3 +289,10 @@ canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`e
   §3.4 的新旧实例用户集合比较（D-C5 后只提示）删除，`edge_skip_drift_check` 一并删除。另修正 `files` 来源的一处缺陷：
   `edge_extra_users` 中已在本节点 ACL 结果里的用户（如 `test` 对 `jp05`、`jp10`）原会使断言失败，现在不重复加入。
   `[实测]` 2026-09-18 用真实档案导入临时控制台后，11 台节点的名单与 ACL 计算结果逐一相同（含 UUID 与 `short_id`）。
+- **2026-09-19 · 节点 agent 同步用户与预置 `short_id`（管理控制台第二阶段 D-P2-4、D-P2-5）。** 改动：期望状态增加
+  `reality.extra_short_ids`（来自控制台的共用 `short_id`），应用器把它并入 `shortIds`，使之后经 API 新增的用户不重启即可连接；
+  工具镜像加入节点所用固定 digest 的 Xray 命令行；`reporter` 容器扩展为 agent，每 60 秒经控制台 `/sync` 取本节点名单，
+  用 `xray api adu / rmu / inbounduser` 增删用户（第一阶段“reporter 不带 API 工具”的约束由此解除；仍无 Docker 套接字、不读写
+  配置文件、只读根文件系统、非 root，内存上限 96MiB）。agent 拒绝空名单与一次删除超过一半的用户，不动 `SYNC_KEEP` 中的探测账号。
+  登记文件增加 `sync` 与 `short_ids`。影响：首次部署时每台节点 Xray 重启一次（新增 `short_id`）；配置文件在两次部署之间
+  可能落后于运行中的用户，Xray 重启后由 agent 在一分钟内补齐。

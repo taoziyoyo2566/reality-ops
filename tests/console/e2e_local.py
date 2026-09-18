@@ -174,18 +174,22 @@ class Layout:
             subs_public_base_url="https://sub.example.test", status_interval=INTERVAL, status_timeout=4)
         self.put(f"{c}/compose.yaml", console, mode="0644")
 
-    def node_compose_file(self, report_url):
+    def node_compose_file(self, report_url, sync=False):
         text = edge_compose.render(NODE, [], edge_root_dir=self.node, edge_container_name=SRV,
                                    edge_compose_project=EDGE_PROJECT, edge_tools_image=TOOLS, edge_xray_image=IMAGE,
                                    edge_report_enabled=True, edge_report_url=report_url,
-                                   edge_report_interval=INTERVAL)
+                                   edge_report_interval=INTERVAL, edge_sync_enabled=sync,
+                                   edge_sync_url=report_url.replace("/report", "/sync"), edge_sync_interval=INTERVAL,
+                                   edge_xhttp_enabled=True, edge_status_probe_enabled=True,
+                                   status_probe_user=PROBE["name"])
         self.put(f"{self.node}/compose.yaml", text, mode="0644")
 
     def compose(self, where, *args, check=True):
         return run(["docker", "compose", "-f", os.path.join(where, "compose.yaml"), *args], check=check)
 
-    def apply(self, users, command="apply", extra=()):
-        state = {"schema": 1, "node": NODE, "reality": {"target": f"{TARGET}:443", "server_names": [TARGET]},
+    def apply(self, users, command="apply", extra=(), extra_short_ids=()):
+        state = {"schema": 1, "node": NODE, "reality": {"target": f"{TARGET}:443", "server_names": [TARGET],
+                                                        "extra_short_ids": list(extra_short_ids)},
                  "listen": {"port": 443}, "xhttp": {"enabled": True, "path": XHTTP_PATH, "mode": "auto"},
                  "users": [USERS[u] for u in users] + [PROBE], "socks5": [], "metrics": {"enabled": True},
                  "probe": {"enabled": True, "user": PROBE["name"], "target": PROBE_TARGET},
@@ -198,11 +202,11 @@ class Layout:
         except (IndexError, ValueError):
             return proc.returncode, {"stderr": proc.stderr[-300:]}
 
-    def register(self, users, public_key, digest, endpoint, xhttp_path=XHTTP_PATH):
+    def register(self, users, public_key, digest, endpoint, xhttp_path=XHTTP_PATH, short_ids=None):
         doc = {"schema": 1, "node": NODE, "label": "e2e [test]", "endpoint": endpoint, "port": 443, "sni": TARGET,
                "public_key": public_key, "xhttp": {"enabled": True, "path": xhttp_path, "mode": "auto"},
                "users": [USERS[u] for u in users], "report": {"enabled": True, "token_sha256": digest},
-               "image": IMAGE, "status_probe": True}
+               "image": IMAGE, "status_probe": True, "sync": short_ids is not None, "short_ids": list(short_ids or [])}
         self.put(f"{self.console}/registry/{NODE}.json", json.dumps(doc), "0:10002", "0640")
 
     def console_query(self, code):
@@ -393,6 +397,59 @@ def check_status(layout, admin, token, server_ip, public_key, digest, published)
     record("a user cannot reach the node's metrics listener", all(code != "200" for code in inside.values()), inside)
 
 
+def check_sync(layout, admin, server_ip, public_key, report_url):
+    """plan-console-phase2 §6.1 item 2: users managed in the console reach the node through the agent."""
+    node_users = "import json; from console import admin; admin.main(['node-users', '%s'])" % NODE
+
+    def running():
+        out = run(["docker", "exec", SRV, "xray", "api", "inbounduser", "-s", "127.0.0.1:10085", "-tag=vless-reality"],
+                  check=False).stdout
+        try:
+            return sorted(u["email"].split(".")[0] for u in json.loads(out).get("users", []))
+        except ValueError:
+            return []
+
+    # import the node's users, configure the shared short id and turn the agent's sync on
+    doc = {"users": [dict(USERS[u]) for u in ("alice", "bob")], "node_tiers": {NODE: ["free"]}, "rules": {"free": ["free"]}}
+    layout.put(f"{layout.console}/import/users.json", json.dumps(doc), "10002:10002", "0600")
+    proc = layout.compose(layout.console, "run", "--rm", "-T", "--no-deps", "web",
+                          "python", "-m", "console.admin", "import-users", "/import/users.json", check=False)
+    record("users are imported into the console", '"imported": true' in proc.stdout, proc.stdout.strip()[-120:])
+    shared = layout.console_query(node_users)["short_ids"]
+    rc, out = layout.apply(["alice", "bob"], extra_short_ids=shared)
+    record("the shared short id is configured on the node (one restart)", rc == 0 and out.get("action") == "restart", out)
+    layout.register(["alice", "bob"], public_key, out.get("report_token_sha256"), server_ip,
+                    short_ids=sorted({"a1a1a1a1", PROBE["short_id"]} | set(shared)))
+    layout.node_compose_file(report_url, sync=True)
+    layout.compose(layout.node, "up", "-d")
+
+    started = time.time()
+    record("a user created in the console reaches the node without a deployment",
+           admin.post("/users/new", name="carol", tiers="all") == 303
+           and wait_for(lambda: "carol" in running(), INTERVAL * 8, 2), f"{time.time() - started:.0f}s {running()}")
+    admin.post("/users/carol/issue")
+    token = admin.token("carol")
+    status, published = wait_for(lambda: (lambda r: r if r[1] else None)(subscription(layout.subs_port, token)), 90, 3) \
+        or (0, [])
+    record("carol's subscription lists the node once the agent has added her", status == 200 and len(published) == 2,
+           f"{status} {len(published)}")
+    if published:
+        start_client(layout, published[0])
+        record("carol connects with the shared short id, Xray not restarted", fetch(layout) == "200")
+    admin.post("/users/carol/status", status="disabled")
+    record("disabling a user removes it from the node", wait_for(lambda: "carol" not in running(), INTERVAL * 8, 2), running())
+    if published:
+        record("the disabled user can no longer connect", fetch(layout) != "200")
+    admin.post("/users/carol/status", status="active")
+    wait_for(lambda: "carol" in running(), INTERVAL * 8, 2)
+    run(["docker", "restart", SRV])
+    record("after an Xray restart the agent adds the user back", wait_for(
+        lambda: "carol" in running(), 90, 3), running())
+    record("the probe account is left alone", PROBE["name"] in running())
+    status, page = admin.get(f"/nodes/{NODE}")
+    record("the node page shows the sync as done", status == 200 and "已同步" in page)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--keep", action="store_true")
@@ -525,6 +582,7 @@ def main():
                new_token != token and subscription(layout.subs_port, token)[0] == 404
                and subscription(layout.subs_port, new_token)[0] == 200)
         check_status(layout, admin, new_token, server_ip, public_key, out.get("report_token_sha256"), published)
+        check_sync(layout, admin, server_ip, public_key, report_url)
 
         admin.post("/users/alice/revoke", confirm="alice")
         record("revoking returns 404", subscription(layout.subs_port, new_token)[0] == 404)

@@ -58,6 +58,8 @@ services:
     command: ["python", "-m", "console.report_app"]
     environment:
       CONSOLE_PORT: {{ console_report_port | string | to_json }}
+      # 用户同步按用户时区判断到期（plan-console-phase2 §3.3），与页面一致
+      STATUS_UTC_OFFSET_HOURS: {{ status_utc_offset_hours | string | to_json }}
     volumes:
       - {{ (console_registry_dir ~ ':/registry:ro') | to_json }}
       - {{ (console_root_dir ~ '/db:/db') | to_json }}

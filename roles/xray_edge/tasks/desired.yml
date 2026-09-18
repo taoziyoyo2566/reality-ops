@@ -22,6 +22,8 @@
       no_log: true
       set_fact:
         edge_users: "{{ (edge_console_users.stdout_lines | last | from_json).users }}"
+        # 共用 short_id 预先写入配置，使 agent 经 API 新增的用户无需重启即可连接（D-P2-5）。
+        edge_extra_short_ids: "{{ (edge_console_users.stdout_lines | last | from_json).short_ids | default([]) }}"
 
 - name: 组装新实例用户（ACL 结果 + 额外测试用户；导入控制台之前的做法）
   when: edge_user_source == 'files'
