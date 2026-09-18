@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}订阅地址清单{% endblock %}
+{% block content %}
+<h1>订阅地址清单</h1>
+<section>
+{% if lines %}
+<p class="muted">每行“用户名 地址”。地址即个人凭据，只发给对应的本人；这份清单不保存在服务器上。</p>
+<textarea class="url" rows="{{ [lines | length + 1, 20] | min }}" readonly>{% for name, url in lines %}{{ name }}	{{ url }}
+{% endfor %}</textarea>
+<p><a href="/users/export.txt?names={{ names | urlencode }}">下载为文本文件</a> · <a href="/users">返回用户列表</a></p>
+{% else %}
+<p class="muted">所选用户没有订阅地址（可能处于停用或到期状态）。<a href="/users">返回用户列表</a></p>
+{% endif %}
+</section>
+{% endblock %}

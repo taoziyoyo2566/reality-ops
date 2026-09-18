@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}新增用户{% endblock %}
+{% block content %}
+<h1>新增用户</h1>
+{% if error %}<section><p class="bad">{{ error }}</p></section>{% endif %}
+<section>
+<form method="post" action="/users/new">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<p><label for="name">用户名</label> <input type="text" id="name" name="name" value="{{ values.name }}" maxlength="64" required autocomplete="off">
+<span class="muted">字母、数字、下划线和连字符；创建后不能改。</span></p>
+{% include "_user_fields.html" %}
+<p><button class="primary">创建</button> <a href="/users">取消</a></p>
+</form>
+</section>
+<p class="muted">UUID 自动生成；创建后在用户页发放订阅地址。节点上的账号在下次运行 <code>edge.yml</code> 后生效。</p>
+{% endblock %}

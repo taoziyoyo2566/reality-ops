@@ -1,0 +1,11 @@
+<p><label>档位</label><br>
+{% for t in tier_options %}<label class="check"><input type="checkbox" name="tiers" value="{{ t }}"{{ ' checked' if t in values.tiers }}> {{ t }}</label>{% endfor %}
+<br><span class="muted"><code>all</code> 可用全部节点；其他档位按节点档位规则决定可用的节点。</span></p>
+<p><label>单独允许的节点</label><br>
+{% for n in node_names %}<label class="check"><input type="checkbox" name="allow_nodes" value="{{ n }}"{{ ' checked' if n in values.allow_nodes }}> {{ n }}</label>{% endfor %}</p>
+<p><label>单独禁止的节点</label>（优先于允许）<br>
+{% for n in node_names %}<label class="check"><input type="checkbox" name="deny_nodes" value="{{ n }}"{{ ' checked' if n in values.deny_nodes }}> {{ n }}</label>{% endfor %}</p>
+<p><label for="expires_on">到期日</label>
+<input type="text" id="expires_on" name="expires_on" value="{{ values.expires_on or '' }}" placeholder="YYYY-MM-DD，留空为不到期" size="24">
+<span class="muted">当天结束后（{{ status_tz }}）停止服务。</span></p>
+<p><label for="note">备注</label> <input type="text" id="note" name="note" value="{{ values.note }}" maxlength="200" size="40"></p>

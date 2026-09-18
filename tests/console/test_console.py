@@ -406,7 +406,9 @@ class WebAppTest(unittest.TestCase):
         self.env.write_users(["alice", "bob"])          # `test` is on alpha but not in the exported profiles
         with Server(self.app) as srv:
             page = srv.request("GET", "/users")[1]
-            self.assertIn(">test</a> <span class=\"warn\">档案未同步", page)
+            self.assertIn('<a href="/users/test">test</a>', page)
+            self.assertIn('<span class="warn">档案未同步</span>', page)
+            self.assertIn('value="test" aria-label', page)          # can be picked for bulk issue
             status, page, _ = srv.request("GET", "/users/test")
             self.assertEqual(status, 200)
             self.assertIn("发放订阅地址", page)

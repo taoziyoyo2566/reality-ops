@@ -74,9 +74,11 @@ edge_log_rotate_maxsize: "50M"
 # logrotate 的 maxsize 只在运行时检查；compose 内 logrotate 容器按此间隔（秒）运行。
 edge_logrotate_interval: 3600
 
-# edge.yml 部署前读取旧实例用户并提示与新实例的差异，只提示、不中止（D-C5，2026-09-17）。
-# 设为 true 时不读取旧实例、不做比较。
-edge_skip_drift_check: false
+# 新实例的用户来源（plan-console-phase2 D-P2-1）：console 为控制台数据库（导入之后的做法）；
+# files 为仓库 users/*.yml 与 ACL（导入之前的做法，只用于回滚）。
+edge_user_source: "console"
+# 在控制台所在主机上执行控制台命令的前缀（edge.yml 经它读取每台节点的用户名单）。
+edge_console_exec: "docker compose -f {{ console_root_dir }}/compose.yaml exec -T web"
 
 # 测试订阅链接写到控制端此目录（不在仓库内；目录 0700、文件 0600）。
 edge_subs_dir: "{{ lookup('env', 'HOME') }}/.local/share/reality-ops/edge-subs"

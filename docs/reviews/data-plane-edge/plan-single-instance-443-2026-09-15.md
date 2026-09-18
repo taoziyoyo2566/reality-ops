@@ -283,3 +283,9 @@ canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`e
   现有 SOCKS5 profile 只按用户匹配，行为不变（若将来给 profile 配 `ips`，它将同时对域名目标生效）；
   每个新连接在匹配该规则时多一次域名解析。旧系统模板不改动。`[实测]` 2026-09-18 节点端到端 44/44。
   **状态：2026-09-18 已部署到 `dzire`、`usca`、`legend`、`kagoya`（各重启 Xray 一次）。**
+- **2026-09-18 · 用户来源改为控制台（管理控制台第二阶段 D-P2-1、D-P2-8）。** 起因：旧系统不再延续，用户改在控制台维护
+  （[`plan-console-phase2`](../console/plan-console-phase2-2026-09-18.md)，2026-09-18 批准）。改动：`edge_user_source: console` 时，
+  `edge.yml` 经控制台命令读取每台节点的用户名单（名字、UUID、`short_id`），不再运行 ACL 计算；`files` 保留为回滚。
+  §3.4 的新旧实例用户集合比较（D-C5 后只提示）删除，`edge_skip_drift_check` 一并删除。另修正 `files` 来源的一处缺陷：
+  `edge_extra_users` 中已在本节点 ACL 结果里的用户（如 `test` 对 `jp05`、`jp10`）原会使断言失败，现在不重复加入。
+  `[实测]` 2026-09-18 用真实档案导入临时控制台后，11 台节点的名单与 ACL 计算结果逐一相同（含 UUID 与 `short_id`）。

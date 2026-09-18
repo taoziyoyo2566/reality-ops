@@ -460,6 +460,24 @@ Contract: [`plan-node-status-page`](reviews/console/plan-node-status-page-2026-0
   timeout on that node; `dzire` has explicit container DNS for the same reason). Result record:
   [`node-status-page-2026-09-18.changelog.md`](reviews/console/node-status-page-2026-09-18.changelog.md).
 - `[未知]` Docker Engine version on `spt` (the status health check avoids `start_interval`, which needs Engine 25+).
+
+## Console Phase 2 State
+
+Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18.md) (APPROVED 2026-09-18, D-P2-1 to D-P2-9).
+
+- `[代码]` 2026-09-18 working tree, 2a, not deployed: tables `users`, `node_tiers`, `tier_rules`, `settings`; `console/users.py`
+  (access = the existing ACL: node tiers, `tier_rules` from `acl_matrix`, `all`, allow, deny wins); web user CRUD, bulk issue
+  and export, node tier editing, pending-deploy and expiry alerts; `console.admin import-users` / `node-users`; `console.yml`
+  imports once (`roles/console_service/tasks/users_import_doc.yml`); `edge_user_source: console` makes `edge.yml` read each
+  node's users from the console; the old/new user comparison and `edge_skip_drift_check` are gone; `console/auth.py`
+  (mode `none` only) and `audit_log.actor` (added by migration). Disabled or expired users' tokens are left out of
+  `tokens.json`; the web watcher republishes when the day changes.
+- `[实测]` 2026-09-18 with the real `users/*.yml`, inventory and `acl_matrix` in a temporary console: 33 users imported,
+  no differences against the 4 registered nodes; for all 11 `edge_nodes` the console lists equal the old ACL result
+  (UUID and short id included, no duplicates).
+- `[实测]` 2026-09-18 found in the pushed `ops@2f7026d`: with `edge_user_source` files, `edge.yml` fails on `jp05` and `jp10`
+  because `test` is both in `edge_extra_users` and allowed there by its own `hosts`; a run over all nodes stops at `jp05`
+  before changing it. Fixed in the working tree (extras already in the ACL result are not added twice).
 - `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while

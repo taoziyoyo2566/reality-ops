@@ -1,27 +1,50 @@
 {% extends "base.html" %}
 {% block title %}用户{% endblock %}
 {% block content %}
-<h1>用户</h1>
+<h1>用户{% if managed %} <a class="btnlink primary" href="/users/new">新增用户</a>{% endif %}</h1>
+{% if not managed %}
+<section><p class="warn">用户尚未导入控制台：下表来自节点登记文件与部署时导出的档案，只能发放订阅。
+运行 <code>console.yml</code> 完成导入后，就可以在这里新增、编辑、停用用户。</p></section>
+{% endif %}
+<section>
+<form method="get" action="/users" class="filters">
+<input type="text" name="q" value="{{ q }}" placeholder="搜索用户名或备注">
+<select name="status"><option value="">全部状态</option>
+{% for k, v in status_names.items() %}<option value="{{ k }}"{{ ' selected' if status == k }}>{{ v }}</option>{% endfor %}</select>
+{% if tier_options %}<select name="tier"><option value="">全部档位</option>
+{% for t in tier_options %}<option value="{{ t }}"{{ ' selected' if tier == t }}>{{ t }}</option>{% endfor %}</select>{% endif %}
+<button>筛选</button>{% if q or status or tier %} <a href="/users">清除</a>{% endif %}
+</form>
+</section>
+
+<form method="post" action="/users/bulk-issue">
+<input type="hidden" name="csrf" value="{{ csrf }}">
 <section>
 <table>
 <thead><tr>
-<th>用户</th><th>分组</th><th>可用的新节点</th><th>订阅</th><th>最后拉取</th><th class="num">本月流量 {{ month }}</th>
+<th></th><th>用户</th><th>档位</th><th>状态</th><th>到期</th><th class="num">可用节点</th><th>订阅</th><th>最后拉取</th><th class="num">本月流量 {{ month }}</th>
 </tr></thead>
 <tbody>
 {% for r in rows %}
 <tr>
-<td><a href="/users/{{ r.name }}">{{ r.name }}</a>{% if not r.profile %} <span class="warn">档案未同步</span>{% endif %}</td>
-<td>{% for g in r.groups %}<span class="tag">{{ g }}</span>{% endfor %}</td>
-<td>{% if r.nodes %}{{ r.nodes | join(', ') }}{% else %}<span class="muted">—</span>{% endif %}</td>
+<td>{% if r.issuable %}<input type="checkbox" name="names" value="{{ r.name }}" aria-label="选择 {{ r.name }}">{% endif %}</td>
+<td><a href="/users/{{ r.name }}">{{ r.name }}</a>{% if r.note %} <span class="muted">{{ r.note }}</span>{% endif %}</td>
+<td>{% for g in r.tiers %}<span class="tag">{{ g }}</span>{% endfor %}</td>
+<td>{% if r.state == 'active' %}<span class="ok">启用</span>{% elif r.state == 'disabled' %}<span class="muted">停用</span>{% elif r.state == 'expired' %}<span class="bad">已到期</span>{% elif managed %}<span class="warn">不在控制台</span>{% else %}<span class="warn">档案未同步</span>{% endif %}</td>
+<td>{{ r.expires_on or '—' }}</td>
+<td class="num">{{ r.nodes | length }}{% if r.pending %} <span class="warn" title="{{ r.pending | join(', ') }}">待部署</span>{% endif %}</td>
 <td>{% if r.issued %}<span class="ok">已发放</span>{% else %}<span class="muted">未发放</span>{% endif %}</td>
 <td>{% if r.fetch %}{{ r.fetch.at | time }} <span class="muted">{{ r.fetch.fmt }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
 <td class="num">{{ (r.traffic.up + r.traffic.down) | bytes }}</td>
 </tr>
+{% else %}
+<tr><td colspan="9" class="muted">没有符合条件的用户。</td></tr>
 {% endfor %}
 </tbody>
 </table>
+<p><button class="primary">为勾选的用户发放订阅并导出清单</button>
+<span class="muted">只有启用且未发放的用户可以勾选；清单只在页面上显示和下载，不保存在服务器上。</span></p>
 </section>
-<p class="muted">用户来自各节点最近一次部署的注册文件，分组等档案信息来自仓库 <code>users/</code>（部署控制台时导出）。
-新用户跑完 <code>edge.yml</code> 就能在这里发放订阅；“档案未同步”表示控制台还没有这个人的档案信息，
-运行 <code>console.yml</code> 可更新，若其档案确已删除则应吊销其订阅。增删改用户在第一阶段仍用命令行完成。</p>
+</form>
+<p class="muted">“可用节点”按档位与单独允许 / 禁止计算；“待部署”表示该用户在某些节点上的状态与控制台不一致，运行 <code>edge.yml</code> 后生效。</p>
 {% endblock %}

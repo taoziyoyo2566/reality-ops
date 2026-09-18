@@ -14,6 +14,20 @@
 <span class="muted">切换后立即重新发布；用户刷新订阅后生效。</span>
 </section>
 
+{% if managed %}
+<section id="tiers">
+<h2>档位与用户</h2>
+<form method="post" action="/nodes/{{ name }}/tiers">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<p>节点档位：{% for t, accepts in tier_rules.items() %}<label class="check"><input type="checkbox" name="tiers" value="{{ t }}"{{ ' checked' if t in node_tier }}> {{ t }} <span class="muted">（接受 {{ accepts | join('、') }}）</span></label>{% endfor %}
+<button>保存</button></p>
+</form>
+<p>按控制台应有 {{ wanted }} 个用户，节点上现有 {{ node.users | length }} 个。
+{% if diff %}<span class="warn">下次运行 <code>edge.yml</code> 时：{% if diff.add %}增加 {{ diff.add | join('、') }}；{% endif %}{% if diff.remove %}移除 {{ diff.remove | join('、') }}；{% endif %}{% if diff.change %}更新凭据 {{ diff.change | join('、') }}；{% endif %}</span>
+{% else %}<span class="ok">与控制台一致。</span>{% endif %}</p>
+</section>
+{% endif %}
+
 <section>
 <h2>部署信息</h2>
 <table>

@@ -1,6 +1,30 @@
 ---
-# 只依赖控制端数据（用户档案、ACL 结果、SOCKS5 配置），便于在本地单独验证期望状态。
-- name: 组装新实例用户（ACL 结果 + 额外测试用户）
+# 只依赖控制端数据（用户、SOCKS5 配置），便于在本地单独验证期望状态。
+- name: 从控制台读取本节点的用户（plan-console-phase2 §3.3）
+  when: edge_user_source == 'console'
+  block:
+    - name: 读取控制台为本节点计算的用户名单（含 UUID）
+      delegate_to: "{{ console_host }}"
+      command: "{{ edge_console_exec }} python -m console.admin node-users {{ inventory_hostname }}"
+      register: edge_console_users
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: 控制台必须已导入用户
+      assert:
+        that: edge_console_users.rc == 0
+        fail_msg: >-
+          无法从控制台读取 {{ inventory_hostname }} 的用户（rc={{ edge_console_users.rc }}）：
+          先运行 console.yml 完成用户导入（docs/operations.md §14.10）；rc=3 表示控制台还没有用户。
+
+    - name: 采用控制台名单
+      no_log: true
+      set_fact:
+        edge_users: "{{ (edge_console_users.stdout_lines | last | from_json).users }}"
+
+- name: 组装新实例用户（ACL 结果 + 额外测试用户；导入控制台之前的做法）
+  when: edge_user_source == 'files'
   vars:
     acl_names: "{{ reality_instances | map(attribute='name') | list }}"
     all_names: "{{ all_raw_users | map(attribute='name') | list }}"
@@ -9,11 +33,10 @@
       assert:
         that:
           - edge_extra_users | difference(all_names) | length == 0
-          - edge_extra_users | intersect(acl_names) | length == 0
           - edge_test_users | difference(acl_names + edge_extra_users) | length == 0
           - not (edge_xhttp_enabled | bool) or (edge_xhttp_path | length > 0)
         fail_msg: >-
-          edge_extra_users={{ edge_extra_users }} 必须存在于 users/ 且不在本节点 ACL 结果中；
+          edge_extra_users={{ edge_extra_users }} 必须存在于 users/（已在本节点 ACL 结果中的不重复加入）；
           edge_test_users={{ edge_test_users }} 必须是本节点新实例上的用户；
           开启 XHTTP 时 vault_edge_xhttp_paths['{{ inventory_hostname }}'] 必须已设置。
 
@@ -21,31 +44,34 @@
       set_fact:
         edge_users: >-
           {%- set out = [] -%}
-          {%- for u in reality_instances + (all_raw_users | selectattr('name', 'in', edge_extra_users) | list) -%}
+          {%- set extras = all_raw_users | selectattr('name', 'in', edge_extra_users | difference(acl_names)) | list -%}
+          {%- for u in reality_instances + extras -%}
             {%- set _ = out.append({'name': u.name, 'uuid': u.uuid, 'short_id': u.short_id}) -%}
           {%- endfor -%}
           {{ out }}
 
-    # 状态页探测账号（plan-node-status-page §3.2）：只进期望状态，不进注册文件、测试链接与新旧用户比较。
-    - name: 校验探测账号
-      assert:
-        that:
-          - status_probe_user not in all_names
-          - status_probe_uuid is match('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
-          - status_probe_short_id is match('^([0-9a-f]{2}){1,8}$')
-          - status_probe_uuid | lower not in (edge_users | map(attribute='uuid') | map('lower') | list)
-          - status_check_url is match('^http://')
-        fail_msg: >-
-          {{ inventory_hostname }} 在 status_probe_nodes 中：vault_status_probe_uuid 与 vault_status_probe_short_id 必须已设置
-          （docs/operations.md §14.8），{{ status_probe_user }} 不能与用户档案重名或共用 UUID，status_check_url 必须是 http://。
-      when: edge_status_probe_enabled | bool
 
-    - name: 计算期望状态中的用户（含探测账号）
-      no_log: true
-      set_fact:
-        edge_desired_users: >-
-          {{ edge_users + ([{'name': status_probe_user, 'uuid': status_probe_uuid, 'short_id': status_probe_short_id}]
-                           if (edge_status_probe_enabled | bool) else []) }}
+# 状态页探测账号（plan-node-status-page §3.2）：只进期望状态，不进注册文件与测试链接。
+- name: 校验探测账号
+  assert:
+    that:
+      - status_probe_user not in (edge_users | map(attribute='name') | list)
+      - status_probe_user not in (all_raw_users | default([]) | map(attribute='name') | list)
+      - status_probe_uuid is match('^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+      - status_probe_short_id is match('^([0-9a-f]{2}){1,8}$')
+      - status_probe_uuid | lower not in (edge_users | map(attribute='uuid') | map('lower') | list)
+      - status_check_url is match('^http://')
+    fail_msg: >-
+      {{ inventory_hostname }} 在 status_probe_nodes 中：vault_status_probe_uuid 与 vault_status_probe_short_id 必须已设置
+      （docs/operations.md §14.8），{{ status_probe_user }} 不能与用户重名或共用 UUID，status_check_url 必须是 http://。
+  when: edge_status_probe_enabled | bool
+
+- name: 计算期望状态中的用户（含探测账号）
+  no_log: true
+  set_fact:
+    edge_desired_users: >-
+      {{ edge_users + ([{'name': status_probe_user, 'uuid': status_probe_uuid, 'short_id': status_probe_short_id}]
+                       if (edge_status_probe_enabled | bool) else []) }}
 
 - name: 计算本节点生效的 SOCKS5 profile（与旧模板相同的 D12 单一门控）
   no_log: true

@@ -1,13 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ name }}{% endblock %}
 {% block content %}
-<h1>用户 {{ name }}</h1>
+<h1>用户 {{ name }}
+{% if state == 'active' %}<span class="tag ok">启用</span>{% elif state == 'disabled' %}<span class="tag">停用</span>{% elif state == 'expired' %}<span class="tag bad">已到期</span>{% endif %}</h1>
+{% if error %}<section><p class="bad">{{ error }}</p></section>{% endif %}
 
 <section>
 <h2>订阅地址</h2>
 {% if token %}
 <p class="muted">发放于 {{ token.issued_at | time }}{% if token.rotated_at %}，最近重置 {{ token.rotated_at | time }}{% endif %}。
 地址包含个人凭据，只发给该用户本人。</p>
+{% if state in ('disabled', 'expired') %}<p class="warn">用户{{ '已停用' if state == 'disabled' else '已到期' }}，这个地址暂停服务；恢复后原地址继续可用。</p>{% endif %}
 <input class="url" type="text" readonly value="{{ url }}">
 <div class="qr">{{ qr | safe }}</div>
 <p>最后拉取：{% if fetch %}{{ fetch.at | time }}（{{ fetch.fmt }}，近 90 天 {{ fetch.count }} 次）{% else %}<span class="muted">还没有拉取记录</span>{% endif %}</p>
@@ -21,22 +24,65 @@
 <input type="text" name="confirm" placeholder="输入用户名 {{ name }} 以确认" autocomplete="off">
 <button class="danger">吊销订阅</button>
 </form>
-{% elif known %}
+{% elif known and state in ('active', 'unknown') %}
 <p>尚未发放订阅地址。</p>
 <form method="post" action="/users/{{ name }}/issue" class="inline">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <button class="primary">发放订阅地址</button>
 </form>
+{% elif known %}
+<p class="muted">用户{{ '已停用' if state == 'disabled' else '已到期' }}，恢复后才能发放订阅地址。</p>
 {% else %}
-<p class="bad">该用户已不在任何节点上，档案也不存在，只能吊销。</p>
+<p class="bad">该用户已不在控制台，也不在任何节点上，只能吊销。</p>
 {% endif %}
 </section>
 
+{% if managed and record %}
 <section>
-<h2>可用的新节点</h2>
+<h2>状态</h2>
+<p>档位：{% for g in record.tiers %}<span class="tag">{{ g }}</span>{% endfor %}
+{% if record.allow_nodes %} · 单独允许：{{ record.allow_nodes | join(', ') }}{% endif %}
+{% if record.deny_nodes %} · 单独禁止：{{ record.deny_nodes | join(', ') }}{% endif %}
+· 到期：{{ record.expires_on or '不到期' }}{% if record.note %} · 备注：{{ record.note }}{% endif %}</p>
+<p class="muted">创建于 {{ record.created_at | time }}，最近修改 {{ record.updated_at | time }}。</p>
+<form method="post" action="/users/{{ name }}/status" class="inline">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+{% if record.status == 'active' %}
+<input type="hidden" name="status" value="disabled"><button>停用</button>
+<span class="muted">停用后订阅地址立即暂停；节点上的账号在下次运行 <code>edge.yml</code> 后移除。</span>
+{% else %}
+<input type="hidden" name="status" value="active"><button class="primary">启用</button>
+{% endif %}
+</form>
+</section>
+
+<section id="edit">
+<h2>编辑</h2>
+<form method="post" action="/users/{{ name }}/edit">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+{% with values = record %}{% include "_user_fields.html" %}{% endwith %}
+<p><button class="primary">保存</button></p>
+</form>
+</section>
+{% elif record %}
+<section>
+<h2>档案</h2>
+<p>分组：{% for g in record.tiers %}<span class="tag">{{ g }}</span>{% endfor %}
+· 单独允许：{{ record.allow_nodes | join(', ') or '—' }} · 单独禁止：{{ record.deny_nodes | join(', ') or '—' }}</p>
+<p class="muted">用户尚未导入控制台，档案来自部署时导出的 <code>users/</code>，这里只读。</p>
+</section>
+{% elif known %}
+<section>
+<h2>档案</h2>
+<p class="muted">控制台还没有这个用户的档案信息；运行 <code>console.yml</code> 完成导入后可在这里编辑。不影响发放订阅。</p>
+</section>
+{% endif %}
+
+<section>
+<h2>节点</h2>
 {% if node_rows %}
 <table>
-<thead><tr><th>节点</th><th>显示名</th><th>订阅中</th><th>XHTTP</th><th class="num">本月流量 {{ month }}</th></tr></thead>
+<thead><tr><th>节点</th><th>显示名</th><th>订阅中</th><th>XHTTP</th><th>部署</th><th class="num">本月流量 {{ month }}</th></tr></thead>
 <tbody>
 {% for n in node_rows %}
 <tr>
@@ -44,34 +90,32 @@
 <td>{{ n.label }}</td>
 <td>{% if n.shown %}<span class="ok">显示</span>{% else %}<span class="muted">隐藏</span>{% endif %}</td>
 <td>{{ '开' if n.xhttp else '—' }}</td>
+<td>{% if n.allowed and n.deployed %}<span class="ok">已部署</span>{% elif n.allowed %}<span class="warn">待部署</span>{% else %}<span class="warn">待移除</span>{% endif %}</td>
 <td class="num">{{ (n.traffic.up + n.traffic.down) | bytes }}</td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
+<p class="muted">“待部署 / 待移除”在下次运行 <code>edge.yml</code> 后生效。</p>
 {% else %}
 <p class="muted">该用户不在任何已登记节点上。</p>
 {% endif %}
 </section>
 
-{% if known and not profile %}
-<section>
-<h2>档案</h2>
-<p class="muted">控制台还没有这个用户的档案信息（分组、单独允许 / 禁止）。它在部署控制台时从仓库 <code>users/</code> 导出，
-运行 <code>console.yml</code> 可更新；不影响发放订阅。</p>
-</section>
-{% endif %}
-
-{% if profile %}
-<section>
-<h2>档案</h2>
-<p>分组：{% for g in profile.groups %}<span class="tag">{{ g }}</span>{% else %}<span class="muted">—（默认 all）</span>{% endfor %}</p>
-<p>单独允许：{{ profile.hosts | join(', ') or '—' }} · 单独禁止：{{ profile.deny_hosts | join(', ') or '—' }}</p>
-</section>
-{% endif %}
-
 <section>
 <h2>近 31 天流量</h2>
 {% include "_daily.html" %}
 </section>
+
+{% if managed and record %}
+<section id="delete">
+<h2>删除用户</h2>
+<p class="muted">删除会吊销订阅地址，下次运行 <code>edge.yml</code> 后从节点移除；流量与操作记录保留。只想暂时停用请用上面的“停用”。</p>
+<form method="post" action="/users/{{ name }}/delete">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="text" name="confirm" placeholder="输入用户名 {{ name }} 以确认" autocomplete="off">
+<button class="danger">删除用户</button>
+</form>
+</section>
+{% endif %}
 {% endblock %}

@@ -40,6 +40,16 @@ CREATE TABLE IF NOT EXISTS status_daily (
     node TEXT NOT NULL, day TEXT NOT NULL, known_seconds INTEGER NOT NULL DEFAULT 0,
     unknown_seconds INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (node, day));
 CREATE TABLE IF NOT EXISTS status_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- Users and tiers (plan-console-phase2 §3.1). List fields are JSON arrays; expires_on is YYYY-MM-DD.
+CREATE TABLE IF NOT EXISTS users (
+    name TEXT PRIMARY KEY, uuid TEXT NOT NULL UNIQUE, short_id TEXT NOT NULL,
+    tiers TEXT NOT NULL DEFAULT '["all"]', allow_nodes TEXT NOT NULL DEFAULT '[]', deny_nodes TEXT NOT NULL DEFAULT '[]',
+    expires_on TEXT, status TEXT NOT NULL DEFAULT 'active', note TEXT NOT NULL DEFAULT '',
+    telegram_id INTEGER UNIQUE, oidc_subject TEXT UNIQUE,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS node_tiers (node TEXT PRIMARY KEY, tiers TEXT NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS tier_rules (tier TEXT PRIMARY KEY, accepts TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 REPORT_SEQ_DAYS = 30
 
@@ -73,14 +83,27 @@ def transaction(conn):
     conn.execute("COMMIT")
 
 
+# Columns added after a table first shipped: (table, column, definition).
+ADDED_COLUMNS = (
+    ("audit_log", "actor", "TEXT NOT NULL DEFAULT ''"),
+)
+
+
 def init(path):
     with connect(path) as conn:
         conn.executescript(SCHEMA)
+        for table, column, definition in ADDED_COLUMNS:
+            if column not in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                except sqlite3.OperationalError as exc:  # another service added it first
+                    if "duplicate column" not in str(exc):
+                        raise
 
 
-def audit(conn, action, target, detail=""):
-    conn.execute("INSERT INTO audit_log (at, action, target, detail) VALUES (?, ?, ?, ?)",
-                 (now(), action, target, detail))
+def audit(conn, action, target, detail="", actor=""):
+    conn.execute("INSERT INTO audit_log (at, action, target, detail, actor) VALUES (?, ?, ?, ?, ?)",
+                 (now(), action, target, detail, actor))
 
 
 def tokens(conn):

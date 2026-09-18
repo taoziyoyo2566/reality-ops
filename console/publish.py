@@ -11,7 +11,7 @@ import secrets
 
 from subs import catalog as cat
 
-from . import db
+from . import config, db, users as users_mod
 
 
 class PublishError(ValueError):
@@ -78,6 +78,11 @@ def publish(settings, conn, registry, reason):
     """Write both files and log the result; returns (ok, detail). Never raises for data problems."""
     nodes, problems, _ = registry.current()
     tokens = db.tokens(conn)
+    if users_mod.imported(conn):
+        # a disabled or expired user's address stops working until the user is active again (plan-console-phase2 §3.1)
+        day = users_mod.today(config.status_from_env().utc_offset_hours)
+        active = {n for n, u in users_mod.load(conn).items() if users_mod.effective(u, day)}
+        tokens = {user: token for user, token in tokens.items() if user in active}
     generated_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     try:
         catalog, token_doc = build(nodes, db.shown_nodes(conn), tokens, generated_at)

@@ -1,0 +1,42 @@
+---
+# 用户导入内容（plan-console-phase2 §3.2）：{users, node_tiers, rules}。console.yml 导入前生成；也可单独运行做等价核对。
+# 用户档案里只取新系统需要的字段；edge_extra_users（以前加到每台新节点上的额外用户）换算为单独允许全部 edge_nodes，
+# 使导入结果与节点现状一致。
+- name: 读取用户档案（用于导入）
+  delegate_to: localhost
+  become: false
+  find:
+    paths: "{{ console_repo_dir }}/users"
+    patterns: "*.yml,*.yaml"
+  register: console_import_files
+
+- name: 节点独占用户名单（reality_node_users）无法用档位表达，不能自动导入
+  assert:
+    that: groups['reality_nodes'] | map('extract', hostvars) | selectattr('reality_node_users', 'defined') | list | length == 0
+    fail_msg: "有节点设置了 reality_node_users；请先把它改写为用户的单独允许 / 禁止节点，再导入。"
+
+- name: 组装用户导入内容（含 UUID）
+  no_log: true
+  vars:
+    import_profiles: >-
+      {{ query('file', *(console_import_files.files | map(attribute='path') | sort)) | map('from_yaml')
+         | map('dict2items') | map('selectattr', 'key', 'in', ['name', 'uuid', 'short_id', 'groups', 'hosts', 'deny_hosts'])
+         | map('items2dict') | list }}
+    import_users: >-
+      {%- set out = [] -%}
+      {%- for u in import_profiles -%}
+        {%- if u.name in edge_extra_users -%}
+          {%- set _ = out.append(u | combine({'hosts': ((u.hosts | default([], true)) + edge_nodes) | unique})) -%}
+        {%- else -%}
+          {%- set _ = out.append(u) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+    import_node_tiers: >-
+      {%- set out = {} -%}
+      {%- for h in groups['reality_nodes'] -%}
+        {%- set _ = out.update({h: hostvars[h].group_names | select('in', acl_matrix.keys() | list) | list}) -%}
+      {%- endfor -%}
+      {{ out }}
+  set_fact:
+    console_users_import_doc: "{{ {'users': import_users, 'node_tiers': import_node_tiers, 'rules': acl_matrix} }}"

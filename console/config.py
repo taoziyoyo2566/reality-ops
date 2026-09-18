@@ -15,6 +15,7 @@ class Settings:
     public_base_url: str
     offline_minutes: int
     allowed_hosts: tuple
+    auth_mode: str = "none"
 
 
 def from_env(env=None):
@@ -32,6 +33,7 @@ def from_env(env=None):
         # The admin pages are only published on 127.0.0.1; refusing other Host headers blocks DNS rebinding.
         allowed_hosts=tuple(h.strip() for h in env.get("CONSOLE_ALLOWED_HOSTS", "127.0.0.1:8200,localhost:8200").split(",")
                             if h.strip()),
+        auth_mode=env.get("CONSOLE_AUTH_MODE", "none"),
     )
 
 

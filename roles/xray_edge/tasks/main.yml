@@ -9,45 +9,13 @@
     that: inventory_hostname in edge_nodes
     fail_msg: "{{ inventory_hostname }} 不在 edge_nodes={{ edge_nodes }} 中。"
 
-- name: 用户加载、校验与 ACL（与 deploy.yml 相同的计算）
+# 用户来源（plan-console-phase2 D-P2-1）：console 从控制台读取；files 是导入控制台之前的做法（users/*.yml 与 ACL）。
+- name: 用户加载、校验与 ACL（与 deploy.yml 相同的计算，只在 files 来源时）
   import_tasks: acl.yml
+  when: edge_user_source == 'files'
 
 - name: 计算新实例用户与 SOCKS5（只依赖控制端数据）
   import_tasks: desired.yml
-
-# 新旧实例的用户集合只做比较提示，不中止部署（D-C5，plan-single-instance-443 §10 2026-09-17）：
-# 新系统独立运行，旧实例的用户变更由管理员另行对旧节点运行 deploy.yml。
-- name: 读取旧实例的用户集合（只读，只输出用户名，不输出配置）
-  shell: |
-    set -euo pipefail
-    if [ '{{ reality_mode | default("single") }}' = multi ]; then
-      docker ps -a --format '{% raw %}{{.Names}}{% endraw %}' \
-        | python3 -c 'import sys, json; print(json.dumps(sorted(n[len("reality_"):] for n in sys.stdin.read().split() if n.startswith("reality_") and n != "reality_core")))'
-    else
-      # lsi 返回完整入站配置（含用户 id 与密钥），只在节点上解析出 tag。
-      docker exec reality_core xray api lsi -s 127.0.0.1:10085 \
-        | python3 -c 'import sys, json; print(json.dumps(sorted(i["tag"][len("user-"):] for i in json.load(sys.stdin).get("inbounds", []) if i.get("tag", "").startswith("user-"))))'
-    fi
-  args:
-    executable: /bin/bash
-  register: edge_old_users
-  changed_when: false
-  # 节点没有旧实例时读取会失败，只影响下面的提示。
-  failed_when: false
-  when: not (edge_skip_drift_check | bool)
-
-- name: 提示新旧实例的用户差异（不计额外用户）
-  vars:
-    old_ok: "{{ (edge_old_users.rc | default(1)) == 0 }}"
-    old_names: "{{ (edge_old_users.stdout | from_json | sort) if old_ok else [] }}"
-    new_names: "{{ reality_instances | map(attribute='name') | sort }}"
-  debug:
-    msg: >-
-      {% if not old_ok %}未读取到旧实例用户（rc={{ edge_old_users.rc | default('?') }}），不做比较。
-      {% elif old_names == new_names %}新旧实例用户一致。
-      {% else %}新旧实例用户不同（只提示，不中止）。仅旧实例有：{{ old_names | difference(new_names) }}；
-      仅新实例有：{{ new_names | difference(old_names) }}。旧实例需要同步时，对该节点另行运行 deploy.yml。{% endif %}
-  when: not (edge_skip_drift_check | bool)
 
 - name: 创建新实例目录
   file:

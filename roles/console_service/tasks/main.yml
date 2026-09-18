@@ -160,6 +160,38 @@
         path: "{{ console_root_dir }}/import/initial.json"
         state: absent
 
+# 用户导入（plan-console-phase2 §3.2）：只在控制台还没有用户时生效，导入内容由 users_import_doc.yml 生成。
+- name: 生成用户导入内容
+  import_tasks: users_import_doc.yml
+
+- name: 首次导入用户
+  block:
+    - name: 写入用户导入文件（含 UUID，导入后删除）
+      copy:
+        content: "{{ console_users_import_doc | to_json }}"
+        dest: "{{ console_root_dir }}/import/users.json"
+        owner: "{{ console_uid }}"
+        group: "{{ console_uid }}"
+        mode: "0600"
+      no_log: true
+
+    - name: 导入用户并逐台比对节点上的现有用户
+      command: >-
+        docker compose -f {{ console_root_dir }}/compose.yaml run --rm -T --no-deps
+        web python -m console.admin import-users /import/users.json
+      register: console_users_import
+      changed_when: (console_users_import.stdout_lines | last | from_json).imported | default(false)
+      failed_when: console_users_import.rc != 0
+
+    - name: 用户导入与比对结果（differences 为空表示与各节点现状一致）
+      debug:
+        msg: "{{ console_users_import.stdout_lines | last | from_json }}"
+  always:
+    - name: 删除用户导入文件
+      file:
+        path: "{{ console_root_dir }}/import/users.json"
+        state: absent
+
 - name: 核对两个服务健康（容器内请求 /healthz）
   command: >-
     docker compose -f {{ console_root_dir }}/compose.yaml exec -T {{ item.service }}
