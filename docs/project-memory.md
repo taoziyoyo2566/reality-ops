@@ -478,6 +478,15 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
 - `[实测]` 2026-09-18 found in the pushed `ops@2f7026d`: with `edge_user_source` files, `edge.yml` fails on `jp05` and `jp10`
   because `test` is both in `edge_extra_users` and allowed there by its own `hosts`; a run over all nodes stops at `jp05`
   before changing it. Fixed in the working tree (extras already in the ACL result are not added twice).
+- `[实测]` 2026-09-19 00:14-01:00 JST deployed 2a: `console.yml` imported 33 users with no differences; `legacy-remove.yml`
+  removed jp05's old instance (container `reality_core`, `/opt/reality`, old monitor agent); `edge.yml` (console source)
+  deployed netcup, ams, dcc, jp05, hk01, hk02 and jp10, and left the first four nodes unchanged. All 11 nodes: users
+  match the console, 443 listening, reports arriving, status probes succeed; the 7 new nodes are not shown in
+  subscriptions yet. Fixed during the rollout (working tree): the node facts (REALITY target check, global IPv6, public
+  IPv4) moved from `acl.yml` to `node_facts.yml` because the console source skipped them; the tools image is compared
+  by layer digests, because ams and dcc use the classic `overlay2` store whose image IDs differ from the containerd
+  store's for the same image. First report of a freshly deployed node gets 401 (the reporter starts before the node is
+  registered) and succeeds on the retry five minutes later.
 - `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while

@@ -133,9 +133,9 @@
   when: not (status_enabled | bool)
 
 # 只在控制台从未发放、从未显示过节点时生效（console.admin import-initial），使现有订阅地址与节点列表不变。
-- name: 首次导入已发放的 token 与显示中的节点
+- name: 第一阶段：首次导入已发放的订阅地址与显示中的节点
   block:
-    - name: 写入导入文件（明文 token，导入后删除）
+    - name: 写入订阅地址导入文件（明文 token，导入后删除）
       copy:
         content: "{{ {'tokens': vault_subs_tokens | default({}), 'shown': console_initial_shown_nodes} | to_json }}"
         dest: "{{ console_root_dir }}/import/initial.json"
@@ -144,18 +144,18 @@
         mode: "0600"
       no_log: true
 
-    - name: 导入并发布
+    - name: 导入订阅地址并发布
       command: >-
         docker compose -f {{ console_root_dir }}/compose.yaml run --rm -T --no-deps
         web python -m console.admin import-initial /import/initial.json
       register: console_import
       changed_when: (console_import.stdout_lines | last | from_json).imported
 
-    - name: 导入结果
+    - name: 订阅地址导入结果（第一阶段；已导入过时显示 imported false，属正常）
       debug:
         msg: "{{ console_import.stdout_lines | last | from_json }}"
   always:
-    - name: 删除导入文件
+    - name: 删除订阅地址导入文件
       file:
         path: "{{ console_root_dir }}/import/initial.json"
         state: absent

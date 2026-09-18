@@ -178,6 +178,9 @@ Updated: 2026-09-18 JST
   `console.yml` 的一次性导入、`edge.yml` 改用控制台名单、认证中间件与操作记录执行者、删除新旧用户集合比较。
   `[实测]` 用真实 `users/*.yml`、inventory 与 `acl_matrix` 导入临时控制台：33 人，与已登记的 4 台节点完全一致；
   11 台节点的控制台名单与原 ACL 计算逐一相同（含 UUID 与 `short_id`）。
+- **2a 上线（2026-09-19）**：`console.yml` 导入 33 人，与已登记节点无差异；`edge.yml` 以控制台名单部署全部 11 台节点
+  （新增 netcup、ams、dcc、jp05、hk01、hk02、jp10），控制台与节点的用户无差异。上线中修正：节点事实检测从 `acl.yml` 拆出
+  （控制台来源下曾被一并跳过）；工具镜像改按层摘要核对（`overlay2` 与 containerd 存储的镜像 ID 不同）。
 - 与本文的差异：`edge_extra_users`（原先加到每台新节点上的 `test`）在导入时换算为“单独允许全部 `edge_nodes`”；
   节点声明 `reality_node_users` 时导入中止（目前没有节点使用）；导入前控制台保留第一阶段的只读用户列表。
 

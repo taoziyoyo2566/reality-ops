@@ -9,6 +9,9 @@
     that: inventory_hostname in edge_nodes
     fail_msg: "{{ inventory_hostname }} 不在 edge_nodes={{ edge_nodes }} 中。"
 
+- name: 节点事实（REALITY target 校验、全局 IPv6、公网 IPv4）
+  import_tasks: node_facts.yml
+
 # 用户来源（plan-console-phase2 D-P2-1）：console 从控制台读取；files 是导入控制台之前的做法（users/*.yml 与 ACL）。
 - name: 用户加载、校验与 ACL（与 deploy.yml 相同的计算，只在 files 来源时）
   import_tasks: acl.yml
