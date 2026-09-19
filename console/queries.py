@@ -89,6 +89,13 @@ def traffic_by_user(conn, prefix):
         (prefix + "%",))}
 
 
+def users_with_traffic(conn, days):
+    """Users with traffic on the new nodes in the last `days` days (UTC)."""
+    start = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    return {r[0] for r in conn.execute(
+        "SELECT user FROM traffic_daily WHERE day >= ? GROUP BY user HAVING SUM(up) + SUM(down) > 0", (start,))}
+
+
 def traffic_by_node(conn, prefix):
     return {r["node"]: {"up": r["up"], "down": r["down"]} for r in conn.execute(
         "SELECT node, SUM(up) AS up, SUM(down) AS down FROM traffic_daily WHERE day LIKE ? GROUP BY node",

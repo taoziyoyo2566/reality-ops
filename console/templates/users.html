@@ -13,7 +13,9 @@
 {% for k, v in status_names.items() %}<option value="{{ k }}"{{ ' selected' if status == k }}>{{ v }}</option>{% endfor %}</select>
 {% if tier_options %}<select name="tier"><option value="">全部档位</option>
 {% for t in tier_options %}<option value="{{ t }}"{{ ' selected' if tier == t }}>{{ t }}</option>{% endfor %}</select>{% endif %}
-<button>筛选</button>{% if q or status or tier %} <a href="/users">清除</a>{% endif %}
+{% if managed %}<select name="stage"><option value="">全部进度</option>
+{% for k, v in stage_names.items() %}<option value="{{ k }}"{{ ' selected' if stage == k }}>{{ v }}</option>{% endfor %}</select>{% endif %}
+<button>筛选</button>{% if q or status or tier or stage %} <a href="/users">清除</a>{% endif %}
 </form>
 </section>
 
@@ -22,18 +24,18 @@
 <section>
 <table>
 <thead><tr>
-<th></th><th>用户</th><th>档位</th><th>状态</th><th>到期</th><th class="num">可用节点</th><th>订阅</th><th>最后拉取</th><th class="num">本月流量 {{ month }}</th>
+<th></th><th>用户</th><th>档位</th><th>状态</th><th>到期</th><th class="num">可用节点</th><th>进度</th><th>最后拉取</th><th class="num">本月流量 {{ month }}</th>
 </tr></thead>
 <tbody>
 {% for r in rows %}
 <tr>
-<td>{% if r.issuable %}<input type="checkbox" name="names" value="{{ r.name }}" aria-label="选择 {{ r.name }}">{% endif %}</td>
-<td><a href="/users/{{ r.name }}">{{ r.name }}</a>{% if r.note %} <span class="muted">{{ r.note }}</span>{% endif %}</td>
+<td>{% if r.issuable or r.bindable %}<input type="checkbox" name="names" value="{{ r.name }}" aria-label="选择 {{ r.name }}">{% endif %}</td>
+<td><a href="/users/{{ r.name }}">{{ r.name }}</a>{% if r.bound %} <span class="tag" title="已绑定 Telegram">TG</span>{% endif %}{% if r.note %} <span class="muted">{{ r.note }}</span>{% endif %}</td>
 <td>{% for g in r.tiers %}<span class="tag">{{ g }}</span>{% endfor %}</td>
 <td>{% if r.state == 'active' %}<span class="ok">启用</span>{% elif r.state == 'disabled' %}<span class="muted">停用</span>{% elif r.state == 'expired' %}<span class="bad">已到期</span>{% elif managed %}<span class="warn">不在控制台</span>{% else %}<span class="warn">档案未同步</span>{% endif %}</td>
 <td>{{ r.expires_on or '—' }}</td>
 <td class="num">{{ r.nodes | length }}{% if r.pending %} <span class="warn" title="{{ r.pending | join(', ') }}">待生效</span>{% endif %}</td>
-<td>{% if r.issued %}<span class="ok">已发放</span>{% else %}<span class="muted">未发放</span>{% endif %}</td>
+<td>{% if r.stage %}<span class="{{ {'using': 'ok', 'fetched': 'warn', 'waiting': 'warn'}.get(r.stage, 'muted') }}">{{ stage_names[r.stage] }}</span>{% elif r.issued %}<span class="ok">已发放</span>{% else %}<span class="muted">未发放</span>{% endif %}</td>
 <td>{% if r.fetch %}{{ r.fetch.at | time }} <span class="muted">{{ r.fetch.fmt }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
 <td class="num">{{ (r.traffic.up + r.traffic.down) | bytes }}</td>
 </tr>
@@ -42,8 +44,9 @@
 {% endfor %}
 </tbody>
 </table>
-<p><button class="primary">为勾选的用户发放订阅并导出清单</button>
-<span class="muted">只有启用且未发放的用户可以勾选；清单只在页面上显示和下载，不保存在服务器上。</span></p>
+<p>{% if bot_username %}<button class="primary" formaction="/users/bulk-bind">发放并生成 Telegram 绑定链接</button> {% endif %}<button{% if not bot_username %} class="primary"{% endif %}>为勾选的用户发放订阅并导出清单</button></p>
+<p class="muted">只有启用的用户可以勾选。{% if bot_username %}“发放并生成 Telegram 绑定链接”：未发放的先发放，再为每人生成一次性绑定链接（已绑定的跳过），用户在 bot 里自己取地址。{% endif %}
+“导出清单”只处理未发放的用户，直接列出订阅地址。清单与链接只在页面上显示和下载，不保存在服务器上。</p>
 </section>
 </form>
 <p class="muted">“可用节点”按档位与单独允许 / 禁止计算；“待生效”表示该用户在某些节点上与控制台还不一致：开启用户同步的节点约一分钟内生效，其余节点运行 <code>edge.yml</code> 后生效。</p>

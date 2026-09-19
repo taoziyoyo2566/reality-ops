@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Console phase 2c (plan-console-phase2 §3.5, §6.1 item 1): the Telegram bot's binding, commands and permissions,
-and the user page's Telegram section.
+and the user page's Telegram section; the migration progress and bulk binding links (plan-user-migration §3).
 
 Run with the console's dependencies installed, like tests/console/test_console.py:
   python tests/console/test_bot.py
@@ -11,6 +11,7 @@ import hmac
 import json
 import os
 import pathlib
+import sqlite3
 import sys
 import unittest
 import urllib.parse
@@ -394,6 +395,93 @@ class WebTest(unittest.TestCase):
         with Server(app) as srv:
             self.assertNotIn('id="telegram"', srv.request("GET", "/users/alice")[1])
             self.assertNotIn("Telegram bot", srv.request("GET", "/")[1])
+
+
+class MigrationTest(unittest.TestCase):
+    """Progress by stage on the home and users pages, and issuing with binding links in one step."""
+
+    def setUp(self):
+        self.env = BotEnv()
+        self.settings = self.env.settings.__class__(**dict(self.env.settings.__dict__, bot_enabled=True))
+        self.app = web_app.create_app(self.settings, start_watcher=False, csrf_secret=b"k" * 32)
+        self.csrf = hmac.new(b"k" * 32, b"console-form", hashlib.sha256).hexdigest()
+
+    def tearDown(self):
+        self.env.close()
+
+    def post(self, srv, path, **fields):
+        body = urllib.parse.urlencode(dict(fields, csrf=self.csrf), doseq=True).encode()
+        return srv.request("POST", path, body, {"Content-Type": "application/x-www-form-urlencoded"})
+
+    def fetched(self, *names):
+        writer = sqlite3.connect(self.env.settings.subs_access_db)
+        try:
+            with writer:
+                writer.execute("CREATE TABLE IF NOT EXISTS hits (ts INTEGER NOT NULL, user TEXT NOT NULL, "
+                               "fmt TEXT NOT NULL, ip TEXT, user_agent TEXT)")
+                writer.executemany("INSERT INTO hits VALUES (?, ?, 'v2ray', '', '')", [(db.now(), n) for n in names])
+        finally:
+            writer.close()
+
+    def test_stages(self):
+        self.assertEqual([users.stage(*a) for a in ((False, True, True), (True, False, False), (True, True, False),
+                                                     (True, False, True))],
+                         ["not_issued", "waiting", "fetched", "using"])
+
+    def test_progress_and_stage_filter(self):
+        with self.env.conn() as conn:
+            conn.execute("INSERT INTO users (name, uuid, short_id, created_at, updated_at) VALUES "
+                         "('dave', '44444444-4444-4444-8444-444444444444', 'a1a1a1a1', 1, 1), "
+                         "('erin', '55555555-5555-4555-8555-555555555555', 'a1a1a1a1', 1, 1)")
+            for name in ("alice", "bob", "test"):
+                db.issue_token(conn, name, name[0] * 43)
+            conn.execute("INSERT INTO traffic_daily (day, node, user, up, down) VALUES (?, 'alpha', 'alice', 1, 2)",
+                         (bot_mod.queries.today(),))
+            users.set_status(conn, "erin", "disabled")
+        self.fetched("alice", "bob")
+        with Server(self.app) as srv:
+            home = srv.request("GET", "/")[1]
+            self.assertIn("启用中的 4 人", home)
+            for label, count in (("未发放", 1), ("待导入", 1), ("已导入", 1), ("使用中", 1)):
+                self.assertIn(f"{label} {count}</a>", home)
+            self.assertIn("已绑定 Telegram 0", home)
+            self.assertIn("停用或到期的 1 人不计入", home)
+            for stage, names in (("using", ["alice"]), ("fetched", ["bob"]), ("waiting", ["test"]),
+                                 ("not_issued", ["dave"])):
+                page = srv.request("GET", f"/users?stage={stage}")[1]
+                shown = [n for n in ("alice", "bob", "test", "dave", "erin") if f'href="/users/{n}"' in page]
+                self.assertEqual(shown, names, stage)
+
+    def test_bulk_bind_issues_links_and_skips_bound_users(self):
+        self.env.say(ALICE, f"/start {self.env.link('alice')}")
+        with Server(self.app) as srv:
+            self.assertIn('formaction="/users/bulk-bind"', srv.request("GET", "/users")[1])
+            status, _, headers = self.post(srv, "/users/bulk-bind", names=["alice", "bob", "test", "../x"])
+            self.assertEqual((status, headers["location"]), (303, "/users/links?names=bob%2Ctest"))
+            page = srv.request("GET", "/users/links?names=bob,test")[1]
+            codes = dict(line.split("\t") for line in
+                         srv.request("GET", "/users/links.txt?names=bob,test")[1].splitlines())
+            self.assertEqual(sorted(codes), ["bob", "test"])
+            self.assertIn(codes["bob"], page)
+            self.assertIn("发给用户的消息", page)
+            self.assertIn("已绑定用户 bob", self.env.say(STRANGER, "/start " + codes["bob"].split("start=")[1]))
+            self.env.say(STRANGER, "/sub")
+            self.assertIn(self.env.token("bob"), self.env.api.last("sendPhoto")["caption"])
+            self.assertIn("已绑定 Telegram 2", srv.request("GET", "/")[1])
+        self.assertIsNone(self.env.token("alice"))                       # already bound: left alone
+        self.assertIn("bob", self.env.published()[0]["users"])
+        with self.env.conn() as conn:
+            actions = [(r["action"], r["target"]) for r in conn.execute("SELECT action, target FROM audit_log ORDER BY id")]
+        self.assertIn(("bulk-issue", "bob,test"), actions)
+        self.assertIn(("telegram-link", "bob,test"), actions)
+
+    def test_bulk_bind_needs_the_bot(self):
+        with self.env.conn() as conn:
+            conn.execute("DELETE FROM settings WHERE key = 'bot_username'")
+        with Server(self.app) as srv:
+            self.assertNotIn("bulk-bind", srv.request("GET", "/users")[1])
+            self.assertEqual(self.post(srv, "/users/bulk-bind", names=["bob"])[2]["location"], "/users")
+        self.assertIsNone(self.env.token("bob"))
 
 
 if __name__ == "__main__":

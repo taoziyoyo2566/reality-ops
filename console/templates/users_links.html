@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Telegram 绑定链接{% endblock %}
+{% block content %}
+<h1>Telegram 绑定链接</h1>
+<section>
+{% if lines %}
+<p class="muted">每行“用户名 链接”。链接 {{ bind_hours }} 小时内有效、只能使用一次，只发给对应的本人；过期后在用户页或用户列表重新生成。</p>
+<textarea class="url" rows="{{ [lines | length + 1, 20] | min }}" readonly>{% for name, url, _ in lines %}{{ name }}	{{ url }}
+{% endfor %}</textarea>
+<p><a href="/users/links.txt?names={{ names | urlencode }}">下载为文本文件</a> · <a href="/users">返回用户列表</a></p>
+<h2>发给用户的消息（示例）</h2>
+<p class="muted">把“链接”换成上面该用户的那一行。</p>
+<textarea class="url" rows="8" readonly>你好！订阅换到了新的系统，请按下面几步换成新地址（旧地址暂时还能用）：
+1. 在 Telegram 里打开这个链接，点“开始”：链接
+2. 给机器人发送 /sub，会收到新的订阅地址和二维码；
+3. 在客户端里导入新的订阅地址（或扫描二维码），更新订阅后就能用了。
+链接 {{ bind_hours }} 小时内有效，只能用一次，请不要转发。以后随时可以给机器人发 /sub 取地址、发 /me 查看流量和到期日。</textarea>
+{% else %}
+<p class="muted">所选用户没有可用的绑定链接（可能已经绑定、已停用或到期）。<a href="/users">返回用户列表</a></p>
+{% endif %}
+</section>
+{% endblock %}

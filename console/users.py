@@ -26,6 +26,9 @@ NOTE_MAX = 200
 EXPIRY_WARN_DAYS = 7
 BIND_SECONDS = 86400
 BIND_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{32}$")
+# Moving users onto the new system: how far each active user has got (plan-user-migration §3).
+STAGES = {"not_issued": "未发放", "waiting": "待导入", "fetched": "已导入", "using": "使用中"}
+USING_DAYS = 30
 
 
 class UserError(ValueError):
@@ -118,6 +121,15 @@ def node_users(conn, node, day):
     return [{"name": u["name"], "uuid": u["uuid"], "short_id": u["short_id"]}
             for u in load(conn).values()
             if effective(u, day) and can_use(u, node, tiers_of_nodes, tier_rules)]
+
+
+def stage(issued, fetched, used):
+    """not_issued: no address; waiting: never fetched; fetched: fetched, no recent traffic; using: recent traffic."""
+    if not issued:
+        return "not_issued"
+    if used:
+        return "using"
+    return "fetched" if fetched else "waiting"
 
 
 def user_nodes(conn, user, nodes):

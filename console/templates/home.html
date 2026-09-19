@@ -19,6 +19,15 @@
   <div class="stat"><div class="muted">本月流量 {{ month }}</div><div class="v">{{ (month_total.values() | sum(attribute='up') + month_total.values() | sum(attribute='down')) | bytes }}</div></div>
 </div>
 
+{% if progress %}
+<section id="migration" style="margin-top:14px">
+<h2>迁移进度</h2>
+<p>启用中的 {{ progress.total }} 人：{% for k, label in stage_names.items() %}<a href="/users?stage={{ k }}">{{ label }} {{ progress.counts[k] }}</a>{{ ' · ' if not loop.last }}{% endfor %}{% if bot_enabled %} · 已绑定 Telegram {{ progress.bound }}{% endif %}</p>
+<p class="muted">待导入：已发放，还没拉取过订阅；已导入：拉取过，近 {{ using_days }} 天在新节点没有流量；使用中：近 {{ using_days }} 天在新节点有流量。{% if progress.inactive %}停用或到期的 {{ progress.inactive }} 人不计入。{% endif %}
+在用户列表勾选“未发放”的用户，点“发放并生成 Telegram 绑定链接”即可开始一批。</p>
+</section>
+{% endif %}
+
 <section id="publish" style="margin-top:14px">
 <h2>订阅发布</h2>
 <p class="muted">订阅服务只读取控制台“发布”出去的两份文件：哪个地址属于谁、每个人能用哪些节点。

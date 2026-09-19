@@ -519,6 +519,11 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   poll. The poll timeout is now 20 s (`fc5fac7`, deployed 04:20Z): 0 resets and no other errors in the next 22 min,
   where the old rate predicts 10 or more. Where the reset comes from (a device on the path or Telegram's side) is
   `[未知]`.
+- `[代码]` 2026-09-19 working tree, user migration (plan-user-migration): `users.stage` puts each active user in
+  not_issued / waiting / fetched / using (fetched from the subscription service's access log, using = traffic on the
+  new nodes in the last 30 days); the home page shows the counts, `/users?stage=` filters, and `POST /users/bulk-bind`
+  issues where missing and makes a binding link for each unbound active user (`/users/links`, not stored). The old
+  system is not touched by the migration (D-M1).
 - `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while

@@ -211,6 +211,22 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                     out.setdefault(name, []).append(node)
         return out
 
+    def stages(conn, users, day, fetches):
+        """{name: migration stage} for console users who are active today (plan-user-migration §3)."""
+        tokens = db.tokens(conn)
+        used = queries.users_with_traffic(conn, users_mod.USING_DAYS)
+        return {name: users_mod.stage(name in tokens, name in fetches, name in used)
+                for name, u in users.items() if u and user_state(u, day) == "active"}
+
+    def progress(conn, users, managed, day):
+        if not managed:
+            return None
+        by_user = stages(conn, users, day, queries.last_fetches(settings.subs_access_db))
+        return {"total": len(by_user),
+                "counts": {k: sum(1 for s in by_user.values() if s == k) for k in users_mod.STAGES},
+                "bound": sum(1 for n in by_user if users[n]["telegram_id"] is not None),
+                "inactive": sum(1 for u in users.values() if u and user_state(u, day) != "active")}
+
     def sync_state(node, row, now):
         """(label, css class) of a node's user sync."""
         if not node.sync:
@@ -243,7 +259,9 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                         node_count=len(nodes), shown=len(db.shown_nodes(conn) & set(nodes)),
                         month=month, month_total=queries.traffic_by_node(conn, month),
                         today_total=queries.traffic_by_node(conn, queries.today()),
-                        last_publish=db.last_publish(conn), just_published=published == "1")
+                        last_publish=db.last_publish(conn), just_published=published == "1",
+                        progress=progress(conn, users, managed, today()), stage_names=users_mod.STAGES,
+                        using_days=users_mod.USING_DAYS, bot_enabled=settings.bot_enabled)
 
     def user_alerts(conn, nodes, users, managed):
         if not managed:
@@ -283,8 +301,9 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
         return out
 
     @app.get("/users", response_class=HTMLResponse)
-    def users_page(request: Request, q: str = "", status: str = "", tier: str = ""):
+    def users_page(request: Request, q: str = "", status: str = "", tier: str = "", stage: str = ""):
         day = today()
+        fetches = queries.last_fetches(settings.subs_access_db)
         with db.connect(settings.db_path) as conn:
             nodes, _, users, managed = view_context(conn)
             tokens = db.token_rows(conn)
@@ -293,7 +312,8 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             pending = pending_users(conn, nodes, managed, day)
             tier_options = users_mod.known_tiers(conn) if managed else []
             usable = {name: users_mod.user_nodes(conn, u, nodes) for name, u in users.items() if u and managed}
-        fetches = queries.last_fetches(settings.subs_access_db)
+            by_stage = stages(conn, users, day, fetches) if managed else {}
+            bot_username = bot_mod.state(conn)["username"] if settings.bot_enabled else None
         rows = []
         for name in sorted(set(users) | set(tokens)):
             record = users.get(name)
@@ -304,7 +324,10 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                 continue
             if tier and tier not in (record or {}).get("tiers", []):
                 continue
+            if stage and by_stage.get(name) != stage:
+                continue
             on_nodes = sorted(n for n, node in nodes.items() if name in node.users)
+            bound = bool(record) and record.get("telegram_id") is not None
             rows.append({
                 "name": name, "record": record, "state": state, "note": (record or {}).get("note", ""),
                 "tiers": (record or {}).get("tiers", []), "expires_on": (record or {}).get("expires_on"),
@@ -313,9 +336,12 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                 "issuable": name not in tokens and (state == "active" or (state == "unknown" and not managed
                                                                           and name in users)),
                 "fetch": fetches.get(name), "traffic": traffic.get(name, {"up": 0, "down": 0}),
+                "stage": by_stage.get(name), "bound": bound,
+                "bindable": bool(bot_username) and state == "active" and managed and not bound,
             })
         return page(request, "users.html", rows=rows, month=month, managed=managed, q=q, status=status, tier=tier,
-                    tier_options=tier_options, status_names=STATUS_NAMES)
+                    stage=stage, tier_options=tier_options, status_names=STATUS_NAMES, stage_names=users_mod.STAGES,
+                    bot_username=bot_username)
 
     @app.get("/users/new", response_class=HTMLResponse)
     def user_new_page(request: Request):
@@ -386,6 +412,55 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                 ok, detail = pub.publish(settings, conn, registry, f"批量发放 {len(issued)} 人")
                 db.audit(conn, "bulk-issue", ",".join(issued), detail if ok else f"发布失败：{detail}", actor=actor(request))
         return back("/users/export?names=" + urllib.parse.quote(",".join(names)))
+
+    @app.post("/users/bulk-bind")
+    async def users_bulk_bind(request: Request):
+        """Telegram first (plan-user-migration §3): issue where missing, then a binding link for each unbound user."""
+        data = await form(request)
+        if data is None:
+            return refused()
+        names = [n for n in data.getlist("names") if NAME_RE.match(n)]
+        day = today()
+        issued, linked = [], []
+        with db.connect(settings.db_path) as conn:
+            _, _, users, managed = view_context(conn)
+            if not managed or not bot_mod.state(conn)["username"]:
+                return back("/users")
+            existing = db.tokens(conn)
+            for name in names:
+                record = users.get(name)
+                if not record or user_state(record, day) != "active" or record["telegram_id"] is not None:
+                    continue
+                if name not in existing:
+                    db.issue_token(conn, name, pub.new_token())
+                    issued.append(name)
+                users_mod.new_bind_link(conn, name)
+                linked.append(name)
+            if issued:
+                ok, detail = pub.publish(settings, conn, registry, f"批量发放 {len(issued)} 人")
+                db.audit(conn, "bulk-issue", ",".join(issued), detail if ok else f"发布失败：{detail}",
+                         actor=actor(request))
+            if linked:
+                db.audit(conn, "telegram-link", ",".join(linked), f"批量生成绑定链接 {len(linked)} 人", actor=actor(request))
+        return back("/users/links?names=" + urllib.parse.quote(",".join(linked)))
+
+    def link_lines(names):
+        wanted = [n for n in names.split(",") if NAME_RE.match(n)]
+        with db.connect(settings.db_path) as conn:
+            username = bot_mod.state(conn)["username"]
+            links = {n: users_mod.bind_link(conn, n) for n in wanted}
+        return [(n, f"https://t.me/{username}?start={links[n]['code']}", links[n]["expires_at"])
+                for n in wanted if links[n] and username]
+
+    @app.get("/users/links", response_class=HTMLResponse)
+    def users_links_page(request: Request, names: str = ""):
+        return page(request, "users_links.html", lines=link_lines(names), names=names,
+                    bind_hours=users_mod.BIND_SECONDS // 3600)
+
+    @app.get("/users/links.txt")
+    def users_links_text(names: str = ""):
+        text = "".join(f"{name}\t{url}\n" for name, url, _ in link_lines(names))
+        return PlainTextResponse(text, headers={"Content-Disposition": 'attachment; filename="telegram-links.txt"'})
 
     @app.get("/users/{name}", response_class=HTMLResponse)
     def user_page(request: Request, name: str, error: str = ""):
