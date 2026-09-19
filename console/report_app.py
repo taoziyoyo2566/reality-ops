@@ -15,14 +15,14 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import config, db, registry as reg, reports, users
+from . import config, db, registry as reg, reports, sharing, users
 
 VERSION_RE = re.compile(r"^[0-9a-f]{16}$")
 MAX_RUNNING = 10000
 
 
 def validate_sync(doc, node):
-    """The agent's sync request: {schema, node, applied, running, error}."""
+    """The agent's sync request: {schema, node, applied, running, error, online?, online_day?}."""
     if not (isinstance(doc, dict) and doc.get("schema") == reports.SCHEMA and doc.get("node") == node.name):
         raise ValueError("unsupported schema or another node")
     applied = doc.get("applied")
@@ -35,6 +35,7 @@ def validate_sync(doc, node):
     error = doc.get("error", "")
     if not isinstance(error, str):
         raise ValueError("invalid error")
+    sharing.validate(doc.get("online"), doc.get("online_day"))
     return applied, running, error[:200]
 
 
@@ -65,7 +66,8 @@ def create_app(settings):
         if body is None:
             return reply(413, error="body too large")
         try:
-            applied, running, error = validate_sync(json.loads(body), node)
+            doc = json.loads(body)
+            applied, running, error = validate_sync(doc, node)
         except (ValueError, TypeError) as exc:
             return reply(400, error=str(exc)[:200])
         if not node.sync:
@@ -76,9 +78,13 @@ def create_app(settings):
                 return reply(409, error="the console has no users yet")
             version, payload, pending = users.node_payload(conn, node, day)
             users.record_sync(conn, node.name, version, applied, running, pending, error)
+            now = db.now()
+            sharing.record(conn, sharing.validate(doc.get("online"), doc.get("online_day")), doc.get("online_day"),
+                           {u["name"] for u in payload}, now)
+            online = {"online_key": sharing.key_for(conn, sharing.day_of(now)), "online_day": sharing.day_of(now)}
         if applied == version:
-            return reply(200, version=version, unchanged=True)
-        return reply(200, version=version, users=payload)
+            return reply(200, version=version, unchanged=True, **online)
+        return reply(200, version=version, users=payload, **online)
 
     @app.get("/healthz")
     def healthz():

@@ -24,7 +24,7 @@
 <section>
 <table>
 <thead><tr>
-<th></th><th>用户</th><th>档位</th><th>状态</th><th>到期</th><th class="num">可用节点</th><th>进度</th><th>最后拉取</th><th class="num">本月流量 {{ month }}</th>
+<th></th><th>用户</th><th>档位</th><th>状态</th><th>到期</th><th class="num">可用节点</th><th>进度</th><th class="num" title="近 24 小时最多同时在几处（不同网络）在线">同时在线</th><th>最后拉取</th><th class="num">本月流量 {{ month }}</th>
 </tr></thead>
 <tbody>
 {% for r in rows %}
@@ -36,11 +36,12 @@
 <td>{{ r.expires_on or '—' }}</td>
 <td class="num">{{ r.nodes | length }}{% if r.pending %} <span class="warn" title="{{ r.pending | join(', ') }}">待生效</span>{% endif %}</td>
 <td>{% if r.stage %}<span class="{{ {'using': 'ok', 'fetched': 'warn', 'waiting': 'warn'}.get(r.stage, 'muted') }}">{{ stage_names[r.stage] }}</span>{% elif r.issued %}<span class="ok">已发放</span>{% else %}<span class="muted">未发放</span>{% endif %}</td>
-<td>{% if r.fetch %}{{ r.fetch.at | time }} <span class="muted">{{ r.fetch.fmt }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+<td class="num">{% if r.online %}<span class="{{ 'warn' if r.online >= threshold else '' }}">{{ r.online }} 处</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+<td>{% if r.fetch %}{{ r.fetch.at | time }} <span class="muted">{{ r.fetch.fmt }}</span>{% else %}<span class="muted">—</span>{% endif %}{% if r.sources %}<br><span class="muted" title="近 30 天拉取订阅的客户端：{{ r.sources.clients | join('、') }}">30 天：{{ r.sources.networks }} 个网络 · {{ r.sources.clients | length }} 种客户端</span>{% endif %}</td>
 <td class="num">{{ (r.traffic.up + r.traffic.down) | bytes }}</td>
 </tr>
 {% else %}
-<tr><td colspan="9" class="muted">没有符合条件的用户。</td></tr>
+<tr><td colspan="10" class="muted">没有符合条件的用户。</td></tr>
 {% endfor %}
 </tbody>
 </table>
@@ -49,5 +50,7 @@
 “导出清单”只处理未发放的用户，直接列出订阅地址。清单与链接只在页面上显示和下载，不保存在服务器上。</p>
 </section>
 </form>
+<p class="muted">“同时在线”：近 24 小时里同一时刻（每 10 分钟一段）最多从几个不同网络在线，达到 {{ threshold }} 处标黄并在首页提醒；
+同一住处的多台设备算一处，同一设备同时用 IPv4 和 IPv6 也算一处。节点只上报网络的哈希，不上报 IP。</p>
 <p class="muted">“可用节点”按档位与单独允许 / 禁止计算；“待生效”表示该用户在某些节点上与控制台还不一致：开启用户同步的节点约一分钟内生效，其余节点运行 <code>edge.yml</code> 后生效。</p>
 {% endblock %}

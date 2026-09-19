@@ -55,6 +55,9 @@
   {% if now - status.received_at > offline_minutes * 60 %}<span class="bad">（已超过 {{ offline_minutes }} 分钟）</span>{% endif %}</td></tr>
 <tr><th>443</th><td>{% if status.report.listening %}<span class="ok">监听中</span>{% else %}<span class="bad">未监听</span>{% endif %}</td></tr>
 <tr><th>最近一次 Xray 重启</th><td>{{ status.xray_restart_at | time }} <span class="muted">（由流量计数归零推断）</span></td></tr>
+{% if status.report.xray %}<tr><th>Xray 运行状态</th><td>内存 {{ status.report.xray.sys | bytes }}（堆 {{ status.report.xray.alloc | bytes }}），协程 {{ status.report.xray.goroutines }}，
+已运行 {{ status.report.xray.uptime // 86400 }} 天 {{ status.report.xray.uptime % 86400 // 3600 }} 小时 {{ status.report.xray.uptime % 3600 // 60 }} 分钟
+<span class="muted">（最后上报时）</span></td></tr>{% endif %}
 <tr><th>丢弃的上报</th><td>{{ status.report.dropped_reports }}</td></tr>
 </table>
 <h2 style="margin-top:12px">错误日志末尾</h2>

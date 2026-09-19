@@ -297,3 +297,7 @@ canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`e
   登记文件增加 `sync` 与 `short_ids`。影响：首次部署时每台节点 Xray 重启一次（新增 `short_id`）；配置文件在两次部署之间
   可能落后于运行中的用户，Xray 重启后由 agent 在一分钟内补齐。
 - **2026-09-19 · `edge.yml` 先一台试点、再其余同时部署。** 起因：逐台部署 11 台约 15 分钟，操作者要求并行。改动：`serial: [1, "100%"]`——清单中第一台单独成批，成功后其余节点同时执行；试点失败即整批失败，Ansible 停止，其余节点不动；第二批中个别节点失败不影响其他节点。工具镜像的控制端导出改为 `run_once`（并行时各节点写同一文件会互相覆盖）。`[实测]` 本机假主机验证：试点失败时其余主机未执行；第二批一台失败时其余完成。
+- **2026-09-19 · agent 上报在线网络的哈希（账号共享迹象 B）。** 起因：操作者要判断账号是否被多人共用（[`plan-sharing-signals`](../console/plan-sharing-signals-2026-09-19.md)）。改动：agent 每次同步用 `xray api statsgetallonlineusers` 与 `statsonlineiplist` 读取在线 IP，按 IPv4 /24、IPv6 /48 归为网络，用控制台下发的当日密钥做 HMAC，随 `/sync` 上报哈希；IP 不离开节点，探测账号不上报。节点配置不变（`statsUserOnline` 已开启），部署只重建 reporter 容器，Xray 不重启。
+- **2026-09-19 · agent 上报 Xray 运行状态。** 起因：操作者同意在节点页看到 Xray 的内存与运行时长（[`review-xray-features`](../console/review-xray-features-2026-09-19.md)）。
+  改动：每次上报附带 `xray api statssys` 的 `Alloc`、`Sys`、`NumGoroutine`、`Uptime`（字段 `xray`，查询失败时不带）；
+  控制台显示并在 `Sys` 达到提醒值时提示。节点配置不变。

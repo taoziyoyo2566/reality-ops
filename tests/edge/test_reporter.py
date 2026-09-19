@@ -197,6 +197,24 @@ class RunTest(unittest.TestCase):
         self.assertEqual(got[2]["traffic"], {"alice": {"up": 1, "down": 0}, "bob": {"up": 1, "down": 1}})
         self.assertEqual(got[1]["period"]["from"], got[0]["period"]["to"])
 
+    def test_xray_runtime_is_reported_when_the_api_answers(self):
+        saved = rep.xray_api
+        stats = {"Alloc": 4128168, "Sys": 44726536, "NumGoroutine": 20, "Uptime": 57247, "NumGC": 5}
+        try:
+            rep.xray_api = lambda cfg, command, *a, **k: json.dumps(stats) if command == "statssys" else "{}"
+            self.srv.users = {"alice": (1, 1)}
+            rep.run_once(self.cfg, self.spool)
+            self.assertEqual(self.srv.received[-1]["xray"],
+                             {"alloc": 4128168, "sys": 44726536, "goroutines": 20, "uptime": 57247})
+
+            def failing(*a, **k):
+                raise rep.SyncError("xray api statssys failed (rc=1)")
+            rep.xray_api = failing
+            rep.run_once(self.cfg, self.spool)
+            self.assertNotIn("xray", self.srv.received[-1])                  # the report itself still goes out
+        finally:
+            rep.xray_api = saved
+
     def test_spool_limit_drops_oldest_and_says_so(self):
         self.srv.fail = True
         for _ in range(5):

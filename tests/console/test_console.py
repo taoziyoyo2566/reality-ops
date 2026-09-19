@@ -317,6 +317,20 @@ class ReportAppTest(unittest.TestCase):
         with self.env.conn() as conn:
             self.assertEqual(queries.traffic_by_user(conn, "2026"), {"alice": {"up": 3, "down": 4}})
 
+    def test_xray_runtime_is_stored_shown_and_alerted(self):
+        runtime = {"alloc": 4 * 2 ** 20, "sys": 250 * 2 ** 20, "goroutines": 20, "uptime": 90061}
+        with Server(report_app.create_app(self.env.settings)) as srv:
+            for bad in (dict(runtime, extra=1), dict(runtime, sys=-1), dict(runtime, uptime="1"), [1]):
+                self.assertEqual(self.post(srv, report_doc("alpha", xray=bad), REPORT_TOKENS["alpha"]), 400, bad)
+            self.assertEqual(self.post(srv, report_doc("alpha", xray=runtime), REPORT_TOKENS["alpha"]), 200)
+        with self.env.conn() as conn:
+            self.assertEqual(queries.node_status(conn)["alpha"]["report"]["xray"], runtime)
+        app = web_app.create_app(self.env.settings, start_watcher=False, csrf_secret=b"k" * 32)
+        with Server(app) as srv:
+            self.assertIn("内存 250.0 MiB（堆 4.0 MiB），协程 20，\n已运行 1 天 1 小时 1 分钟", srv.request("GET", "/nodes/alpha")[1])
+            self.assertIn("250.0 MiB", srv.request("GET", "/nodes")[1])
+            self.assertIn("节点 alpha 的 Xray 占用内存 250.0 MiB，达到提醒值 240 MiB", srv.request("GET", "/")[1])
+
     def test_disabled_reporting_refuses_the_token(self):
         self.env.register("alpha", ["alice"], PBK_A, report=False)
         with Server(report_app.create_app(self.env.settings)) as srv:

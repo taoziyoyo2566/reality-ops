@@ -32,6 +32,11 @@ console_bot_enabled: "{{ console_bot_token | length > 0 }}"
 console_bot_admin_ids: "{{ vault_console_bot_admin_ids | default([]) }}"
 console_bot_api_url: "https://api.telegram.org"
 
+# 共享迹象（plan-sharing-signals）：近 24 小时同一时刻在这么多处（不同网络）在线时，首页提醒。
+console_sharing_threshold: 3
+# 节点 Xray 占用内存（statssys 的 Sys）达到此值（MiB）时首页提醒；edge_memory_limit 默认 300m，取其 80%。
+console_xray_memory_alert_mib: 240
+
 console_memory_limit: "128m"
 console_docker_log_max_size: "10m"
 console_docker_log_max_file: "3"

@@ -35,6 +35,8 @@ services:
       CONSOLE_OFFLINE_MINUTES: {{ console_offline_minutes | string | to_json }}
       CONSOLE_BACKUP_KEEP: {{ console_backup_keep | string | to_json }}
       CONSOLE_BOT_ENABLED: {{ bot_on | string | lower | to_json }}
+      CONSOLE_SHARING_THRESHOLD: {{ console_sharing_threshold | string | to_json }}
+      CONSOLE_XRAY_MEMORY_ALERT_MIB: {{ console_xray_memory_alert_mib | string | to_json }}
 {% for key, value in status_env.items() %}
       {{ key }}: {{ value | to_json }}
 {% endfor %}

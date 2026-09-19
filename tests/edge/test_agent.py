@@ -5,9 +5,12 @@ Xray API and a fake console.
 Run: python3 -m unittest discover -s tests/edge -p 'test_agent.py'
 All values are synthetic.
 """
+import hashlib
+import hmac
 import importlib.util
 import json
 import pathlib
+import time
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -31,6 +34,7 @@ class FakeXray:
         self.inbounds = {tag: dict(users) for tag, users in inbounds.items()}   # tag -> {email: account}
         self.calls = []
         self.fail = None
+        self.online = {}                                                        # email -> {ip: last seen}
 
     def api(self, cfg, command, *args, stdin=None):
         self.calls.append((command, args, json.loads(stdin) if stdin else None))
@@ -47,6 +51,11 @@ class FakeXray:
             for email in args[1:]:
                 self.inbounds[tag].pop(email, None)
             return ""
+        if command == "statsgetallonlineusers":
+            return json.dumps({"users": [f"user>>>{e}>>>online" for e in self.online]} if self.online else {})
+        if command == "statsonlineiplist":
+            email = args[args.index("-email") + 1]
+            return json.dumps({"ips": self.online.get(email, {}), "name": f"user>>>{email}>>>online"})
         if command == "adu":
             for inbound in json.loads(stdin)["inbounds"]:
                 for c in inbound["settings"]["clients"]:
@@ -74,9 +83,10 @@ class FakeConsole:
         self.requests.append(doc)
         if self.status != 200:
             return self.status, None
+        key = {"online_key": "0123456789abcdef" * 2, "online_day": "2026-09-19"}
         if doc["applied"] == self.version:
-            return 200, {"version": self.version, "unchanged": True}
-        return 200, {"version": self.version, "users": self.users}
+            return 200, dict(key, version=self.version, unchanged=True)
+        return 200, dict(key, version=self.version, users=self.users)
 
 
 def emails(node, names, vision=True):
@@ -160,6 +170,34 @@ class TickTest(unittest.TestCase):
         self.assertIn("HTTP 503", self.sync.error)
         self.xray.fail = "inbounduser"
         self.assertFalse(self.sync.tick("tok"))                                     # Xray unreachable: counts as a failure
+
+    def test_online_networks_are_hashed_and_sent_with_the_next_sync(self):
+        now = int(time.time())
+        self.xray.online = {
+            "alice.n1": {"203.0.113.5": now, "203.0.113.9": now - 30, "2001:db8:1::5": now,
+                         "198.51.100.1": now - 9000},                        # a connection open for hours: online
+            "bob.n1": {"[::ffff:198.51.100.7]": now},
+            "status-probe.n1": {"192.0.2.1": now},                             # the probe account: never reported
+            "zed.other": {"192.0.2.2": now},                                  # another node's email
+        }
+        self.sync.tick("tok")
+        self.assertNotIn("online", self.console.requests[0])                     # no key from the console yet
+        self.sync.tick("tok")
+        sent = self.console.requests[-1]
+        digest = lambda net: hmac.new(b"0123456789abcdef" * 2, net.encode(), hashlib.sha256).hexdigest()[:16]
+        self.assertEqual(sent["online_day"], "2026-09-19")
+        self.assertEqual(sent["online"], {
+            "alice": sorted([f"4:{digest('203.0.113.0/24')}", f"4:{digest('198.51.100.0/24')}",
+                             f"6:{digest('2001:db8:1::/48')}"]),                      # two addresses, one /24
+            "bob": [f"4:{digest('198.51.100.0/24')}"]})
+        self.assertNotIn("203.0.113", json.dumps(sent))
+
+    def test_online_errors_do_not_stop_the_sync(self):
+        self.sync.tick("tok")
+        self.xray.fail = "statsgetallonlineusers"
+        self.assertTrue(self.sync.tick("tok"))
+        self.assertNotIn("online", self.console.requests[-1])
+        self.assertEqual(self.console.requests[-1]["error"], "")
 
     def test_without_xhttp_only_the_reality_inbound_is_used(self):
         cfg = dict(self.cfg, xhttp=False)

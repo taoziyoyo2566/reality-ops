@@ -11,6 +11,10 @@ console's list for this node; differences are applied through the Xray API (add 
 the configuration files). It refuses an empty list and removing more than half of the users at once; those need a
 deployment (edge.yml). Users named in SYNC_KEEP (the status probe account) are never touched.
 
+Online places (plan-sharing-signals §3.2): with each sync the agent reads the online IP list of each user from Xray
+and sends keyed hashes of the networks they belong to (IPv4 /24, IPv6 /48), never the addresses; the key comes from
+the console and changes every day.
+
 Environment:
   REPORT_URL         https://<report host>/report
   REPORT_NODE        inventory name of this node
@@ -33,8 +37,12 @@ loses it, so after MAX_METRICS_FAILURES failed readings in a row it exits and Do
 Standard library only.
 """
 import datetime
+import hashlib
+import hmac
+import ipaddress
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -216,6 +224,17 @@ def post(url, token, report):
         return exc.code
 
 
+def xray_runtime(cfg):
+    """Xray's own memory, goroutines and uptime (`xray api statssys`); None when the API does not answer."""
+    try:
+        stats = json.loads(xray_api(cfg, "statssys") or "{}")
+    except (SyncError, ValueError):
+        return None
+    keys = {"alloc": "Alloc", "sys": "Sys", "goroutines": "NumGoroutine", "uptime": "Uptime"}
+    values = {k: stats.get(v) for k, v in keys.items()}
+    return values if all(isinstance(v, int) and v >= 0 for v in values.values()) else None
+
+
 def collect(cfg, spool, now):
     """Build the next report from metrics and the stored state; returns (report, new state)."""
     state = spool.load_state() or {"instance": secrets.token_hex(8), "seq": 0, "counters": None, "at": None,
@@ -238,6 +257,9 @@ def collect(cfg, spool, now):
         "error_tail": error_tail(cfg["error_log"]),
         "dropped_reports": int(state.get("dropped", 0)),
     }
+    runtime = xray_runtime(cfg)
+    if runtime:
+        report["xray"] = runtime
     return report, {"instance": state["instance"], "seq": seq, "counters": current, "at": iso(now), "dropped": 0,
                     "errlog": errlog}
 
@@ -365,6 +387,57 @@ def apply_tag(cfg, tag, desired, remove, add):
         xray_api(cfg, "adu", "stdin:", stdin=json.dumps({"inbounds": [inbound]}))
 
 
+ONLINE_KEY_RE = re.compile(r"^[0-9a-f]{32}$")
+ONLINE_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+MAX_ONLINE_NETWORKS = 64
+
+
+def network_key(ip):
+    """(family, network) of an address: IPv4 /24, IPv6 /48; None for anything that is not an address."""
+    try:
+        addr = ipaddress.ip_address(str(ip).strip("[]"))
+    except ValueError:
+        return None
+    if addr.version == 6 and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped
+    prefix = 24 if addr.version == 4 else 48
+    return addr.version, str(ipaddress.ip_network(f"{addr}/{prefix}", strict=False))
+
+
+def online_networks(cfg, keep, key):
+    """{user: ["4:<hash>" | "6:<hash>"]}: the networks each user has an open connection from right now.
+
+    Xray keeps an address in a user's online list while a connection from it is open and drops it when the last one
+    closes; the time next to it is when the latest connection opened, so it says nothing about being online now.
+    """
+    try:
+        data = json.loads(xray_api(cfg, "statsgetallonlineusers") or "{}")
+    except ValueError:
+        raise SyncError("xray api statsgetallonlineusers: unreadable output") from None
+    suffix = f".{cfg['node']}"
+    out = {}
+    for entry in data.get("users") or []:
+        parts = str(entry).split(">>>")
+        email = parts[1] if len(parts) >= 3 else str(entry)
+        name = email[:-len(suffix)] if email.endswith(suffix) else None
+        if not name or name in keep:
+            continue
+        try:
+            ips = json.loads(xray_api(cfg, "statsonlineiplist", "-email", email) or "{}").get("ips") or {}
+        except ValueError:
+            continue
+        tokens = set()
+        for ip in ips:
+            net = network_key(ip)
+            if net is None:
+                continue
+            digest = hmac.new(key.encode(), net[1].encode(), hashlib.sha256).hexdigest()[:16]
+            tokens.add(f"{net[0]}:{digest}")
+        if tokens:
+            out[name] = sorted(tokens)[:MAX_ONLINE_NETWORKS]
+    return out
+
+
 def post_json(url, token, doc):
     body = json.dumps(doc).encode()
     req = urllib.request.Request(url, data=body, method="POST", headers={
@@ -386,17 +459,34 @@ class Sync:
         self.desired = None
         self.verified = False
         self.error = ""
+        self.online_key = None       # from the console; today's key for hashing networks
+        self.online_day = None
 
     def running(self):
         return {tag: running_users(self.cfg, tag) for tag in inbound_tags(self.cfg)}
 
-    def exchange(self, token, running):
+    def sample_online(self):
+        """This node's online networks, hashed with the last key the console sent; {} without a key or on error."""
+        if not self.online_key:
+            return {}
+        try:
+            return online_networks(self.cfg, self.keep, self.online_key)
+        except SyncError as exc:
+            log(f"online: {exc}")
+            return {}
+
+    def exchange(self, token, running, online=None):
         names = sorted(n for n in running.get(REALITY_TAG, {}) if n not in self.keep) if running is not None else None
-        status, doc = post_json(self.cfg["sync_url"], token, {
-            "schema": SCHEMA, "node": self.cfg["node"], "applied": self.version if self.verified else None,
-            "running": names, "error": self.error[:200]})
+        request = {"schema": SCHEMA, "node": self.cfg["node"], "applied": self.version if self.verified else None,
+                   "running": names, "error": self.error[:200]}
+        if online:
+            request.update(online=online, online_day=self.online_day)
+        status, doc = post_json(self.cfg["sync_url"], token, request)
         if status != 200 or not isinstance(doc, dict) or not isinstance(doc.get("version"), str):
             raise SyncError(f"console answered HTTP {status}")
+        key, day = doc.get("online_key"), doc.get("online_day")
+        if isinstance(key, str) and ONLINE_KEY_RE.match(key) and isinstance(day, str) and ONLINE_DAY_RE.match(day):
+            self.online_key, self.online_day = key, day
         if not doc.get("unchanged"):
             users = doc.get("users")
             if not isinstance(users, list):
@@ -427,7 +517,7 @@ class Sync:
             log(f"sync: {exc}")
             return False
         try:
-            self.exchange(token, running)
+            self.exchange(token, running, self.sample_online())
             changed = self.reconcile(running)
             if changed:
                 running = self.running()

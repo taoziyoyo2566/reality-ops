@@ -54,6 +54,11 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS node_sync (
     node TEXT PRIMARY KEY, checked_at INTEGER NOT NULL, desired TEXT NOT NULL, applied TEXT, running TEXT,
     pending TEXT NOT NULL DEFAULT '[]', error TEXT NOT NULL DEFAULT '');
+-- Signs of shared accounts (plan-sharing-signals §3.2): keyed hashes of the networks a user was online from, per slot.
+CREATE TABLE IF NOT EXISTS online_seen (
+    user TEXT NOT NULL, slot INTEGER NOT NULL, family INTEGER NOT NULL, token TEXT NOT NULL,
+    PRIMARY KEY (user, slot, family, token));
+CREATE INDEX IF NOT EXISTS online_seen_slot ON online_seen (slot);
 -- Telegram bot (plan-console-phase2 §3.5): one unexpired one-time binding code per user.
 CREATE TABLE IF NOT EXISTS bot_links (
     user TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);

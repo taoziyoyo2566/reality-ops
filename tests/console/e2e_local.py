@@ -444,6 +444,26 @@ def check_sync(layout, admin, server_ip, public_key, report_url):
     if published:
         start_client(layout, published[0])
         record("carol connects with the shared short id, Xray not restarted", fetch(layout) == "200")
+        peaks = ("import json; from console import db, sharing\n"
+                 "with db.connect('/db/console.sqlite') as c: print(json.dumps(sharing.peaks(c, 0)))")
+        # Xray lists an address only while a connection from it is open: keep one open (a slow download) meanwhile.
+        download = subprocess.Popen(["curl", "-sS", "-o", "/dev/null", "-m", str(INTERVAL * 14), "--limit-rate", "20k",
+                                     "-x", f"socks5h://127.0.0.1:{layout.client_port}",
+                                     "https://speed.cloudflare.com/__down?bytes=50000000"],
+                                    stderr=subprocess.PIPE, text=True)
+        try:
+            online = wait_for(lambda: (layout.console_query(peaks) or {}).get("carol", 0) >= 1, INTERVAL * 12, 2)
+            listed = run(["docker", "exec", SRV, "xray", "api", "statsgetallonlineusers", "-s", "127.0.0.1:10085"],
+                         check=False).stdout.count(f".{NODE}>>>online")
+        finally:
+            download.kill()
+        agent = [line[-120:] for line in run(["docker", "logs", "--tail", "40", f"{SRV}_reporter"], check=False).stdout
+                 .splitlines() if "online" in line or "sync" in line][-4:]
+        record("the agent reports where carol is online, as hashed networks", online,
+               {"peaks": layout.console_query(peaks), "xray_online_users": listed, "download_rc": download.poll(),
+                "download_err": (download.stderr.read() or "")[:160], "agent": agent})
+        record("the users page shows where carol's subscription was fetched from",
+               "30 天：1 个网络 · 1 种客户端" in admin.get("/users")[1])
     admin.post("/users/carol/status", status="disabled")
     record("disabling a user removes it from the node", wait_for(lambda: "carol" not in running(), INTERVAL * 8, 2), running())
     if published:
@@ -625,6 +645,7 @@ def main():
                status == 200 and "v2ray" in page and "alice" in page)
         status, page = admin.get(f"/nodes/{NODE}")
         record("node page shows the node online with alice's traffic", status == 200 and "监听中" in page and "alice" in page)
+        record("node page shows Xray's memory and uptime from statssys", "Xray 运行状态" in page and "协程" in page)
 
         # Xray restart: the reporter loses the namespace and must come back in the new one.
         before = (data.get("status") or {}).get(NODE, {}).get("received_at", 0)

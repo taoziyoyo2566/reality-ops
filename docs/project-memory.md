@@ -544,6 +544,20 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   route now also counts the users a syncing node's agent last reported running. Resetting an address also
   rotates the user's UUID (`users.rotate_credentials`), because imported configurations kept working with the
   old UUID after a reset.
+- `[实测]` 2026-09-19 after `9de03e9` was deployed: `test02` traffic was stored from the first report (dzire).
+  A reset at 07:48:50Z changed the UUID; within about a minute all six of its nodes (ams, dcc, dzire, kagoya,
+  netcup, usca) ran exactly one `test02` entry per inbound with the new UUID (compared by SHA-256 prefix, Vision
+  and XHTTP). usca's sync showed HTTP 502 for one cycle during the console restart and recovered by itself.
+- `[代码]` 2026-09-19 working tree, sharing signals (plan-sharing-signals): `queries.fetch_sources` counts networks
+  (IPv4 /24, IPv6 /48) and client families per user from the subscription access log; the agent sends HMAC hashes
+  of each user's online networks (from `statsonlineiplist`, key from `/sync`, changing per UTC day) and
+  `console/sharing.py` keeps them per 10-minute slot for 8 days (`online_seen`); places = max(IPv4, IPv6 networks),
+  alert at `console_sharing_threshold` (3). `[实测]` `statsUserOnline` was already on in the node config; on
+  kagoya `statsonlineiplist` returned `{"ips": {<ip>: <last seen epoch>}, "name": "user>>><email>>>>online"}`.
+  Xray keeps an address in that list only while a connection from it is open, and the time is when the latest
+  connection opened (`app/stats/online_map.go`); the agent therefore counts every listed address. The agent
+  also sends `xray api statssys` (Alloc, Sys, NumGoroutine, Uptime) with each report; on 2026-09-19 usca and
+  dzire used 45 and 19 MB (Sys) against the 300m container limit.
 - `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while

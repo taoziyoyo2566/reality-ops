@@ -1,5 +1,6 @@
 """Read-side data for the admin pages: users, nodes, traffic and subscription fetches."""
 import datetime
+import ipaddress
 import json
 import os
 import shutil
@@ -23,34 +24,69 @@ def load_users(path):
     return users
 
 
-def last_fetches(path, days=90):
-    """{user: {"at": epoch, "fmt": str, "count": int}} from the subscription service's access log (read only).
+def _access_rows(path, query, args):
+    """Rows from the subscription service's access log (read only), or None when it cannot be read.
 
     The log is a WAL database owned by the subscription service; if it cannot be opened read-only in place,
     a private copy is read instead.
     """
-    query = ("SELECT user, fmt, MAX(ts) AS at, COUNT(*) AS n FROM hits WHERE ts >= ? GROUP BY user, fmt")
-    since = db.now() - days * 86400
-
     def read(uri):
         conn = sqlite3.connect(uri, uri=True, timeout=5)
         try:
-            return conn.execute(query, (since,)).fetchall()
+            return conn.execute(query, args).fetchall()
         finally:
             conn.close()
 
     try:
-        rows = read(f"file:{path}?mode=ro")
+        return read(f"file:{path}?mode=ro")
     except sqlite3.Error:
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 for suffix in ("", "-wal", "-shm"):
                     if os.path.exists(path + suffix):
                         shutil.copyfile(path + suffix, os.path.join(tmp, "access.sqlite" + suffix))
-                copy = os.path.join(tmp, "access.sqlite")
-                rows = read(f"file:{copy}?mode=ro")
+                return read(f"file:{os.path.join(tmp, 'access.sqlite')}?mode=ro")
         except (OSError, sqlite3.Error):
-            return {}
+            return None
+
+
+def network_of(ip):
+    """The network a subscription fetch came from: IPv4 /24, IPv6 /48 (one household or site, roughly)."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return str(ip)
+    return str(ipaddress.ip_network(f"{addr}/{24 if addr.version == 4 else 48}", strict=False))
+
+
+def client_family(agent):
+    """The client app from a User-Agent: its first product name; browsers are one family."""
+    first = (agent or "").strip().split(" ")[0].split("/")[0].lower()
+    if not first:
+        return "未知"
+    return "浏览器" if first in ("mozilla", "opera") else first[:32]
+
+
+def fetch_sources(path, days=30):
+    """{user: {"networks": int, "clients": [family], "count": int}}: where a subscription address was fetched from
+    in the last `days` days (plan-sharing-signals §3.1). Only these counts leave this function, never addresses."""
+    rows = _access_rows(path, "SELECT user, ip, user_agent FROM hits WHERE ts >= ?", (db.now() - days * 86400,))
+    seen = {}
+    for user, ip, agent in rows or []:
+        entry = seen.setdefault(user, {"networks": set(), "clients": set(), "count": 0})
+        entry["networks"].add(network_of(ip))
+        entry["clients"].add(client_family(agent))
+        entry["count"] += 1
+    return {u: {"networks": len(e["networks"]), "clients": sorted(e["clients"]), "count": e["count"]}
+            for u, e in seen.items()}
+
+
+def last_fetches(path, days=90):
+    """{user: {"at": epoch, "fmt": str, "count": int}} from the subscription service's access log (read only)."""
+    rows = _access_rows(path, "SELECT user, fmt, MAX(ts) AS at, COUNT(*) AS n FROM hits WHERE ts >= ? GROUP BY user, fmt",
+                        (db.now() - days * 86400,))
+    if rows is None:
+        return {}
     result = {}
     for user, fmt, at, n in rows:
         entry = result.setdefault(user, {"at": 0, "fmt": "", "count": 0})
@@ -155,6 +191,10 @@ def alerts(settings, conn, nodes, problems, users):
             out.append(f"节点 {name} 已 {(now - seen) // 60} 分钟没有上报")
         elif not status[name]["report"].get("listening"):
             out.append(f"节点 {name} 上报 443 未在监听")
+        runtime = (status.get(name) or {}).get("report", {}).get("xray") or {}
+        if runtime.get("sys", 0) >= settings.xray_memory_alert_mib * 1024 * 1024:
+            out.append(f"节点 {name} 的 Xray 占用内存 {human_bytes(runtime['sys'])}，达到提醒值 "
+                       f"{settings.xray_memory_alert_mib} MiB（容器上限见 edge_memory_limit）")
     shown = db.shown_nodes(conn)
     for name in sorted(shown - set(nodes)):
         out.append(f"节点 {name} 设为显示，但没有注册文件（发布会被拒绝）")

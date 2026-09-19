@@ -17,6 +17,8 @@ class Settings:
     allowed_hosts: tuple
     auth_mode: str = "none"
     bot_enabled: bool = False
+    sharing_threshold: int = 3
+    xray_memory_alert_mib: int = 240
 
 
 def from_env(env=None):
@@ -36,6 +38,8 @@ def from_env(env=None):
                             if h.strip()),
         auth_mode=env.get("CONSOLE_AUTH_MODE", "none"),
         bot_enabled=env.get("CONSOLE_BOT_ENABLED", "false").lower() == "true",
+        sharing_threshold=int(env.get("CONSOLE_SHARING_THRESHOLD", "3")),
+        xray_memory_alert_mib=int(env.get("CONSOLE_XRAY_MEMORY_ALERT_MIB", "240")),
     )
 
 

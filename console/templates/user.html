@@ -13,7 +13,9 @@
 {% if state in ('disabled', 'expired') %}<p class="warn">用户{{ '已停用' if state == 'disabled' else '已到期' }}，这个地址暂停服务；恢复后原地址继续可用。</p>{% endif %}
 <input class="url" type="text" readonly value="{{ url }}">
 <div class="qr">{{ qr | safe }}</div>
-<p>最后拉取：{% if fetch %}{{ fetch.at | time }}（{{ fetch.fmt }}，近 90 天 {{ fetch.count }} 次）{% else %}<span class="muted">还没有拉取记录</span>{% endif %}</p>
+<p>最后拉取：{% if fetch %}{{ fetch.at | time }}（{{ fetch.fmt }}，近 90 天 {{ fetch.count }} 次）{% else %}<span class="muted">还没有拉取记录</span>{% endif %}
+{% if sources %}<br>近 30 天从 {{ sources.networks }} 个不同网络、{{ sources.clients | length }} 种客户端（{{ sources.clients | join('、') }}）拉取，共 {{ sources.count }} 次。
+<span class="muted">网络按 IPv4 /24、IPv6 /48 合并；手机换网络也会增加网络数，客户端种类更能说明设备多少。</span>{% endif %}</p>
 <form method="post" action="/users/{{ name }}/rotate" class="inline">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <button>重置地址</button>
@@ -45,6 +47,8 @@
 {% if record.deny_nodes %} · 单独禁止：{{ record.deny_nodes | join(', ') }}{% endif %}
 · 到期：{{ record.expires_on or '不到期' }}{% if record.note %} · 备注：{{ record.note }}{% endif %}</p>
 <p class="muted">创建于 {{ record.created_at | time }}，最近修改 {{ record.updated_at | time }}。</p>
+<p>同时在线：近 24 小时最多 <span class="{{ 'warn' if online_peak >= threshold else '' }}">{{ online_peak }} 处</span>
+<span class="muted">（近 7 天每天最多：{% for d, n in online_days %}{{ d[5:] }} {{ n }}{{ ' · ' if not loop.last }}{% endfor %}；达到 {{ threshold }} 处时首页提醒）</span></p>
 <form method="post" action="/users/{{ name }}/status" class="inline">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 {% if record.status == 'active' %}

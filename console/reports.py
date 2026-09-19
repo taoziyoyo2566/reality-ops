@@ -17,6 +17,9 @@ INSTANCE_RE = re.compile(r"^[0-9a-f]{16}$")
 USER_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
+XRAY_KEYS = {"alloc", "sys", "goroutines", "uptime"}   # the agent's `xray api statssys` summary
+
+
 class ReportError(ValueError):
     pass
 
@@ -59,6 +62,10 @@ def validate(doc, node):
     tail = doc.get("error_tail", [])
     _require(isinstance(tail, list) and all(isinstance(l, str) for l in tail), "error_tail must be a list of strings")
     _require(isinstance(doc.get("dropped_reports", 0), int), "dropped_reports must be an integer")
+    runtime = doc.get("xray")
+    _require(runtime is None or (isinstance(runtime, dict) and set(runtime) == XRAY_KEYS
+                                 and all(isinstance(v, int) and not isinstance(v, bool) and 0 <= v < MAX_COUNTER
+                                         for v in runtime.values())), "invalid xray runtime")
     return doc
 
 
@@ -88,6 +95,7 @@ def store(conn, node, doc, received_at=None, users=None):
             "dropped_reports": doc.get("dropped_reports", 0),
             "error_tail": [l[:MAX_TAIL_CHARS] for l in doc.get("error_tail", [])][-MAX_TAIL_LINES:],
             "users_reporting": sorted(doc["traffic"]),
+            "xray": doc.get("xray"),
         }
         restart_at = _epoch(doc["period"]["to"]) if doc["xray_restarted"] else None
         # A retried older report still counts its traffic and restart, but does not replace a newer status.

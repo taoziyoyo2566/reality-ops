@@ -132,6 +132,7 @@ class ConsoleComposeTest(unittest.TestCase):
     def test_bot_only_with_a_token(self):
         self.assertNotIn("bot", self.services)
         self.assertEqual(self.services["web"]["environment"]["CONSOLE_BOT_ENABLED"], "false")
+        self.assertEqual(self.services["web"]["environment"]["CONSOLE_SHARING_THRESHOLD"], "3")
         raw = yaml.safe_load((REPO / "group_vars/all/console.yml").read_text())
         self.assertEqual(raw["console_bot_token"], "{{ vault_console_bot_token | default('') }}")
         self.assertEqual(raw["console_bot_enabled"], "{{ console_bot_token | length > 0 }}")

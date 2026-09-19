@@ -25,7 +25,7 @@ from fastapi.templating import Jinja2Templates
 
 from subs import statuspage
 
-from . import auth, bot as bot_mod, config, db, publish as pub, queries, registry as reg, status as stat, users as users_mod
+from . import auth, bot as bot_mod, config, db, publish as pub, queries, registry as reg, sharing, status as stat, users as users_mod
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 TEMPLATES = os.path.join(os.path.dirname(__file__), "templates")
@@ -116,6 +116,8 @@ class Watcher:
         day = queries.today()
         if day != self.last_backup_day:
             db.backup(self.settings.db_path, self.settings.backup_dir, self.settings.backup_keep, day)
+            with db.connect(self.settings.db_path) as conn:
+                sharing.purge(conn, db.now())
             self.last_backup_day = day
 
     def run(self):
@@ -271,6 +273,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                         alerts=(queries.alerts(settings, conn, nodes, problems, users)
                                 + user_alerts(conn, nodes, users, managed)
                                 + stat.alerts(conn, st, nodes, db.now())
+                                + sharing.alerts(conn, settings.sharing_threshold, db.now())
                                 + (bot_mod.alerts(conn, db.now()) if settings.bot_enabled else [])),
                         user_count=len(users), issued=len(db.tokens(conn)),
                         node_count=len(nodes), shown=len(db.shown_nodes(conn) & set(nodes)),
@@ -321,6 +324,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     def users_page(request: Request, q: str = "", status: str = "", tier: str = "", stage: str = ""):
         day = today()
         fetches = queries.last_fetches(settings.subs_access_db)
+        sources = queries.fetch_sources(settings.subs_access_db)
         with db.connect(settings.db_path) as conn:
             nodes, _, users, managed = view_context(conn)
             tokens = db.token_rows(conn)
@@ -331,6 +335,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             usable = {name: users_mod.user_nodes(conn, u, nodes) for name, u in users.items() if u and managed}
             by_stage = stages(conn, users, day, fetches) if managed else {}
             bot_username = bot_mod.state(conn)["username"] if settings.bot_enabled else None
+            online = sharing.peaks(conn, db.now() - 86400)
         rows = []
         for name in sorted(set(users) | set(tokens)):
             record = users.get(name)
@@ -352,13 +357,14 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                 "issued": name in tokens,
                 "issuable": name not in tokens and (state == "active" or (state == "unknown" and not managed
                                                                           and name in users)),
-                "fetch": fetches.get(name), "traffic": traffic.get(name, {"up": 0, "down": 0}),
+                "fetch": fetches.get(name), "sources": sources.get(name), "online": online.get(name, 0),
+                "traffic": traffic.get(name, {"up": 0, "down": 0}),
                 "stage": by_stage.get(name), "bound": bound,
                 "bindable": bool(bot_username) and state == "active" and managed and not bound,
             })
         return page(request, "users.html", rows=rows, month=month, managed=managed, q=q, status=status, tier=tier,
                     stage=stage, tier_options=tier_options, status_names=STATUS_NAMES, stage_names=users_mod.STAGES,
-                    bot_username=bot_username)
+                    bot_username=bot_username, threshold=settings.sharing_threshold)
 
     @app.get("/users/new", response_class=HTMLResponse)
     def user_new_page(request: Request):
@@ -499,6 +505,8 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             tier_options = users_mod.known_tiers(conn) if managed else []
             bot = bot_mod.state(conn)
             link = users_mod.bind_link(conn, name) if managed and record else None
+            online_days = sharing.daily_peaks(conn, name, db.now(), 7, st.utc_offset_hours)
+            online_peak = sharing.peaks(conn, db.now() - 86400).get(name, 0)
         url = subscription_url(token["token"]) if token else None
         bind_url = f"https://t.me/{bot['username']}?start={link['code']}" if link and bot["username"] else None
         names = sorted(nodes) if usable is not None else sorted(n for n, node in nodes.items() if name in node.users)
@@ -510,7 +518,9 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                     state=user_state(record, day) if name in users else "unknown", token=token, url=url,
                     qr=qr_svg(url) if url else None, node_rows=node_rows, month=month, daily=daily,
                     fetch=queries.last_fetches(settings.subs_access_db).get(name), error=error,
+                    sources=queries.fetch_sources(settings.subs_access_db).get(name),
                     tier_options=tier_options, node_names=sorted(nodes), bot_enabled=settings.bot_enabled,
+                    online_days=online_days, online_peak=online_peak, threshold=settings.sharing_threshold,
                     bot_username=bot["username"], bind_link=link, bind_url=bind_url)
 
     @app.post("/users/{name}/edit")

@@ -10,13 +10,15 @@ import hmac
 import json
 import os
 import pathlib
+import sqlite3
 import sys
 import unittest
+import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from console import db, registry as reg, report_app, users, web_app  # noqa: E402
+from console import db, queries, registry as reg, report_app, sharing, users, web_app  # noqa: E402
 from test_console import PBK_A, PBK_B, REPORT_TOKENS, Env, Server, report_doc  # noqa: E402
 from test_users import import_doc  # noqa: E402
 
@@ -82,7 +84,8 @@ class SyncEndpointTest(unittest.TestCase):
             self.assertEqual([u["name"] for u in body["users"]], ["alice", "carol", "test"])
             version = body["version"]
             status, body = self.env.post(srv, {"applied": version, "running": ["alice", "carol", "test"]})
-            self.assertEqual(body, {"version": version, "unchanged": True})
+            self.assertEqual({k: body[k] for k in ("version", "unchanged")}, {"version": version, "unchanged": True})
+            self.assertNotIn("users", body)
         with self.env.conn() as conn:
             row = users.sync_rows(conn)["alpha"]
         self.assertEqual((row["applied"], row["desired"], row["running"], row["pending"]),
@@ -189,6 +192,75 @@ class AgentAddedUsersTest(unittest.TestCase):
         self.assertIn({"name": "carol", "uuid": carol["uuid"], "short_id": carol["short_id"]}, after[1])
         catalog, tokens = self.env.published()
         self.assertEqual(catalog["users"]["carol"]["nodes"]["alpha"]["uuid"], carol["uuid"])
+
+
+class OnlinePlacesTest(unittest.TestCase):
+    """plan-sharing-signals §3.2: hashed networks from the agents, places per slot, the threshold alert."""
+
+    def setUp(self):
+        self.env = SyncEnv()
+
+    def tearDown(self):
+        self.env.close()
+
+    def sample(self, srv, online, day=None):
+        return self.env.post(srv, {"running": ["alice", "test"], "online": online,
+                                   "online_day": day or sharing.day_of(db.now())})
+
+    def test_the_key_the_samples_and_the_places(self):
+        with Server(report_app.create_app(self.env.settings)) as srv:
+            status, body = self.env.post(srv, {"running": ["alice", "test"]})
+            self.assertRegex(body["online_key"], r"^[0-9a-f]{32}$")
+            self.assertEqual(body["online_day"], sharing.day_of(db.now()))
+            self.assertEqual(self.env.post(srv, {})[1]["online_key"], body["online_key"])     # stable within a day
+            self.sample(srv, {"alice": ["4:" + "a" * 16, "6:" + "b" * 16, "6:" + "c" * 16],
+                              "test": ["4:" + "d" * 16], "bob": ["4:" + "e" * 16]})       # bob is not on alpha
+            self.sample(srv, {"alice": ["4:" + "f" * 16]}, day="2000-01-01")              # an old key: left out
+            self.assertEqual(self.env.post(srv, {"online": {"alice": ["1.2.3.4"]}, "online_day": "2026-01-01"})[0], 400)
+            self.assertEqual(self.env.post(srv, {"online": {"alice": ["4:" + "a" * 16]}})[0], 400)   # no day
+        with self.env.conn() as conn:
+            self.assertEqual(sharing.peaks(conn, 0), {"alice": 2, "test": 1})       # IPv6 2, IPv4 1: two places
+            self.assertEqual(sharing.alerts(conn, 3, db.now()), [])
+            conn.executemany("INSERT INTO online_seen (user, slot, family, token) VALUES ('alice', ?, 4, ?)",
+                             [(db.now() // 600 * 600, t) for t in ("1" * 16, "2" * 16)])
+            self.assertEqual(sharing.peaks(conn, 0)["alice"], 3)
+            self.assertEqual(sharing.alerts(conn, 3, db.now()),
+                             ["用户 alice 近 24 小时最多同时在 3 处在线（提醒阈值 3 处），可能与他人共用"])
+            sharing.purge(conn, db.now() + 9 * 86400)
+            self.assertEqual(sharing.peaks(conn, 0), {})
+
+    def test_pages_show_places_and_fetch_sources(self):
+        now = db.now()
+        with self.env.conn() as conn:
+            conn.executemany("INSERT INTO online_seen (user, slot, family, token) VALUES ('alice', ?, 4, ?)",
+                             [(now // 600 * 600, t) for t in ("1" * 16, "2" * 16, "3" * 16)])
+            conn.execute("INSERT INTO tokens (user, token, issued_at) VALUES ('alice', ?, 1)", ("a" * 43,))
+        writer = sqlite3.connect(self.env.settings.subs_access_db)
+        try:
+            with writer:
+                writer.execute("CREATE TABLE hits (ts INTEGER NOT NULL, user TEXT NOT NULL, fmt TEXT NOT NULL, "
+                               "ip TEXT, user_agent TEXT)")
+                writer.executemany("INSERT INTO hits VALUES (?, 'alice', 'v2ray', ?, ?)", [
+                    (now, "203.0.113.5", "Shadowrocket/2070 CFNetwork/1.0 Darwin/24.0"),
+                    (now, "203.0.113.99", "Shadowrocket/2071 CFNetwork/1.0"),
+                    (now, "2001:db8:1:2::5", "v2rayNG/1.9.30"),
+                    (now, "198.51.100.1", "Mozilla/5.0 (Windows NT 10.0)"),
+                    (now - 40 * 86400, "192.0.2.1", "Clash/1.0")])                       # older than 30 days
+        finally:
+            writer.close()
+        self.assertEqual(queries.fetch_sources(self.env.settings.subs_access_db)["alice"],
+                         {"networks": 3, "clients": ["shadowrocket", "v2rayng", "浏览器"], "count": 4})
+        settings = self.env.settings.__class__(**dict(self.env.settings.__dict__, sharing_threshold=3))
+        app = web_app.create_app(settings, start_watcher=False, csrf_secret=b"k" * 32)
+        with Server(app) as srv:
+            listing = srv.request("GET", "/users")[1]
+            self.assertIn("<span class=\"warn\">3 处</span>", listing)
+            self.assertIn("30 天：3 个网络 · 3 种客户端", listing)
+            page = srv.request("GET", "/users/alice")[1]
+            self.assertIn("近 30 天从 3 个不同网络、3 种客户端（shadowrocket、v2rayng、浏览器）拉取，共 4 次", page)
+            self.assertIn("近 24 小时最多 <span class=\"warn\">3 处</span>", page)
+            self.assertIn("用户 alice 近 24 小时最多同时在 3 处在线", srv.request("GET", "/")[1])
+            self.assertNotIn("203.0.113", listing + page)                                 # counts only, never addresses
 
 
 class RegistryTest(unittest.TestCase):
