@@ -293,10 +293,11 @@ class EgressTest(unittest.TestCase):
     def setUp(self):
         self.xray = FakeXray("n1", {rep.REALITY_TAG: {}})
         self._probe = egress_probe.probe
-        self.ok = True
+        self.ok, self.udp = True, True
         egress_probe.probe = lambda xray, outbounds, url, user_agent: {
             o["tag"]: {"ok": self.ok, "latency_ms": 5 if self.ok else None, "exit_ip": "198.51.100.4" if self.ok else "",
-                       "country": "JP", "error": "" if self.ok else "timeout"} for o in outbounds}
+                       "country": "JP", "error": "" if self.ok else "timeout", "udp": self.udp if self.ok else None}
+            for o in outbounds}
         self.egress = self.make()
         self.egress.update({"egress": self.PAYLOAD, "egress_version": "0123456789abcdef",
                             "egress_check_url": "https://check.example.test/"})
@@ -321,7 +322,8 @@ class EgressTest(unittest.TestCase):
         self.assertEqual(self.egress.report(), {"egress_applied": "0123456789abcdef",
                                                 "egress_states": {"3": "active", "4": "active"},
                                                 "egress_checks": {"7": {"ok": True, "latency_ms": 5, "exit_ip": "198.51.100.4",
-                                                                        "country": "JP", "error": ""}}})
+                                                                        "country": "JP", "error": "", "udp": True}},
+                                                "egress_schema": 2, "egress_error": ""})
         self.assertFalse(self.cycle())                                   # nothing changed: nothing touched
 
     def test_failure_falls_back_or_blocks_and_recovery_needs_two_checks(self):
@@ -350,11 +352,83 @@ class EgressTest(unittest.TestCase):
         self.assertEqual(self.xray.rules, ["api", "block-bt", "block-private", "default"])
         self.assertNotIn("egress-7", self.xray.outbounds)
 
-    def test_a_failed_apply_keeps_the_default_rule(self):
+    def test_a_failed_apply_keeps_the_default_rule_and_the_blocks(self):
         self.xray.fail = "ado"
         self.assertFalse(self.cycle())
-        self.assertEqual(self.xray.rules, ["api", "block-bt", "block-private", "default"])   # no rule to a missing outbound
-        self.assertIsNone(self.egress.report()["egress_applied"])
+        # no rule to a missing outbound; the "block" assignment (a4) stays blocked instead of going direct
+        self.assertEqual(self.xray.rules, ["api", "block-bt", "block-private", "egress-7-a4", "default"])
+        self.assertEqual(self.xray.egress_configs["egress-7-a4"]["outboundTag"], "blocked")
+        report = self.egress.report()
+        self.assertIsNone(report["egress_applied"])
+        self.assertIn("ado", report["egress_error"])
+
+    def test_unchanged_outbounds_are_left_alone(self):
+        self.cycle()
+        calls = len(self.xray.calls)
+        self.ok = False                                           # a4 blocks, a3 goes direct: rules change only
+        self.cycle()
+        self.assertNotIn("rmo", [c[0] for c in self.xray.calls[calls:]])
+        self.assertNotIn("ado", [c[0] for c in self.xray.calls[calls:]])
+        edited = dict(self.PAYLOAD, outbounds=[dict(self.PAYLOAD["outbounds"][0], settings={"address": "192.0.2.10", "port": 1080})])
+        self.egress.update({"egress": edited, "egress_version": "3333333333333333"})
+        calls = len(self.xray.calls)
+        self.cycle()
+        self.assertEqual([c[0] for c in self.xray.calls[calls:] if c[0] in ("rmo", "ado")], ["rmo", "ado"])  # replaced
+
+    def test_a_disabled_egress_keeps_its_blocks(self):
+        payload = {"outbounds": [], "assignments": [
+            {"id": 4, "outbound": "egress-7", "on_failure": "block", "egress_off": True,
+             "rules": [{"domain": ["geosite:amazon"], "network": "tcp", "action": "egress"}]}]}
+        self.egress.update({"egress": payload, "egress_version": "4444444444444444"})
+        self.cycle()
+        self.assertEqual(self.xray.rules[-2:], ["egress-7-a4", "default"])
+        self.assertEqual(self.xray.egress_configs["egress-7-a4"]["outboundTag"], "blocked")
+        self.assertEqual(self.egress.report()["egress_states"], {"4": "blocked"})
+        self.assertNotIn("egress-7", self.xray.outbounds)
+
+    def test_udp_failure_affects_only_assignments_that_take_udp(self):
+        payload = {"outbounds": self.PAYLOAD["outbounds"], "assignments": [
+            {"id": 3, "outbound": "egress-7", "rule": {"network": "tcp", "user": ["bob.n1"]}, "on_failure": "direct"},
+            {"id": 5, "outbound": "egress-7", "rule": {"network": "tcp,udp", "user": ["carol.n1"]}, "on_failure": "direct"},
+            {"id": 6, "outbound": "egress-7", "rule": {"network": "tcp,udp", "domain": ["geosite:amazon"]},
+             "on_failure": "block"}]}
+        self.egress.update({"egress": payload, "egress_version": "1111111111111111"})
+        self.udp = False
+        self.cycle()
+        self.assertEqual(self.egress.report()["egress_states"], {"3": "active", "5": "direct", "6": "blocked"})
+        self.assertEqual(self.xray.rules[-3:], ["egress-7-a3", "egress-7-a6", "default"])
+        self.assertEqual(self.xray.egress_configs["egress-7-a6"]["outboundTag"], "blocked")
+        self.assertIs(self.egress.report()["egress_checks"]["7"]["udp"], False)
+        self.udp = True
+        self.cycle()
+        self.assertEqual(self.egress.report()["egress_states"]["5"], "direct")          # UDP back once: not yet
+        self.cycle()
+        self.assertEqual(self.egress.report()["egress_states"], {"3": "active", "5": "active", "6": "active"})
+
+    def test_rule_lists_block_udp_to_websites_and_fail_over_together(self):
+        sites = {"domain": ["domain:chatgpt.com"]}
+        payload = {"outbounds": self.PAYLOAD["outbounds"], "assignments": [
+            {"id": 8, "outbound": "egress-7", "on_failure": "direct", "rule": dict(sites, network="tcp"),
+             "rules": [dict(sites, network="tcp", action="egress"), dict(sites, network="udp", action="block"),
+                       {"ip": ["203.0.113.0/24"], "network": "tcp", "action": "egress"},
+                       {"ip": ["203.0.113.0/24"], "network": "udp", "action": "block"}]},
+            {"id": 9, "outbound": "egress-7", "on_failure": "block",
+             "rules": [dict(sites, user=["bob.n1"], network="tcp", action="egress"),
+                       dict(sites, user=["bob.n1"], network="udp", action="block")]}]}
+        self.egress.update({"egress": payload, "egress_version": "2222222222222222"})
+        self.udp = False                                   # blocking UDP does not need an egress that relays UDP
+        self.cycle()
+        self.assertEqual(self.egress.report()["egress_states"], {"8": "active", "9": "active"})
+        self.assertEqual(self.xray.rules[3:], ["egress-7-a8", "egress-7-a8-2", "egress-7-a8-3", "egress-7-a8-4",
+                                               "egress-7-a9", "egress-7-a9-2", "default"])
+        self.assertEqual([self.xray.egress_configs[t]["outboundTag"] for t in ("egress-7-a8", "egress-7-a8-2", "egress-7-a8-3")],
+                         ["egress-7", "blocked", "egress-7"])
+        self.assertEqual(self.xray.egress_configs["egress-7-a8-2"]["network"], "udp")
+        self.ok = False
+        self.cycle()
+        self.assertEqual(self.egress.report()["egress_states"], {"8": "direct", "9": "blocked"})
+        self.assertEqual(self.xray.rules[3:], ["egress-7-a9", "egress-7-a9-2", "default"])     # 8 gone, UDP too
+        self.assertEqual({self.xray.egress_configs[t]["outboundTag"] for t in ("egress-7-a9", "egress-7-a9-2")}, {"blocked"})
 
     def test_nothing_is_touched_without_a_payload(self):
         idle = self.make()

@@ -35,6 +35,9 @@
           "tls",
           "quic"
         ],
+        "domainsExcluded": [
+          "cloudflare-ech.com"
+        ],
         "enabled": true,
         "routeOnly": true
       },

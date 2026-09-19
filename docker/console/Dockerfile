@@ -8,6 +8,9 @@ FROM taoziyoyo2566/xray-docker@sha256:fd502666d1a9ca7ea772e2c1638bb83e79bdc12c97
 # 基础镜像与订阅服务相同（python:3.13-slim index digest，2026-09-15 于 Docker Hub 核对）。
 FROM python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285
 COPY --from=xray /usr/bin/xray /usr/local/bin/xray
+# the egress pages check websites and IP ranges (geosite: / geoip:) with Xray before any node sees them
+COPY --from=xray /usr/local/share/xray/geoip.dat /usr/local/share/xray/geosite.dat /usr/local/share/xray/
+ENV XRAY_LOCATION_ASSET=/usr/local/share/xray
 
 COPY docker/console/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --no-deps --only-binary=:all: --require-hashes -r /tmp/requirements.txt \

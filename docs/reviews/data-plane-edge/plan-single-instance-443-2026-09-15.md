@@ -306,9 +306,21 @@ canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`e
   只有出口不同的变更按“无需重启”处理：写入配置、不重启 Xray，由 agent 经 `xray api ado / rmo / adrules / rmrules` 在运行中生效。
   agent（出口部分在工具镜像的 `edge_egress.py`，检测代码 `egress_probe.py` 与控制台共用、构建时从 `console/` 复制，两者计入工具镜像标签）
   每次同步在 reporter 容器内起一个临时 Xray（只监听容器内 127.0.0.1:21000 起的端口），经每个出口访问检测地址，
-  失效时去掉该分配的规则（回退直连）或改指 `blocked`（断开），连续两次成功后恢复。`edge_user_source: console` 时 `socks5.yml` 的
+  失效时去掉该分配的规则（回退直连）或改指 `blocked`（断开），连续两次成功后恢复；TCP 可用时再经出口发一次 DNS 查询检测 UDP，
+  选了“TCP 和 UDP”的分配在 UDP 不通时同样按失效处理。`edge_user_source: console` 时 `socks5.yml` 的
   profile 不再用于新系统节点。影响：没有出口的节点渲染结果不变；有 SOCKS5 profile 的节点（`jp10` 的 `jpntt_isp`，已失效，操作者决定
   不导入）在下次 `edge.yml` 时去掉该 profile，Xray 重启一次；reporter 仍无 Docker 套接字、不读写配置文件。
+- **2026-09-20 · 出口：规则列表、阻断 QUIC、geo 数据与 ECH（[`review-egress-design`](../console/review-egress-design-2026-09-20.md)）。**
+  改动：
+  - 一条分配下发为一组规则（网站、IP 段各一条；“阻断 QUIC”再加 `network: udp`、`port: "443"` 指向 `blocked` 的规则），
+    应用器的出口规则允许 `port`。agent 上报 `egress_schema: 2`，控制台对未上报的旧 agent 只下发单条规则的分配。
+  - agent 只替换设置变了的出口，出口加不上时“断开”的分配指向 `blocked`，默认规则总在最后单独加回。
+  - 工具镜像加入与节点相同的 `geoip.dat`、`geosite.dat`（`XRAY_LOCATION_ASSET`）：`xray api adrules` 在调用方解析 geo 条件，
+    缺少数据时整批规则加不上（本地实测）。
+  - UDP 检测使用容器内 127.0.0.1:21500 起的端口。
+  - 入站嗅探增加 `domainsExcluded: ["cloudflare-ech.com"]`：浏览器用 ECH 时，路由按客户端请求的目标而不是外层名判断
+    （本地实测：修正前按网站分流失效，修正后生效）。
+  影响：入站配置变化，下次 `edge.yml` 时每台节点 Xray 重启一次；工具镜像增大约 30 MB。
 - **2026-09-19 · agent 上报 Xray 运行状态。** 起因：操作者同意在节点页看到 Xray 的内存与运行时长（[`review-xray-features`](../console/review-xray-features-2026-09-19.md)）。
   改动：每次上报附带 `xray api statssys` 的 `Alloc`、`Sys`、`NumGoroutine`、`Uptime`（字段 `xray`，查询失败时不带）；
   控制台显示并在 `Sys` 达到提醒值时提示。节点配置不变。

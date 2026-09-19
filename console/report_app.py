@@ -36,7 +36,6 @@ def validate_sync(doc, node):
     if not isinstance(error, str):
         raise ValueError("invalid error")
     sharing.validate(doc.get("online"), doc.get("online_day"))
-    egress.validate_report(doc)
     return applied, running, error[:200]
 
 
@@ -84,15 +83,19 @@ def create_app(settings):
                            {u["name"] for u in payload}, now)
             online = {"online_key": sharing.key_for(conn, sharing.day_of(now)), "online_day": sharing.day_of(now)}
             # proxy egress (plan-egress-console): what this node should run, and what its agent found and applied
-            egress_version, egress_payload = egress.node_payload(conn, node.name, [u["name"] for u in payload])
-            found, egress_applied, states = egress.validate_report(doc)
+            try:
+                found, egress_applied, states, schema, egress_error = egress.validate_report(doc)
+            except ValueError as exc:       # a bad egress report must not stop the user sync
+                found, egress_applied, states, schema = {}, None, {}, 1
+                egress_error = f"agent 上报的出口数据无效：{exc}"
+            egress_version, egress_payload = egress.node_payload(conn, node.name, [u["name"] for u in payload], schema)
             mine = {int(o["tag"][len(egress.TAG_PREFIX):]) for o in egress_payload["outbounds"]}
             for egress_id, check in found.items():
                 if egress_id in mine:
                     egress.record_check(conn, egress_id, node.name, check)
             if "egress_applied" in doc:
                 # only an agent that manages egress reports this; others never receive the credentials
-                egress.record_node_state(conn, node.name, egress_applied, states)
+                egress.record_node_state(conn, node.name, egress_applied, states, schema, egress_error)
                 online.update(egress_version=egress_version, egress_check_url=settings.egress_check_url)
                 if egress_applied != egress_version:
                     online["egress"] = egress_payload

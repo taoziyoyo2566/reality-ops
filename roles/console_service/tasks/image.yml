@@ -13,6 +13,7 @@
            ~ lookup('file', console_repo_dir ~ '/subs/statuspage.py')
            ~ (query('file', *(query('fileglob', console_repo_dir ~ '/console/*.py') | sort)) | join('\n'))
            ~ (query('file', *(query('fileglob', console_repo_dir ~ '/console/templates/*.html') | sort)) | join('\n'))
+           ~ (query('file', *(query('fileglob', console_repo_dir ~ '/console/static/*') | sort)) | join('\n'))
          ) | hash('sha256'))[:12] }}
 
 - name: 在控制端构建控制台镜像（该标签不存在时）

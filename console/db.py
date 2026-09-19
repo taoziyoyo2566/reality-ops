@@ -67,14 +67,19 @@ CREATE TABLE IF NOT EXISTS egress (
 CREATE TABLE IF NOT EXISTS egress_assignment (
     id INTEGER PRIMARY KEY AUTOINCREMENT, egress_id INTEGER NOT NULL, node TEXT NOT NULL,
     conditions TEXT NOT NULL DEFAULT '{}', on_failure TEXT NOT NULL DEFAULT 'direct', network TEXT NOT NULL DEFAULT 'tcp',
-    priority INTEGER NOT NULL DEFAULT 100, enabled INTEGER NOT NULL DEFAULT 1,
+    priority INTEGER NOT NULL DEFAULT 100, enabled INTEGER NOT NULL DEFAULT 1, scheme_id INTEGER,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS egress_scheme (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, conditions TEXT NOT NULL DEFAULT '{}',
+    network TEXT NOT NULL DEFAULT 'tcp', on_failure TEXT NOT NULL DEFAULT 'direct', note TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS egress_check (
     egress_id INTEGER NOT NULL, checker TEXT NOT NULL, ok INTEGER NOT NULL, latency_ms INTEGER, exit_ip TEXT NOT NULL DEFAULT '',
-    country TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', checked_at INTEGER NOT NULL,
+    country TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', checked_at INTEGER NOT NULL, udp INTEGER,
     PRIMARY KEY (egress_id, checker));
 CREATE TABLE IF NOT EXISTS egress_node (
-    node TEXT PRIMARY KEY, applied TEXT, states TEXT NOT NULL DEFAULT '{}', checked_at INTEGER NOT NULL);
+    node TEXT PRIMARY KEY, applied TEXT, states TEXT NOT NULL DEFAULT '{}', checked_at INTEGER NOT NULL,
+    schema INTEGER, error TEXT NOT NULL DEFAULT '');
 -- Telegram bot (plan-console-phase2 §3.5): one unexpired one-time binding code per user.
 CREATE TABLE IF NOT EXISTS bot_links (
     user TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
@@ -114,6 +119,10 @@ def transaction(conn):
 # Columns added after a table first shipped: (table, column, definition).
 ADDED_COLUMNS = (
     ("audit_log", "actor", "TEXT NOT NULL DEFAULT ''"),
+    ("egress_check", "udp", "INTEGER"),                  # NULL: not known (TCP failed, or an older agent)
+    ("egress_assignment", "scheme_id", "INTEGER"),       # NULL: the assignment holds its own conditions
+    ("egress_node", "schema", "INTEGER"),                # what the node's agent can run (egress.AGENT_SCHEMA)
+    ("egress_node", "error", "TEXT NOT NULL DEFAULT ''"),  # the agent's last failure applying egress
 )
 
 

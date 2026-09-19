@@ -538,7 +538,7 @@ AND 没有优先级更高的显式拒绝
 | S8 功能演进 | 出站竞速试点中 | `usca`、`legend` 已启用；“IPv4 变慢时选 IPv6”尚未观察到 |
 | P2 控制台第二阶段 | 2a、2b、2c 已上线 | [`plan-console-phase2`](console/plan-console-phase2-2026-09-18.md)（2026-09-18 批准，D-P2-1～D-P2-9）：2a 网页管理用户已上线（2026-09-19，33 人导入，11 台节点名单一致）；2b 节点自动生效已上线（2026-09-19，11 台节点均已同步，网页上的用户变化约一分钟内到节点）；2c Telegram bot 已上线（2026-09-19，测试用户经 bot 取到地址并在客户端导入；[`runbooks/telegram-bot.md`](../runbooks/telegram-bot.md)） |
 | 账号共享迹象 | 已部署（2026-09-19），等真实用户在线后核对处数 | [`plan-sharing-signals`](console/plan-sharing-signals-2026-09-19.md)：订阅拉取来源、同时在线处数（提醒阈值 3 处）；随同一批上线 Xray 运行状态上报（[`review-xray-features`](console/review-xray-features-2026-09-19.md)）；控制台端到端 75/75 |
-| 出口管理 | 第一期已部署（2026-09-19），出口池为空，待加入真实出口核对出口 IP | [`plan-egress-console`](console/plan-egress-console-2026-09-19.md)：出口池存在控制台数据库（不写死在代码与部署配置），显示可用状态与出口 IP；按节点和用户分配，运行中生效不重启 Xray；出口失效时按开关回退直连或断开；类型按注册表扩展，第一期 SOCKS5。控制台端到端 93/93（两个测试 SOCKS5：分配、回退直连、断开、恢复、取消分配，Xray 未重启）；操作步骤见 `operations.md` §14.13 |
+| 出口管理 | 第一期已部署（2026-09-19）；2026-09-20 补充分流方案、阻断 QUIC 与设计排查的修正，本地验证完成待部署 | [`plan-egress-console`](console/plan-egress-console-2026-09-19.md)：出口池存在控制台数据库（不写死在代码与部署配置），显示可用状态与出口 IP；按节点和用户分配，运行中生效不重启 Xray；出口失效时按开关回退直连或断开；类型按注册表扩展，第一期 SOCKS5。2026-09-20：分流方案、只有 TCP 且阻断 QUIC、UDP 检测、ECH 与 geo 数据等修正（[`review-egress-design`](console/review-egress-design-2026-09-20.md)）；jp10 的旧网站列表部署后作为第一个方案加入；操作步骤见 `operations.md` §14.13 |
 | P3–P4 控制台后续阶段 | 未计划 | 依赖关系见 §7.0 |
 
 2026-09-15 按决定 8 调整顺序：S3 数据面新实例先由新的 Ansible 实现落地并验证，不等待 S2；

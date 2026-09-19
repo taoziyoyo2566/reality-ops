@@ -584,6 +584,25 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   went from -73.2 / -71.5 / +1.9 s to +0.7 / +0.7 / +1.7 s, synced from `0.debian.pool.ntp.org`; no container
   restarted (Xray, agent and the old system's `reality_core` kept running). `timedatectl show-timesync` hangs on these
   hosts; the journal shows the server. Procedure: [`runbooks/node-time-sync.md`](runbooks/node-time-sync.md).
+- `[实测]` 2026-09-19 first real egress (reached over Tailscale, 100.64.0.0/10): TCP through it worked from spt and
+  jp10, but it answers SOCKS5 UDP ASSOCIATE with reply 7 (command not supported). An assignment with "TCP 和 UDP" sent
+  test's UDP, including DNS, into it and nothing loaded. The check now sends one DNS query over SOCKS5 UDP through each
+  egress (`console/egress_probe.py`), and a UDP assignment needs a UDP-capable egress. The admin pages' CSP now allows
+  `script-src 'self'` for `console/static/select-all.js`; inline scripts stay blocked.
+- `[实测]` 2026-09-20 with the pinned Xray 26.3.27 (egress design review,
+  [`review-egress-design`](reviews/console/review-egress-design-2026-09-20.md)):
+  - `xray api adrules` builds rules on the calling side: from a container without `geosite.dat` / `geoip.dat`, a
+    `geosite:` or `geoip:` rule fails with "failed to build conf" and nothing in that call is added (`domain:` works).
+    The tools and console images now copy both files from the pinned image.
+  - With `routeOnly` sniffing, a TLS ClientHello whose SNI is `cloudflare-ech.com` (a browser using ECH) is routed by
+    that name even when the client asked for `chatgpt.com`, so domain rules miss it. `domainsExcluded:
+    ["cloudflare-ech.com"]` in the inbound sniffing makes routing use the requested domain; a client that sends a real
+    IP plus ECH (TUN without fake-ip) still cannot be matched.
+  - `xray run -test -c stdin:` reports an unknown geosite code; the console uses it to check conditions before saving.
+- `[实测]` 2026-09-20 the old system on jp10 (`/opt/reality/data/reality_core/config.json`, changed 2026-09-12) sent
+  every user's traffic to openai.com, chatgpt.com, oaistatic.com, oaiusercontent.com, anthropic.com, claude.ai,
+  ipinfo.io, abema.tv, abema.io and abema.jp (`domain:` rules, no network limit) through outbound `socks-jp`, the same
+  proxy as the console egress `r6s`. That list was only in that file, not in the repository or the vault.
 - `[实测]` 2026-09-19 local spike with the pinned Xray: a runtime rule sent one user through a SOCKS outbound while
   another stayed direct; pointing it at `blocked` cut that user off; removing it returned to direct; an Xray restart
   dropped the runtime rules (the agent puts them back at the next sync).

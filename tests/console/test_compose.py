@@ -238,5 +238,27 @@ class SubsHandOverTest(unittest.TestCase):
         self.assertEqual(subs["user"], "10001:10001")
 
 
+class ImageTagTest(unittest.TestCase):
+    def test_image_tag_covers_every_file_the_image_copies(self):
+        # a file copied into the image but left out of the tag's hash would never reach spt while the tag stays the same
+        copied = set()
+        for line in (REPO / "docker/console/Dockerfile").read_text().splitlines():
+            if not line.startswith("COPY ") or "--from=" in line:
+                continue
+            for source in line.split()[1:-1]:
+                path = REPO / source
+                copied |= ({str(f.relative_to(REPO)) for f in path.rglob("*") if f.is_file() and "__pycache__" not in f.parts}
+                           if path.is_dir() else {source})
+        tasks = yaml.safe_load((REPO / "roles/console_service/tasks/image.yml").read_text())
+        tag = next(t for t in tasks if "set_fact" in t and "console_image" in t["set_fact"])["set_fact"]["console_image"]
+        files = set(re.findall(r"lookup\('file', console_repo_dir ~ '/([^']+)'\)", tag))
+        globs = re.findall(r"fileglob', console_repo_dir ~ '/([^']+)'", tag)
+        missing = sorted(f for f in copied - files
+                         if not any(pathlib.PurePath(f).match(g) and len(pathlib.PurePath(f).parts) == len(pathlib.PurePath(g).parts)
+                                    for g in globs))
+        self.assertIn("console/static/select-all.js", copied)
+        self.assertEqual(missing, [])
+
+
 if __name__ == "__main__":
     unittest.main()

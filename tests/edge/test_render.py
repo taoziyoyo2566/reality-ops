@@ -298,6 +298,15 @@ class ProxyEgressTest(unittest.TestCase):
         self.assertEqual(tags[-2:], ["egress-7-a3", "default"])
         self.assertEqual(files["30-routing.json"]["routing"]["rules"][-2]["type"], "field")
 
+    def test_websites_with_udp_blocked(self):
+        # console deploy_rules for "tcp-block-udp": TCP through the egress, UDP to the same sites blocked
+        sites = {"domain": ["domain:chatgpt.com"]}
+        proxy = dict(self.PROXY, rules=[dict(sites, ruleTag="egress-7-a3", outboundTag="egress-7", network="tcp"),
+                                        dict(sites, ruleTag="egress-7-a3-2", outboundTag="blocked", network="udp", port="443")])
+        rules = edge.render(desired(proxy_egress=proxy), PRIVATE_KEY)["30-routing.json"]["routing"]["rules"]
+        self.assertEqual([(r["ruleTag"], r["network"], r["outboundTag"]) for r in rules[-3:]],
+                         [("egress-7-a3", "tcp", "egress-7"), ("egress-7-a3-2", "udp", "blocked"), ("default", "tcp,udp", "direct")])
+
     def test_rejected(self):
         cases = (
             (dict(self.PROXY, outbounds=[dict(self.PROXY["outbounds"][0], tag="direct")]), "must start with egress-"),
@@ -306,6 +315,7 @@ class ProxyEgressTest(unittest.TestCase):
             (dict(self.PROXY, rules=[dict(self.PROXY["rules"][0], user=["carol.node1"])]), "not on this node"),
             (dict(self.PROXY, rules=[dict(self.PROXY["rules"][0], inboundTag=["api"])]), "take only"),
             (dict(self.PROXY, runtime="yes"), "runtime must be a boolean"),
+            (dict(self.PROXY, rules=[dict(self.PROXY["rules"][0], port="443;rm")]), "port"),
         )
         for proxy, fragment in cases:
             with self.subTest(fragment=fragment), self.assertRaises(edge.ApplyError) as ctx:
@@ -368,8 +378,13 @@ class GoldenTest(unittest.TestCase):
                 {"tag": "egress-2", "protocol": "socks", "settings": {"address": "2001:db8::2", "port": 1081}}],
                 "rules": [
                     {"ruleTag": "egress-1-a1", "outboundTag": "egress-1", "network": "tcp", "user": ["alice.node1"]},
-                    {"ruleTag": "egress-2-a2", "outboundTag": "blocked", "network": "tcp,udp",
-                     "domain": ["geosite:amazon", "domain:example.com"], "ip": ["203.0.113.0/24"]}]},
+                    {"ruleTag": "egress-2-a2", "outboundTag": "egress-2", "network": "tcp",
+                     "domain": ["geosite:amazon", "domain:example.com"]},
+                    {"ruleTag": "egress-2-a2-2", "outboundTag": "blocked", "network": "udp", "port": "443",
+                     "domain": ["geosite:amazon", "domain:example.com"]},
+                    {"ruleTag": "egress-2-a2-3", "outboundTag": "egress-2", "network": "tcp", "ip": ["203.0.113.0/24"]},
+                    {"ruleTag": "egress-2-a2-4", "outboundTag": "blocked", "network": "udp", "port": "443",
+                     "ip": ["203.0.113.0/24"]}]},
         ),
     }
 

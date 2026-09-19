@@ -14,6 +14,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -616,6 +617,25 @@ def healthy(settings, st, now=None):
     return last is not None and now - last <= 3 * st.interval
 
 
+def egress_loop(settings, st):
+    """Proxy egress no node uses (plan-egress-console §3.3), on a thread of its own so that slow or dead proxies never
+    delay the status rounds: all of them every 10 minutes, new or changed ones every round; the nodes check theirs."""
+    registry = reg.Registry(settings.registry_dir)
+    last_full = 0.0
+    while True:
+        started = time.time()
+        full = started - last_full >= egress.SPT_CHECK_SECONDS
+        if full:
+            last_full = started
+        try:
+            with db.connect(settings.db_path) as conn:
+                egress.check_unassigned(conn, st.xray, settings.egress_check_url, set(registry.current()[0]),
+                                        new_only=not full)
+        except Exception as exc:  # the status page must keep running whatever a proxy does
+            print(f"status: egress check failed: {type(exc).__name__}", flush=True)
+        time.sleep(max(1.0, started + st.interval - time.time()))
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     settings, st = config.from_env(), config.status_from_env()
@@ -625,24 +645,13 @@ def main(argv=None):
     prober = Prober(settings, st)
     signal.signal(signal.SIGTERM, lambda *_: (prober.client.stop(), sys.exit(0)))
     print(f"status: probing every {st.interval}s", flush=True)
-    last_egress = 0
+    threading.Thread(target=egress_loop, args=(settings, st), daemon=True, name="egress").start()
     while True:
         at = int(time.time()) // st.interval * st.interval
         try:
             prober.run_round(at)
         except Exception as exc:  # one bad round must not stop the service; the log says why
             print(f"status: round failed: {type(exc).__name__}: {exc}", flush=True)
-        # proxy egress no node uses (plan-egress-console §3.3): all of them every 10 minutes, new or changed ones
-        # every round; the nodes check their own
-        full = time.time() - last_egress >= egress.SPT_CHECK_SECONDS
-        if full:
-            last_egress = time.time()
-        try:
-            with db.connect(settings.db_path) as conn:
-                egress.check_unassigned(conn, st.xray, settings.egress_check_url, set(prober.registry.current()[0]),
-                                        new_only=not full)
-        except Exception as exc:  # the status page must keep running whatever a proxy does
-            print(f"status: egress check failed: {type(exc).__name__}", flush=True)
         time.sleep(max(1.0, at + st.interval - time.time()))
 
 

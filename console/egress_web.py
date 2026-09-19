@@ -43,6 +43,7 @@ def register(app, settings, pages, xray):
         with db.connect(settings.db_path) as conn:
             items = egress.pool(conn)
             found = egress.checks(conn)
+            udp = {egress_id: egress.udp_support(conn, egress_id) for egress_id in items}
             uses = {}
             for a in egress.assignments(conn):
                 uses.setdefault(a["egress_id"], set()).add(a["node"])
@@ -52,8 +53,9 @@ def register(app, settings, pages, xray):
             rows.append({"id": egress_id, "name": item["name"], "type_label": kind.label if kind else item["type"],
                          "summary": kind.summary(item["config"]) if kind else "—", "labels": item["labels"],
                          "note": item["note"], "enabled": item["enabled"], "check": (found.get(egress_id) or [None])[0],
-                         "nodes": sorted(uses.get(egress_id, set()))})
-        return page(request, "egress.html", rows=rows, types=egress.TYPES, error=error, notice=notice)
+                         "udp": udp[egress_id], "nodes": sorted(uses.get(egress_id, set()))})
+        return page(request, "egress.html", rows=rows, types=egress.TYPES, error=error, notice=notice,
+                    schemes=scheme_rows(settings), networks=egress.NETWORKS, on_failure=egress.ON_FAILURE)
 
     @app.post("/egress/new")
     async def egress_new(request: Request):
@@ -111,8 +113,9 @@ def register(app, settings, pages, xray):
         if not result["ok"]:
             return back_with_error(path, f"{item['name']}：不可用（{result['error'] or '检测失败'}）")
         where = result["exit_ip"] + (f"（{result['country']}）" if result["country"] else "")
+        udp = {True: "支持", False: "不支持"}.get(result.get("udp"), "未知")
         return back(path + "?notice=" + urllib.parse.quote(
-            f"{item['name']}：可用，出口 IP {where or '未知'}，耗时 {result['latency_ms']} ms"))
+            f"{item['name']}：可用，出口 IP {where or '未知'}，耗时 {result['latency_ms']} ms，UDP {udp}"))
 
     @app.get("/egress/{egress_id}", response_class=HTMLResponse)
     def egress_item_page(request: Request, egress_id: int, error: str = "", notice: str = ""):
@@ -176,6 +179,77 @@ def register(app, settings, pages, xray):
                 db.audit(conn, "egress-delete", item["name"], "", actor=actor(request))
         return back("/egress")
 
+    async def scheme_form(data):
+        conditions = egress.clean_conditions({"domains": egress.split_values(data.get("domains")),
+                                              "ips": egress.split_values(data.get("ips"))}, [], kinds=("what",))
+        if data.get("network") in egress.NETWORKS and conditions:
+            await run_in_threadpool(egress.check_rules, xray, conditions, data.get("network"))
+        return (data.get("name"), conditions, data.get("network"), data.get("on_failure"), data.get("note"))
+
+    @app.post("/egress/schemes/new")
+    async def scheme_new(request: Request):
+        data = await form(request)
+        if data is None:
+            return refused(request)
+        try:
+            with db.connect(settings.db_path) as conn:
+                with db.transaction(conn):
+                    name, conditions, network, on_failure, note = await scheme_form(data)
+                    scheme_id = egress.save_scheme(conn, None, name, conditions, network, on_failure, note)
+                    db.audit(conn, "egress-scheme-add", egress.schemes(conn)[scheme_id]["name"],
+                             egress.describe_conditions(conditions), actor=actor(request))
+        except egress.EgressError as exc:
+            return back_with_error("/egress#schemes", exc)
+        return back("/egress#schemes")
+
+    @app.get("/egress/schemes/{scheme_id}", response_class=HTMLResponse)
+    def scheme_page(request: Request, scheme_id: int, error: str = ""):
+        with db.connect(settings.db_path) as conn:
+            scheme = egress.schemes(conn).get(scheme_id)
+            if scheme is None:
+                return PlainTextResponse("not found\n", status_code=404)
+            items = egress.pool(conn)
+            uses = [dict(a, egress_name=(items.get(a["egress_id"]) or {}).get("name", "（已删除）"))
+                    for a in egress.assignments(conn) if a.get("scheme_id") == scheme_id]
+        return page(request, "egress_scheme.html", scheme=scheme, uses=uses, networks=egress.NETWORKS,
+                    on_failure=egress.ON_FAILURE, error=error)
+
+    @app.post("/egress/schemes/{scheme_id}/edit")
+    async def scheme_edit(request: Request, scheme_id: int):
+        data = await form(request)
+        if data is None:
+            return refused(request)
+        try:
+            with db.connect(settings.db_path) as conn:
+                with db.transaction(conn):
+                    name, conditions, network, on_failure, note = await scheme_form(data)
+                    egress.save_scheme(conn, scheme_id, name, conditions, network, on_failure, note)
+                    db.audit(conn, "egress-scheme-edit", egress.schemes(conn)[scheme_id]["name"],
+                             f"{egress.describe_conditions(conditions)}，{egress.NETWORKS[network]}，"
+                             f"失效时{egress.ON_FAILURE[on_failure]}", actor=actor(request))
+        except egress.EgressError as exc:
+            return back_with_error(f"/egress/schemes/{scheme_id}", exc)
+        return back(f"/egress/schemes/{scheme_id}")
+
+    @app.post("/egress/schemes/{scheme_id}/delete")
+    async def scheme_delete(request: Request, scheme_id: int):
+        data = await form(request)
+        if data is None:
+            return refused(request)
+        with db.connect(settings.db_path) as conn:
+            scheme = egress.schemes(conn).get(scheme_id)
+            if scheme is None:
+                return back("/egress#schemes")
+            if data.get("confirm") != scheme["name"]:
+                return back_with_error(f"/egress/schemes/{scheme_id}", "输入的名称不一致，未删除")
+            try:
+                with db.transaction(conn):
+                    egress.delete_scheme(conn, scheme_id)
+                    db.audit(conn, "egress-scheme-delete", scheme["name"], "", actor=actor(request))
+            except egress.EgressError as exc:
+                return back_with_error(f"/egress/schemes/{scheme_id}", exc)
+        return back("/egress#schemes")
+
     @app.post("/nodes/{name}/egress/new")
     async def node_egress_new(request: Request, name: str):
         data = await form(request)
@@ -188,15 +262,23 @@ def register(app, settings, pages, xray):
             known = [u["name"] for u in users_mod.node_users(conn, name, pages.today())]
             try:
                 egress_id = int(data.get("egress_id") or 0)
-                conditions = egress.clean_conditions({
-                    "users": data.getlist("users"), "domains": egress.split_values(data.get("domains")),
-                    "ips": egress.split_values(data.get("ips"))}, known)
+                scheme_id = int(data.get("scheme_id") or 0) or None
+                raw = {"users": data.getlist("users")}
+                if scheme_id is None:
+                    raw.update(domains=egress.split_values(data.get("domains")), ips=egress.split_values(data.get("ips")))
+                elif data.get("domains", "").strip() or data.get("ips", "").strip():
+                    raise egress.EgressError("选了方案时，网站和 IP 段以方案为准，这里不要再填")
+                conditions = egress.clean_conditions(raw, known)
+                scheme = egress.schemes(conn).get(scheme_id) if scheme_id else None
+                if scheme is None and data.get("network") in egress.NETWORKS:        # assign() explains a bad one
+                    await run_in_threadpool(egress.check_rules, xray, conditions, data.get("network"))
                 with db.transaction(conn):
-                    egress.assign(conn, None, egress_id, name, conditions, data.get("on_failure"), data.get("network"),
-                                  data.get("priority") or 100)
+                    assignment_id = egress.assign(conn, None, egress_id, name, conditions, data.get("on_failure"),
+                                                  data.get("network"), data.get("priority") or 100, scheme_id=scheme_id)
+                    a = next(x for x in egress.assignments(conn, name) if x["id"] == assignment_id)
                     db.audit(conn, "egress-assign", name,
-                             f"{egress.get(conn, egress_id)['name']}：{egress.describe_conditions(conditions)}，"
-                             f"失效时{egress.ON_FAILURE[data.get('on_failure')]}", actor=actor(request))
+                             f"{egress.get(conn, egress_id)['name']}：{describe(a)}，{egress.NETWORKS[a['network']]}，"
+                             f"失效时{egress.ON_FAILURE[a['on_failure']]}", actor=actor(request))
             except (ValueError, egress.EgressError) as exc:
                 return back_with_error(f"/nodes/{name}#egress", exc)
         return back(f"/nodes/{name}#egress")
@@ -206,14 +288,16 @@ def register(app, settings, pages, xray):
         if data is None:
             return refused(request)
         with db.connect(settings.db_path) as conn:
+            a = next((x for x in egress.assignments(conn, name) if x["id"] == assignment_id), None)
+            what = (f"#{assignment_id} {(egress.get(conn, a['egress_id']) or {}).get('name', '（已删除的出口）')}：{describe(a)}"
+                    if a else f"#{assignment_id}")
             try:
                 if action == "toggle":
                     enabled = egress.toggle_assignment(conn, assignment_id, name)
-                    db.audit(conn, "egress-assign-" + ("enable" if enabled else "disable"), name, str(assignment_id),
-                             actor=actor(request))
+                    db.audit(conn, "egress-assign-" + ("enable" if enabled else "disable"), name, what, actor=actor(request))
                 else:
                     egress.unassign(conn, assignment_id, name)
-                    db.audit(conn, "egress-unassign", name, str(assignment_id), actor=actor(request))
+                    db.audit(conn, "egress-unassign", name, what, actor=actor(request))
             except egress.EgressError as exc:
                 return back_with_error(f"/nodes/{name}#egress", exc)
         return back(f"/nodes/{name}#egress")
@@ -227,29 +311,56 @@ def register(app, settings, pages, xray):
         return await node_egress_change(request, name, assignment_id, "delete")
 
 
-def node_context(conn, name, day):
-    """Rows, choices and node users for the node page's egress section."""
+def scheme_rows(settings):
+    with db.connect(settings.db_path) as conn:
+        uses = {}
+        for a in egress.assignments(conn):
+            if a.get("scheme_id"):
+                uses.setdefault(a["scheme_id"], set()).add(a["node"])
+        return [dict(s, what=egress.describe_conditions(s["conditions"]), nodes=sorted(uses.get(i, set())))
+                for i, s in egress.schemes(conn).items()]
+
+
+def describe(a):
+    """What an assignment takes, in words, naming its scheme."""
+    if a["scheme_missing"]:
+        return "（方案已删除）"
+    text = egress.describe_conditions(a["conditions"])
+    return f"方案“{a['scheme']}”：{text}" if a["scheme"] else text
+
+
+def node_context(conn, node, day):
+    """Rows, choices and node users for the node page's egress section; `node` is the registered node."""
+    name = node.name
     known = [u["name"] for u in users_mod.node_users(conn, name, day)]
+    syncing = [u["name"] for u in users_mod.node_payload(conn, node, day)[1]]        # what /sync sends the node
     items = egress.pool(conn)
     found = egress.checks(conn)
     state = egress.node_states(conn).get(name, {})
-    version, _ = egress.node_payload(conn, name, known)
+    payload, notes = egress.plan(conn, name, syncing, state.get("schema", egress.AGENT_SCHEMA))
+    version, _ = egress.node_payload(conn, name, syncing, state.get("schema", egress.AGENT_SCHEMA))
     current = state.get("applied") == version
+    sent = {entry["id"] for entry in payload["assignments"]}
     rows = []
     for a in egress.assignments(conn, name):
         item = items.get(a["egress_id"])
-        rows.append(dict(a, egress_name=item["name"] if item else "（已删除）",
-                         what=egress.describe_conditions(a["conditions"]),
+        rows.append(dict(a, egress_name=item["name"] if item else "（已删除）", what=describe(a),
+                         note=notes.get(a["id"]) if a["enabled"] else None, sent=a["id"] in sent,
                          check=next((c for c in found.get(a["egress_id"], []) if c["checker"] == name), None),
                          state=(state.get("states") or {}).get(str(a["id"])) if current else None))
 
     def status(egress_id):
         latest = (found.get(egress_id) or [None])[0]
-        return "等待检测" if latest is None else ("可用" if latest["ok"] else "不可用")
+        if latest is None:
+            return "等待检测"
+        if not latest["ok"]:
+            return "不可用"
+        return "可用，不支持 UDP" if egress.udp_support(conn, egress_id) is False else "可用"
     choices = sorted(({"id": i, "name": e["name"], "status": status(i)} for i, e in items.items() if e["enabled"]),
                      key=lambda c: (c["status"] != "可用", c["name"]))
-    return {"egress_rows": rows, "egress_choices": choices, "node_user_names": known,
-            "networks": egress.NETWORKS, "on_failure": egress.ON_FAILURE, "egress_states": egress.STATES}
+    return {"egress_rows": rows, "egress_choices": choices, "node_user_names": known, "schemes": egress.schemes(conn),
+            "networks": egress.NETWORKS, "on_failure": egress.ON_FAILURE, "egress_states": egress.STATES,
+            "egress_error": state.get("error", "")}
 
 
 def user_egress(conn, name):
@@ -258,10 +369,10 @@ def user_egress(conn, name):
     items = egress.pool(conn)
     for a in egress.assignments(conn):
         item = items.get(a["egress_id"])
-        if not a["enabled"] or not item or not item["enabled"]:
+        if not a["enabled"] or a["scheme_missing"] or not item or not item["enabled"]:
             continue
         if "users" in a["conditions"] and name not in a["conditions"]["users"]:
             continue
-        part = "全部流量" if set(a["conditions"]) <= {"users"} else "部分流量"
+        part = "全部流量" if set(a["conditions"]) <= {"users"} else (f"方案“{a['scheme']}”" if a["scheme"] else "部分流量")
         out.setdefault(a["node"], []).append(f"{item['name']}（{part}）")
     return out

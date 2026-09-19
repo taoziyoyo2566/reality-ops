@@ -10,7 +10,8 @@ revokes the subscription. The status service probes the node through Vision and 
 the check breaks XHTTP only (partial), stops Xray (outage), hides the node (maintenance) and cuts the status
 service's network (no data). The Telegram bot runs against a fake Bot API (tests/console/fake_telegram.py) on the
 console's egress network: binding with a link from the admin page, /sub, /reset, and admin permissions.
-Proxy egress (plan-egress-console §6) uses two test SOCKS5 servers, one with an account: added in the admin pages,
+Proxy egress (plan-egress-console §6) uses two test SOCKS5 servers, one with an account and UDP, the other without UDP:
+added in the admin pages,
 checked by the status service, assigned to one user on the node, paused to see the fallback to direct and the block
 mode, and unassigned; Xray must not restart. Both SOCKS servers leave through this host like the node, so which way
 traffic went is read from the SOCKS servers' access logs, not from the exit IP.
@@ -83,6 +84,8 @@ BOT_ADMIN, BOT_USER = 1001, 2002
 SOCKS = ("console-e2e-socks-a", "console-e2e-socks-b")
 USER_HOST = "speed.cloudflare.com"          # the users' traffic; the egress checks use CHECK_URL's host
 USER_URL = f"https://{USER_HOST}/__down?bytes=1000"
+SCHEMES = ("import json; from console import config, db, egress; s = config.from_env();\n"
+           "with db.connect(s.db_path) as c: print(json.dumps({'schemes': sorted(egress.schemes(c))}))")
 EGRESS = ("import json; from console import config, db, egress; s = config.from_env();\n"
           "with db.connect(s.db_path) as c: print(json.dumps({'pool': {e['name']: i for i, e in egress.pool(c).items()},"
           " 'checks': {egress.get(c, i)['name']: rows for i, rows in egress.checks(c).items()},"
@@ -495,9 +498,9 @@ def check_egress(layout, admin):
     """plan-egress-console §6 item 1: proxy egress from the console pool, applied by the agent without a restart."""
     password = base64.b32encode(os.urandom(10)).decode().lower()
     ips = []
-    for name, accounts in zip(SOCKS, ([{"user": "e2e", "pass": password}], [])):
+    for name, accounts, udp in zip(SOCKS, ([{"user": "e2e", "pass": password}], []), (True, False)):
         path = os.path.join(layout.root, f"{name}.json")
-        inbound = {"listen": "0.0.0.0", "port": 1080, "protocol": "socks", "settings": {"udp": True}}
+        inbound = {"listen": "0.0.0.0", "port": 1080, "protocol": "socks", "settings": {"udp": udp}}
         if accounts:
             inbound["settings"].update(auth="password", accounts=accounts)
         with open(path, "w") as fh:
@@ -559,6 +562,11 @@ def check_egress(layout, admin):
     record("the status service checks new egress: the page shows both available with their exit IP",
            found and page.count('<span class="ok">可用</span>') == 2 and all(ip in page for ip in exit_ips),
            {n: [(c["checker"], c["ok"], c["latency_ms"], c["error"]) for c in rows] for n, rows in (found or {}).items()})
+    record("the check finds which egress relays UDP", {n: [c["udp"] for c in rows] for n, rows in (found or {}).items()}
+           == {"e2e-a": [1], "e2e-b": [0]}, {n: [c["udp"] for c in rows] for n, rows in (found or {}).items()})
+    admin.post(f"/nodes/{NODE}/egress/new", egress_id=str(pool.get("e2e-b")), users="carol", domains="", ips="",
+               network="tcp,udp", on_failure="direct", priority="100")
+    record("an egress without UDP cannot take UDP traffic", not state().get("assignments"), state().get("assignments"))
 
     # the check button: the admin pages check an egress right away (the web service reaches the test servers on the bridge)
     run(["docker", "network", "connect", "bridge", "console_e2e_web"])
@@ -579,9 +587,9 @@ def check_egress(layout, admin):
     run(["docker", "unpause", SOCKS[1]])
     run(["docker", "network", "disconnect", "bridge", "console_e2e_web"], check=False)
 
-    # assign e2e-a to carol on the node, falling back to direct
+    # assign e2e-a to carol on the node, TCP and UDP, falling back to direct
     admin.post(f"/nodes/{NODE}/egress/new", egress_id=str(pool.get("e2e-a")), users="carol", domains="", ips="",
-               network="tcp", on_failure="direct", priority="100")
+               network="tcp,udp", on_failure="direct", priority="100")
     assignment = next((a["id"] for a in state().get("assignments") or []), None)
     tag = f"egress-{pool.get('e2e-a')}-a{assignment}"
     started = time.time()
@@ -593,10 +601,14 @@ def check_egress(layout, admin):
 
     def node_state(expected):
         return lambda: ((state().get("nodes") or {}).get(NODE) or {}).get("states", {}).get(str(assignment)) == expected
-    record("the node checks its egress and reports it in use",
-           wait_for(lambda: any(c["checker"] == NODE and c["ok"] for c in (state().get("checks") or {}).get("e2e-a", [])),
-                    INTERVAL * 8, 2) and wait_for(node_state("active"), INTERVAL * 4, 2))
+    record("the node checks its egress, UDP too, and reports it in use",
+           wait_for(lambda: any(c["checker"] == NODE and c["ok"] and c["udp"] == 1
+                                for c in (state().get("checks") or {}).get("e2e-a", [])), INTERVAL * 8, 2)
+           and wait_for(node_state("active"), INTERVAL * 4, 2))
     record("the node page shows the assignment in use", "经出口" in admin.get(f"/nodes/{NODE}")[1])
+    script = admin.get("/static/select-all.js")
+    record("the admin pages serve their one script for select-all", script[0] == 200 and "data-select-all" in script[1]
+           and 'data-select-all="names"' in admin.get("/users")[1])
 
     # fallback to direct while the egress is down, back when it recovers
     run(["docker", "pause", socks_a])
@@ -633,6 +645,29 @@ def check_egress(layout, admin):
     outbounds = run(["docker", "exec", SRV, "xray", "api", "lso", "-s", "127.0.0.1:10085"], check=False).stdout
     record("unassigning returns carol to direct and removes the outbound",
            gone and via(carol) == ("200", 0) and "egress-" not in outbounds, rules())
+
+    # a scheme: websites for every user of the node, TCP through the egress, QUIC to them blocked, blocking on failure;
+    # geosite: needs the geo data in the tools image (xray api adrules builds rules on the agent's side)
+    admin.post("/egress/schemes/new", name="e2e-sites", domains=f"{USER_HOST} geosite:cloudflare", ips="",
+               network="tcp-block-udp", on_failure="block", note="")
+    scheme = next(iter((layout.console_query(SCHEMES) or {}).get("schemes", [])), None)
+    admin.post(f"/nodes/{NODE}/egress/new", egress_id=str(pool.get("e2e-a")), scheme_id=str(scheme), domains="", ips="",
+               network="tcp", on_failure="direct", priority="100")
+    assignment = next((a["id"] for a in state().get("assignments") or []), None)
+    tag = f"egress-{pool.get('e2e-a')}-a{assignment}"
+    placed = wait_for(lambda: [t for t in rules() if t.startswith("egress-")] == [tag, f"{tag}-2"], INTERVAL * 12, 2)
+    record("a scheme with geosite: is applied at runtime: TCP through the egress, QUIC blocked", placed, rules())
+    record("the scheme takes every user of the node to its websites", via(carol) == ("200", 1) and via(bob) == ("200", 1))
+    other = run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "20",
+                 "-x", f"socks5h://127.0.0.1:{layout.client_port}", "https://www.example.com/"], check=False).stdout.strip()
+    elsewhere = sum(1 for line in run(["docker", "logs", socks_a], check=False).stdout.splitlines()
+                    if "accepted" in line and "example.com" in line)
+    record("other websites stay direct", other != "000" and elsewhere == 0, other)
+    admin.post(f"/nodes/{NODE}/egress/{assignment}/delete")
+    admin.post(f"/egress/schemes/{scheme}/delete", confirm="e2e-sites")
+    record("removing the scheme's assignment returns to direct",
+           wait_for(lambda: not any(t.startswith("egress-") for t in rules()), INTERVAL * 12, 2) and via(carol) == ("200", 0)
+           and not (layout.console_query(SCHEMES) or {}).get("schemes"), rules())
     record("Xray was not restarted for any of it", inspect(SRV, "{{.State.StartedAt}}") == started_at)
     pages = "".join(admin.get(p)[1] for p in ("/egress", f"/egress/{pool.get('e2e-a')}", f"/nodes/{NODE}", "/audit"))
     logs = "".join(run(["docker", "logs", n], check=False).stdout + run(["docker", "logs", n], check=False).stderr

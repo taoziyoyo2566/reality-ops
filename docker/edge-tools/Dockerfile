@@ -8,6 +8,9 @@ FROM taoziyoyo2566/xray-docker@sha256:fd502666d1a9ca7ea772e2c1638bb83e79bdc12c97
 # python:3.13-alpine index digest，2026-09-15 于 Docker Hub 核对（基于 alpine 3.24）。
 FROM python:3.13-alpine@sha256:7415fbc3c9e4979cc717d92377ab2bc7b2b4a2af1ac03cc52b5f3f88efedaf3a
 COPY --from=xray /usr/bin/xray /usr/local/bin/xray
+# xray api adrules builds rules on the calling side: geosite: / geoip: rules of proxy egress need the same data here
+COPY --from=xray /usr/local/share/xray/geoip.dat /usr/local/share/xray/geosite.dat /usr/local/share/xray/
+ENV XRAY_LOCATION_ASSET=/usr/local/share/xray
 
 RUN apk add --no-cache logrotate docker-cli \
  && logrotate --version \

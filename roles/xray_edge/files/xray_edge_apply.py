@@ -47,7 +47,8 @@ PROBE_TAG = "probe"
 PROXY_PREFIX = "egress-"
 PROXY_TAG_RE = re.compile(r"^egress-[A-Za-z0-9_-]{1,60}$")
 PROXY_PROTOCOLS = ("socks", "http", "shadowsocks", "vless", "trojan", "wireguard")
-PROXY_RULE_KEYS = {"type", "ruleTag", "outboundTag", "user", "domain", "ip", "network"}
+ECH_OUTER_NAMES = ("cloudflare-ech.com",)
+PROXY_RULE_KEYS = {"type", "ruleTag", "outboundTag", "user", "domain", "ip", "network", "port"}
 # Xray-docs sockopt.md / RFC 8305 recommended values; tryDelayMs 0 would disable racing.
 HAPPY_EYEBALLS = {"tryDelayMs": 250, "prioritizeIPv6": False, "interleave": 1, "maxConcurrentTry": 4}
 
@@ -177,6 +178,7 @@ def validate(desired):
                 _str_list(rule[key], f"proxy_egress rule {rule['ruleTag']} {key}")
         _require(not set(rule.get("user", [])) - emails, f"proxy_egress rule {rule['ruleTag']} routes users not on this node")
         _require(rule.get("network", "tcp") in ("tcp", "udp", "tcp,udp"), f"proxy_egress rule {rule['ruleTag']} network")
+        _require(re.match(r"^\d{1,5}(-\d{1,5})?$", str(rule.get("port", "1"))), f"proxy_egress rule {rule['ruleTag']} port")
 
     level = (desired.get("log") or {}).get("level", "warning")
     _require(level in ("debug", "info", "warning", "error", "none"), "log.level is invalid")
@@ -188,7 +190,11 @@ def _email(user, node):
 
 
 def _sniffing():
-    return {"enabled": True, "destOverride": ["http", "tls", "quic"], "routeOnly": True}
+    # A browser using ECH shows only the provider's outer name in the ClientHello (Cloudflare: cloudflare-ech.com).
+    # Letting that name replace the destination the client asked for would send such connections past the domain
+    # rules of proxy egress (plan-egress-console); keep the client's destination for routing instead.
+    return {"enabled": True, "destOverride": ["http", "tls", "quic"], "routeOnly": True,
+            "domainsExcluded": list(ECH_OUTER_NAMES)}
 
 
 def render(desired, private_key):

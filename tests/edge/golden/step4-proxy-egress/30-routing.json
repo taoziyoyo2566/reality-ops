@@ -48,12 +48,39 @@
           "geosite:amazon",
           "domain:example.com"
         ],
+        "network": "tcp",
+        "outboundTag": "egress-2",
+        "ruleTag": "egress-2-a2",
+        "type": "field"
+      },
+      {
+        "domain": [
+          "geosite:amazon",
+          "domain:example.com"
+        ],
+        "network": "udp",
+        "outboundTag": "blocked",
+        "port": "443",
+        "ruleTag": "egress-2-a2-2",
+        "type": "field"
+      },
+      {
         "ip": [
           "203.0.113.0/24"
         ],
-        "network": "tcp,udp",
+        "network": "tcp",
+        "outboundTag": "egress-2",
+        "ruleTag": "egress-2-a2-3",
+        "type": "field"
+      },
+      {
+        "ip": [
+          "203.0.113.0/24"
+        ],
+        "network": "udp",
         "outboundTag": "blocked",
-        "ruleTag": "egress-2-a2",
+        "port": "443",
+        "ruleTag": "egress-2-a2-4",
         "type": "field"
       },
       {

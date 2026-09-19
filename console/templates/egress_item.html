@@ -9,10 +9,11 @@
 <h2>检测</h2>
 {% if checks %}
 <table>
-<thead><tr><th>由谁检测</th><th>结果</th><th>出口 IP</th><th class="num">耗时</th><th>时间</th><th>错误</th></tr></thead>
+<thead><tr><th>由谁检测</th><th>结果</th><th>UDP</th><th>出口 IP</th><th class="num">耗时</th><th>时间</th><th>错误</th></tr></thead>
 <tbody>
 {% for c in checks %}
 <tr><td>{{ c.checker }}</td><td>{% if c.ok %}<span class="ok">可用</span>{% else %}<span class="bad">不可用</span>{% endif %}</td>
+<td>{% if not c.ok or c.udp is none %}<span class="muted">—</span>{% elif c.udp %}支持{% else %}<span class="warn">不支持</span>{% endif %}</td>
 <td>{{ c.exit_ip or '—' }}{% if c.country %} <span class="muted">{{ c.country }}</span>{% endif %}</td>
 <td class="num">{{ (c.latency_ms ~ ' ms') if c.latency_ms is not none else '—' }}</td><td>{{ c.checked_at | time }}</td><td>{{ c.error }}</td></tr>
 {% endfor %}
@@ -57,7 +58,7 @@
 <input type="hidden" name="enabled" value="{{ '0' if item.enabled else '1' }}">
 <button>{{ '停用' if item.enabled else '启用' }}</button>
 </form>
-<span class="muted">停用后，用它的分配全部按直连处理。</span>
+<span class="muted">停用后：选“回退直连”的分配改为直连；选“断开”的分配阻断这部分流量，不会改走节点的 IP。</span>
 </section>
 
 <section>
@@ -67,6 +68,6 @@
 <input type="text" name="confirm" placeholder="输入名称 {{ item.name }} 以确认" autocomplete="off">
 <button class="danger">删除出口</button>
 </form>
-<p class="muted">同时删除它在各节点上的分配；这些流量回到直连。</p>
+<p class="muted">同时删除它在各节点上的分配，这些流量全部回到直连（包括选了“断开”的）。只想暂停请用上面的“停用”。</p>
 </section>
 {% endblock %}

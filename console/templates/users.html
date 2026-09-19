@@ -24,7 +24,7 @@
 <section>
 <table>
 <thead><tr>
-<th></th><th>用户</th><th>档位</th><th>状态</th><th>到期</th><th class="num">可用节点</th><th>进度</th><th class="num" title="近 24 小时最多同时在几处（不同网络）在线">同时在线</th><th>最后拉取</th><th class="num">本月流量 {{ month }}</th>
+<th><input type="checkbox" data-select-all="names" aria-label="全选" title="全选"></th><th>用户</th><th>档位</th><th>状态</th><th>到期</th><th class="num">可用节点</th><th>进度</th><th class="num" title="近 24 小时最多同时在几处（不同网络）在线">同时在线</th><th>最后拉取</th><th class="num">本月流量 {{ month }}</th>
 </tr></thead>
 <tbody>
 {% for r in rows %}

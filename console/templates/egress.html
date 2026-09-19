@@ -9,7 +9,7 @@
 <h2>出口池</h2>
 {% if rows %}
 <table>
-<thead><tr><th>名称</th><th>类型</th><th>地址</th><th>标签</th><th>可用</th><th>出口 IP</th><th class="num">耗时</th><th>检测</th><th>用在</th><th></th></tr></thead>
+<thead><tr><th>名称</th><th>类型</th><th>地址</th><th>标签</th><th>可用</th><th>UDP</th><th>出口 IP</th><th class="num">耗时</th><th>检测</th><th>用在</th><th></th></tr></thead>
 <tbody>
 {% for r in rows %}
 <tr>
@@ -18,6 +18,7 @@
 <td>{{ r.summary }}</td>
 <td>{% for t in r.labels %}<span class="tag">{{ t }}</span>{% endfor %}</td>
 <td>{% if r.check is none %}<span class="muted">{{ '等待检测（约一分钟内）' if r.enabled else '停用，不自动检测' }}</span>{% elif r.check.ok %}<span class="ok">可用</span>{% else %}<span class="bad" title="{{ r.check.error }}">不可用</span>{% endif %}</td>
+<td>{% if r.udp is none %}<span class="muted">—</span>{% elif r.udp %}<span class="ok">支持</span>{% else %}<span class="warn">不支持</span>{% endif %}</td>
 <td>{% if r.check and r.check.exit_ip %}{{ r.check.exit_ip }}{% if r.check.country %} <span class="muted">{{ r.check.country }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
 <td class="num">{{ (r.check.latency_ms ~ ' ms') if r.check and r.check.latency_ms is not none else '—' }}</td>
 <td>{% if r.check %}{{ r.check.checked_at | time }}<br><span class="muted">{{ '由 ' ~ r.check.checker ~ ' 检测' if r.check.checker != 'spt' else '由 spt 检测（仅供参考）' }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
@@ -28,11 +29,48 @@
 </tbody>
 </table>
 <p class="muted">已分配的出口由用到它的节点每分钟检测；未分配的由 spt 检测：新加或修改后约一分钟内，之后每 10 分钟。
-“立即检测”马上从 spt 检测一次，可用的几秒内返回，失效的约 10 秒。已分配的出口以节点的检测为准：代理只允许特定来源 IP 连接时，
+“立即检测”马上从 spt 检测一次，可用的几秒内返回，失效的约 10 秒。UDP 一列是经出口发一次 DNS 查询的结果：
+不支持 UDP 的出口，分配时网络只能选“只有 TCP”。已分配的出口以节点的检测为准：代理只允许特定来源 IP 连接时，
 spt 上会显示不可用。在节点页把出口分配给用户、网站或整台节点。</p>
 {% else %}
 <p class="muted">出口池是空的。在下面添加，或批量导入。</p>
 {% endif %}
+</section>
+
+<section id="schemes">
+<h2>分流方案</h2>
+<p class="muted">方案是一组网站和 IP 段，连同网络与失效时的做法；节点上添加分配时选方案即可。修改方案后，用到它的各节点约一分钟内跟着变。</p>
+{% if schemes %}
+<table>
+<thead><tr><th>名称</th><th>网站或 IP 段</th><th>网络</th><th>失效时</th><th>用在</th></tr></thead>
+<tbody>
+{% for s in schemes %}
+<tr>
+<td><a href="/egress/schemes/{{ s.id }}">{{ s.name }}</a>{% if s.note %}<br><span class="muted">{{ s.note }}</span>{% endif %}</td>
+<td style="white-space:normal">{{ s.what }}</td>
+<td>{{ networks[s.network] }}</td>
+<td>{{ on_failure[s.on_failure] }}</td>
+<td>{% for n in s.nodes %}<a href="/nodes/{{ n }}#egress">{{ n }}</a>{{ '、' if not loop.last }}{% else %}<span class="muted">未使用</span>{% endfor %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="muted">还没有方案。</p>
+{% endif %}
+<form method="post" action="/egress/schemes/new">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<p><strong>添加方案</strong></p>
+<p><label>名称 <input type="text" name="name" required maxlength="40" placeholder="例如 AI 与流媒体"></label>
+<label>备注 <input type="text" name="note" maxlength="200"></label></p>
+<p><label>网站 <input type="text" name="domains" size="60" placeholder="例如 chatgpt.com claude.ai geosite:netflix，用空格分隔"></label></p>
+<p><label>IP 段 <input type="text" name="ips" size="60" placeholder="例如 203.0.113.0/24 geoip:jp"></label>
+<span class="muted">网站和 IP 段满足任一项即走出口</span></p>
+<p><label>网络 <select name="network">{% for k, v in networks.items() %}<option value="{{ k }}"{{ ' selected' if k == 'tcp-block-udp' }}>{{ v }}</option>{% endfor %}</select></label>
+<label>出口失效时 <select name="on_failure">{% for k, v in on_failure.items() %}<option value="{{ k }}"{{ ' selected' if k == 'block' }}>{{ v }}</option>{% endfor %}</select></label>
+<span class="muted">要求网站只看到出口 IP 时选“断开”</span></p>
+<p><button class="primary">添加方案</button></p>
+</form>
 </section>
 
 <section id="new">

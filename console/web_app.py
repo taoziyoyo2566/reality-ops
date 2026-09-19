@@ -20,7 +20,7 @@ import urllib.parse
 import segno
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from subs import statuspage
@@ -30,13 +30,14 @@ from . import auth, bot as bot_mod, config, db, egress as egress_mod, egress_web
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 TEMPLATES = os.path.join(os.path.dirname(__file__), "templates")
+STATIC = os.path.join(os.path.dirname(__file__), "static")
 SECURITY_HEADERS = {
     "Cache-Control": "no-store",
     # 不能用 no-referrer：浏览器会让表单 POST 带 `Origin: null`，被下面的来源检查拒绝。
     "Referrer-Policy": "same-origin",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
-    "Content-Security-Policy": ("default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
+    "Content-Security-Policy": ("default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:; "
                                 "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"),
 }
 WATCH_SECONDS = 30
@@ -264,6 +265,14 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     @app.get("/healthz")
     def healthz():
         return PlainTextResponse("ok\n")
+
+    # the only script: select-all checkboxes; served from here because the policy allows no inline or foreign scripts
+    with open(os.path.join(STATIC, "select-all.js"), "rb") as fh:
+        select_all = fh.read()
+
+    @app.get("/static/select-all.js")
+    def select_all_script():
+        return Response(select_all, media_type="text/javascript; charset=utf-8", headers={"Cache-Control": "no-cache"})
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request, published: str = ""):
@@ -699,7 +708,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             diff = users_mod.differences(conn, {name: nodes[name]}, today()).get(name) if managed else None
             wanted = len(users_mod.node_users(conn, name, today())) if managed else None
             sync_row = users_mod.sync_rows(conn).get(name)
-            egress_context = egress_web.node_context(conn, name, today()) if managed else {}
+            egress_context = egress_web.node_context(conn, nodes[name], today()) if managed else {}
             return page(request, "node.html", name=name, node=nodes[name], shown=name in db.shown_nodes(conn),
                         error=error, **egress_context,
                         incidents=incidents, managed=managed, tier_rules=tier_rules, node_tier=node_tier, diff=diff,

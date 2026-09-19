@@ -548,7 +548,7 @@ class Sync:
             try:
                 self.egress.check()
                 self.egress.apply()
-            except (SyncError, OSError, ValueError) as exc:
+            except Exception as exc:  # noqa: BLE001 - egress must never stop the reports or the user sync
                 log(f"egress: {type(exc).__name__}: {str(exc)[:200]}")
         return True
 
