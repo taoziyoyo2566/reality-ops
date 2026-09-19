@@ -505,7 +505,7 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   shows no alerts, and no status probe failed during the rollout. A node's first sync right after enabling gets 409
   (its agent starts before the console sees the new registration); the console shows that error for one more cycle,
   because it records the state the agent reported in its request, and it clears after about a minute.
-- `[代码]` 2026-09-19 working tree, 2c, not deployed: `console/bot.py` is the Telegram bot (compose service `bot`, only
+- `[代码]` 2026-09-19, 2c (deployed 2026-09-18 17:35Z): `console/bot.py` is the Telegram bot (compose service `bot`, only
   when `vault_console_bot_token` is set; admins are `vault_console_bot_admin_ids`). It long-polls with stdlib `urllib`,
   answers private chats only, keeps its offset, username and heartbeat in the `settings` table, and binds accounts
   with one-time codes in `bot_links`. `publish.publish` now takes an `flock` on `/db/publish.lock`: web requests, the
@@ -516,7 +516,9 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   container used about 17 MiB. `spt` reached `api.telegram.org` directly (HTTP 302 in 0.4 s, plan §5 item 5).
 - `[实测]` 2026-09-19 live on `spt` (bot deployed 2026-09-18 17:35Z, one administrator): with 50 s long polls the bot
   logged 370 `getUpdates: ConnectionResetError` in 10.5 h (30-40 per hour); the resets landed about 30-35 s into a
-  poll. The poll timeout is now 20 s. Where the reset comes from (a device on the path or Telegram's side) is `[未知]`.
+  poll. The poll timeout is now 20 s (`fc5fac7`, deployed 04:20Z): 0 resets and no other errors in the next 22 min,
+  where the old rate predicts 10 or more. Where the reset comes from (a device on the path or Telegram's side) is
+  `[未知]`.
 - `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while

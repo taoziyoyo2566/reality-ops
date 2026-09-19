@@ -185,7 +185,8 @@ Updated: 2026-09-18 JST
   记录节点运行的用户）；订阅按节点实际运行的用户生成（同步节点取 agent 报告，其余取登记文件）；同步变化后自动重新发布；
   节点页与首页显示同步状态、需要部署的用户与失败原因。节点侧 agent 与共用 `short_id` 见 S3 合同 §10。
 - **2b 上线（2026-09-19）**：`console.yml` 后 `edge.yml` 部署全部 11 台节点（每台 Xray 重启一次以加入共用 `short_id`），11 台均报告已同步、无待加入用户，状态检测在部署期间无失败。首次开启同步的节点在控制台登记更新前会得到一次 409，一分钟后自动恢复。
-- **2c（2026-09-19，工作树，未部署）**：控制台新增 `bot` 服务（`console/bot.py`，长轮询、只在私聊回应、不开放端口，token 与管理员列表为挂载的文件），vault 有 `vault_console_bot_token` 时由 `console.yml` 开启。绑定用一次性链接（24 小时、`bot_links` 表），一个 Telegram 账号只绑定一个用户；地址消息带 `protect_content`；确认按钮 10 分钟内有效、只认发起人；每人每分钟最多 20 条。用户页新增 Telegram 一节，bot 5 分钟连不上 Telegram 时首页提示。网页、其后台任务与 bot 的订阅发布改为经文件锁串行（此前同一进程内的并发发布也可能交错写入两个文件）。操作者步骤见 `runbooks/telegram-bot.md`。本地验证：`tests/console/test_bot.py` 22 项、compose 13 项与原有控制台测试全部通过；端到端 72/72（bot 容器对接模拟的 Bot API：网页链接绑定、`/sub` 带 `protect_content`、`/reset` 后旧地址 404、非管理员不能执行管理员命令、群消息忽略、日志不含 token 与地址；bot 容器约 17 MiB）。
+- **2c（2026-09-19）**：控制台新增 `bot` 服务（`console/bot.py`，长轮询、只在私聊回应、不开放端口，token 与管理员列表为挂载的文件），vault 有 `vault_console_bot_token` 时由 `console.yml` 开启。绑定用一次性链接（24 小时、`bot_links` 表），一个 Telegram 账号只绑定一个用户；地址消息带 `protect_content`；确认按钮 10 分钟内有效、只认发起人；每人每分钟最多 20 条。用户页新增 Telegram 一节，bot 5 分钟连不上 Telegram 时首页提示。网页、其后台任务与 bot 的订阅发布改为经文件锁串行（此前同一进程内的并发发布也可能交错写入两个文件）。操作者步骤见 `runbooks/telegram-bot.md`。本地验证：`tests/console/test_bot.py` 22 项、compose 13 项与原有控制台测试全部通过；端到端 72/72（bot 容器对接模拟的 Bot API：网页链接绑定、`/sub` 带 `protect_content`、`/reset` 后旧地址 404、非管理员不能执行管理员命令、群消息忽略、日志不含 token 与地址；bot 容器约 17 MiB）。
+- **2c 上线（2026-09-19）**：vault 写入 bot token 与 1 个管理员后 `console.yml` 开启 bot；测试用户 `test02` 经网页链接绑定，发放后 `/sub` 收到地址与二维码，客户端已拉取订阅。上线后发现 spt 到 Telegram 的长轮询空闲约 30 秒常被连接重置（50 秒轮询时每小时 30–40 次），轮询改为 20 秒后 22 分钟内 0 次。§6.2 第 4 项中 `/me` 流量与非管理员被拒绝尚未实机核对（单元与端到端测试已覆盖）。
 - 与本文的差异：`edge_extra_users`（原先加到每台新节点上的 `test`）在导入时换算为“单独允许全部 `edge_nodes`”；
   节点声明 `reality_node_users` 时导入中止（目前没有节点使用）；导入前控制台保留第一阶段的只读用户列表。
 
