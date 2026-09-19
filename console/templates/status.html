@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}状态{% endblock %}
 {% block content %}
-<style>{{ status_css | safe }}</style>
+<style>{{ status_css | safe }}
+.bars{display:flex;align-items:flex-end;gap:1px;height:30px;min-width:180px}
+.bars span{flex:1;min-width:3px;background:var(--accent)}.bars span.none{background:var(--line);height:2px}
+.bars span.slow{background:var(--warn)}</style>
 <h1>节点状态</h1>
 {% if not status_enabled %}
 <section><p class="muted">状态页未启用（<code>group_vars/all/status.yml</code> 的 <code>status_enabled</code>）。</p></section>
@@ -31,6 +34,26 @@
 <p class="muted">还没有节点加入探测账号（<code>status_probe_nodes</code>，见 <code>docs/operations.md</code> §14.8）。</p>
 {% endif %}
 <p class="muted">“无数据”表示本轮从本机直接访问检测地址失败或本机 Xray 客户端未就绪，这一轮不计入判定。</p>
+</section>
+
+<section id="latency">
+<h2>检测耗时（最近 24 小时）</h2>
+{% if latency %}
+<table>
+<thead><tr><th>节点</th><th>连接方式</th><th>每格一小时，高度为成功检测的中位耗时（满格 3 秒）</th><th class="num">24 小时中位</th></tr></thead>
+<tbody>
+{% for r in latency %}
+<tr><td><a href="/nodes/{{ r.node }}">{{ r.node }}</a></td><td>{{ r.transport }}</td>
+<td><div class="bars">{% for h in r.hours %}{% if h.count %}<span class="{{ 'slow' if h.max > 3000 }}" style="height:{{ [[h.median, 3000] | min * 30 // 3000, 2] | max }}px" title="{{ h.start | stime }} 起一小时：中位 {{ h.median }} ms，最高 {{ h.max }} ms（{{ h.count }} 次）"></span>{% else %}<span class="none" title="{{ h.start | stime }} 起一小时：没有成功的检测"></span>{% endif %}{% endfor %}</div></td>
+<td class="num">{{ (r.median ~ ' ms') if r.median is not none else '—' }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+<p class="muted">从本机（spt）经各节点访问检测地址的耗时，反映的是 spt 到节点的线路，不是用户的体验，因此不在用户的状态页上显示。
+一小时内最高超过 3 秒的格子标为黄色；spt 到 dzire、legend 往返约 265 ms，偶有 2–4 秒属于长距离线路的重传。</p>
+{% else %}
+<p class="muted">还没有检测数据。</p>
+{% endif %}
 </section>
 
 <section id="notes">

@@ -151,8 +151,9 @@ def make_handler(store, log, public_base_url):
             if not user or (fmt not in ("page", "status") and fmt not in render.FORMATS):
                 return self._send(404, "text/plain; charset=utf-8", NOT_FOUND)
             if fmt == "status":
-                day = (urllib.parse.parse_qs(query).get("day") or [""])[0]
-                text = statuspage.page(store.status(), day, render.PAGE_CSS, self._base_url(token), int(time.time()))
+                params = urllib.parse.parse_qs(query)
+                day, view = (params.get("day") or [""])[0], (params.get("view") or [""])[0]
+                text = statuspage.page(store.status(), day, render.PAGE_CSS, self._base_url(token), int(time.time()), view)
                 return self._send(200, "text/html; charset=utf-8", text.encode(), {"Content-Security-Policy": PAGE_CSP})
             if fmt == "page":
                 content_type, text = "text/html; charset=utf-8", render.page(catalog, user, self._base_url(token))

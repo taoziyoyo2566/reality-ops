@@ -534,6 +534,11 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   The console's form secret is kept in `settings.form_secret`, so pages opened before a restart still post; a
   refused form shows a Chinese page with a same-origin link back. The nodes list shows and hides nodes, one or
   several at once (`POST /nodes/bulk-show`).
+- `[代码]` 2026-09-19 working tree: the status page has minute / hour / day views (`?view=`, default hour).
+  `status.build_document` adds `hours` (24 clock hours: state by events, checks and successes) and `minutes` (one
+  cell per round over the last hour: ok / partial / outage / nodata / maintenance with the failed transports);
+  both optional in `subs/statuspage.validate`. `status.latency_hours` feeds the admin page only. With live data
+  one build took about 70 ms and `status.json` was about 45 KiB for 11 nodes.
 - `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while

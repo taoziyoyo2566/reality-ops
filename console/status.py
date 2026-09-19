@@ -24,6 +24,8 @@ SCHEMA = 1
 TRANSPORTS = ("vision", "xhttp")
 TRANSPORT_NAMES = {"vision": "Vision", "xhttp": "XHTTP"}
 KINDS = ("outage", "partial", "maintenance")
+RECENT_HOURS = 24          # the hour view; the minute view covers the last hour, one cell per round
+RECENT_ROUNDS = 120        # at most this many rounds in the minute view (60 at the default 60 s interval)
 USER_AGENT = "reality-status-probe/1"
 NOTE_MAX = 500
 
@@ -116,6 +118,23 @@ def day_of(epoch, offset_hours):
 def day_bounds(day, offset_hours):
     start = datetime.datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=zone(offset_hours))
     return int(start.timestamp()), int((start + datetime.timedelta(days=1)).timestamp())
+
+
+def hour_start(epoch, offset_hours):
+    """The start of the local clock hour containing epoch (offsets such as +5:30 shift the boundary)."""
+    off = int(round(offset_hours * 3600))
+    return (epoch + off) // 3600 * 3600 - off
+
+
+def round_state(results, node_targets):
+    """(state, failed transport names, checked count) of one round of a node: ok, partial, outage or nodata."""
+    known = {t: results[t] for t in node_targets if results.get(t) is not None}
+    failed = [TRANSPORT_NAMES[t] for t in node_targets if known.get(t) == 0]
+    if not known:
+        return "nodata", [], 0
+    if not failed:
+        return "ok", [], len(known)
+    return ("outage" if len(failed) == len(known) else "partial"), failed, len(known)
 
 
 def last_days(now, count, offset_hours):
@@ -333,6 +352,14 @@ def build_document(conn, st, nodes, now):
     # without recent rounds nothing is known past the last one
     horizon = min(now, last + st.interval) if stale and last is not None else now
     labels = {name: node.label for name, node in probed.items()}
+    # the minute and hour views (plan-node-status-page §10): the last hour round by round, the last 24 clock hours
+    end = last if last is not None and not stale else now // st.interval * st.interval
+    slots = [end - (n - 1) * st.interval for n in range(max(1, min(3600 // st.interval, RECENT_ROUNDS)), 0, -1)]
+    hours_from = hour_start(end, st.utc_offset_hours) - (RECENT_HOURS - 1) * 3600
+    rounds = {}   # node -> at -> {transport: ok}
+    for r in conn.execute("SELECT at, node, transport, ok FROM probe_result WHERE at >= ?",
+                          (min(hours_from, slots[0]),)):
+        rounds.setdefault(r["node"], {}).setdefault(r["at"], {})[r["transport"]] = r["ok"]
     doc_nodes, events = [], []
     for name in sorted(probed, key=lambda n: (labels[n], n)):
         node_targets = [t for n, t in targets(nodes) if n == name]
@@ -374,16 +401,70 @@ def build_document(conn, st, nodes, now):
         availability = None
         if known_total:
             availability = round(100 * (known_total - outage_total) / known_total, 2)
-        doc_nodes.append({"label": labels[name], "state": current, "availability": availability, "days": cells})
+        maintenance = [(i["started_at"], i["ended_at"]) for i in incidents if i["kind"] == "maintenance"]
+        minutes = []
+        for at in slots:
+            if any(lo <= at and (hi is None or at < hi) for lo, hi in maintenance):
+                minutes.append(["maintenance", [], 0])
+            else:
+                state, failed, checked = round_state(rounds.get(name, {}).get(at, {}), node_targets)
+                minutes.append([state, failed, checked])
+        node_rounds = [(at, round_state(got, node_targets)) for at, got in rounds.get(name, {}).items()]
+        hours = []
+        for k in range(RECENT_HOURS):
+            lo = hours_from + k * 3600
+            hi = min(lo + 3600, horizon)
+            seconds = {kind: 0 for kind in KINDS}
+            for inc in incidents:
+                seconds[inc["kind"]] += overlap(inc["started_at"], inc["ended_at"] or horizon, lo, hi)
+            checked = [s for at, s in node_rounds if lo <= at < lo + 3600 and s[2]]
+            succeeded = sum(1 for s in checked if s[0] == "ok")
+            if seconds["outage"]:
+                state = "outage"
+            elif seconds["partial"]:
+                state = "partial"
+            elif seconds["maintenance"]:
+                state = "maintenance"
+            else:
+                state = "ok" if checked else "nodata"
+            hours.append([state, succeeded, len(checked)] + [seconds[kind] // 60 for kind in KINDS])
+        doc_nodes.append({"label": labels[name], "state": current, "availability": availability, "days": cells,
+                          "hours": hours, "minutes": minutes})
         for inc in incidents:
             events.append({"node": labels[name], "kind": inc["kind"], "started_at": inc["started_at"],
                            "ended_at": inc["ended_at"],
                            "transports": [TRANSPORT_NAMES[t] for t in inc["transports"].split(",") if t],
                            "all_transports": len(node_targets), "note": inc["note"]})
     events.sort(key=lambda e: (e["started_at"], e["node"]), reverse=True)
-    return {"schema": SCHEMA, "generated_at": now, "interval": st.interval,
+    return {"schema": SCHEMA, "generated_at": now, "interval": st.interval, "fail_count": st.fail_count,
             "tz": {"offset_hours": st.utc_offset_hours, "label": st.tz_label},
-            "days": days, "nodes": doc_nodes, "events": events}
+            "days": days, "hours": {"start": hours_from, "count": RECENT_HOURS},
+            "minutes": {"start": slots[0], "step": st.interval, "count": len(slots)},
+            "nodes": doc_nodes, "events": events}
+
+
+def latency_hours(conn, st, nodes, now):
+    """Admin page only: per node and transport, the median and highest time of successful checks in each of the
+    last 24 clock hours. Measured from this host, so it shows this host's path to the node, not a user's."""
+    start = hour_start(now, st.utc_offset_hours) - (RECENT_HOURS - 1) * 3600
+    values = {}
+    for r in conn.execute("SELECT at, node, transport, latency_ms FROM probe_result "
+                          "WHERE at >= ? AND ok = 1 AND latency_ms IS NOT NULL", (start,)):
+        k = (r["at"] - start) // 3600
+        if k < RECENT_HOURS:
+            values.setdefault((r["node"], r["transport"]), [[] for _ in range(RECENT_HOURS)])[k].append(r["latency_ms"])
+    rows = []
+    for name, transport in targets(nodes):
+        hours = values.get((name, transport)) or [[] for _ in range(RECENT_HOURS)]
+        everything = sorted(v for h in hours for v in h)
+        cells = []
+        for k, hour in enumerate(hours):
+            hour.sort()
+            cells.append({"start": start + k * 3600, "count": len(hour),
+                          "median": hour[len(hour) // 2] if hour else None, "max": hour[-1] if hour else None})
+        rows.append({"node": name, "transport": TRANSPORT_NAMES[transport], "hours": cells,
+                     "median": everything[len(everything) // 2] if everything else None})
+    return rows
 
 
 def publish_document(settings, doc):

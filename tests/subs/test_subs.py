@@ -292,6 +292,24 @@ class ServerTest(unittest.TestCase):
         self.assertEqual([r[0] for r in conn.execute("SELECT fmt FROM hits")], ["page"])
         conn.close()
 
+    def test_status_page_views(self):
+        token = fixtures.TOKENS["alice"]
+        doc = self.status_doc()
+        doc.update(fail_count=3, hours={"start": 1767283200 - 3600, "count": 2},
+                   minutes={"start": 1767283200, "step": 60, "count": 2})
+        doc["nodes"][0].update(hours=[["ok", 60, 60, 0, 0, 0], ["partial", 55, 60, 0, 5, 0]],
+                               minutes=[["ok", [], 2], ["partial", ["XHTTP"], 2]])
+        self.write("status.json", doc)
+        text = self.get(f"/s/{token}/status")[2].decode()
+        self.assertIn("<b>最近 2 小时</b>", text)
+        self.assertIn("检测 60 次，成功 55 次", text)
+        text = self.get(f"/s/{token}/status?view=minute")[2].decode()
+        self.assertIn("<b>最近 2 分钟</b>", text)                     # two rounds in this document
+        self.assertIn("部分失败（XHTTP 失败）", text)
+        self.assertIn("连续 3 次失败才记为故障", text)
+        self.assertIn("<b>最近 2 天</b>", self.get(f"/s/{token}/status?view=day&day=2026-01-02")[2].decode())
+        self.assertIn("<b>最近 2 小时</b>", self.get(f"/s/{token}/status?view=%3Cscript%3E")[2].decode())
+
     def test_invalid_status_document_is_not_served(self):
         for mutate in (lambda d: d["nodes"][0].update(state="<script>"), lambda d: d.update(nodes=[1]),
                        lambda d: d["events"][0].update(transports=[1])):

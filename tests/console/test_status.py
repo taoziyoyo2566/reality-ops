@@ -320,6 +320,51 @@ class DocumentTest(unittest.TestCase):
         for secret in ("example.test", PBK_A, PBK_B, UUIDS["alice"], "/xp/synthetic", "alpha\"", "beta\""):
             self.assertNotIn(secret, text)
 
+    def recent_rounds(self):
+        """Two quiet hours, then an hour with XHTTP on alpha down for 5 checks and one lone Vision failure on beta."""
+        for i in range(-120, 60):
+            self.env.round(T0 + 60 * i, alpha_xhttp=not 10 <= i < 15, beta_vision=i != 30)
+        return self.env.document(T0 + 60 * 59)
+
+    def test_minute_and_hour_views(self):
+        doc = self.recent_rounds()
+        statuspage.validate(doc)
+        alpha, beta = sorted(doc["nodes"], key=lambda n: n["label"])
+        self.assertEqual(doc["minutes"], {"start": T0, "step": 60, "count": 60})
+        self.assertEqual(alpha["minutes"][10], ["partial", ["XHTTP"], 2])
+        self.assertEqual(beta["minutes"][29:31], [["ok", [], 1], ["outage", ["Vision"], 1]])
+        self.assertEqual(doc["hours"], {"start": T0 - 23 * 3600, "count": 24})
+        self.assertEqual(alpha["hours"][-1], ["partial", 55, 60, 0, 5, 0])      # the XHTTP event, 5 minutes
+        self.assertEqual(beta["hours"][-1], ["ok", 59, 60, 0, 0, 0])            # one failed check is no event
+        self.assertEqual(beta["hours"][-2], ["ok", 60, 60, 0, 0, 0])
+        self.assertEqual(beta["hours"][0], ["nodata", 0, 0, 0, 0, 0])
+        self.assertEqual(doc["fail_count"], 3)
+        with self.env.conn() as conn:                                              # short intervals: 120 rounds
+            quick = status.build_document(conn, status_settings(interval=5), self.env.nodes(), T0 + 60 * 59)
+        self.assertEqual((quick["minutes"]["count"], quick["minutes"]["step"]), (120, 5))
+        self.assertIn("<b>最近 10 分钟</b>", statuspage.page(quick, view="minute"))
+
+    def test_minutes_of_a_hidden_node_are_maintenance(self):
+        for i in range(3):
+            self.env.round(T0 + 60 * i)
+        with self.env.conn() as conn:
+            db.set_shown(conn, "beta", False)
+        self.env.round(T0 + 180)
+        beta = next(n for n in self.env.document(T0 + 180)["nodes"] if n["label"] == "beta [tag]")
+        self.assertEqual(beta["minutes"][-1], ["maintenance", [], 0])
+        self.assertEqual(beta["minutes"][-2], ["ok", [], 1])
+
+    def test_latency_by_hour_for_the_admin_page(self):
+        self.recent_rounds()
+        with self.env.conn() as conn:
+            rows = status.latency_hours(conn, self.env.st, self.env.nodes(), T0 + 60 * 59)
+        alpha_xhttp = next(r for r in rows if r["node"] == "alpha" and r["transport"] == "XHTTP")
+        self.assertEqual(len(alpha_xhttp["hours"]), 24)
+        self.assertEqual({k: alpha_xhttp["hours"][-1][k] for k in ("count", "median", "max")},
+                         {"count": 55, "median": 50, "max": 50})               # failed checks have no time
+        self.assertEqual(alpha_xhttp["hours"][0]["count"], 0)
+        self.assertEqual(alpha_xhttp["median"], 50)
+
     def test_current_state(self):
         env = self.env
         for i in range(3):
@@ -361,7 +406,7 @@ class PageTest(unittest.TestCase):
         self.env.close()
 
     def test_page_shows_events_escaped_and_without_scripts(self):
-        text = statuspage.page(self.doc, "2026-01-02", back_href="https://sub.example.test/s/x")
+        text = statuspage.page(self.doc, "2026-01-02", back_href="https://sub.example.test/s/x", view="day")
         self.assertIn("alpha [tag]", text)
         self.assertIn("部分异常", text)
         self.assertIn("XHTTP 链接无法连接，其他链接正常", text)
@@ -371,6 +416,26 @@ class PageTest(unittest.TestCase):
         self.assertIn('http-equiv="refresh"', text)
         self.assertNotIn("<script", text)
         self.assertEqual(text.count("title='"), 2 * 5)   # one cell per node per day
+
+    def test_views(self):
+        hour = statuspage.page(self.doc)                                           # the default
+        self.assertIn("<b>最近 24 小时</b>", hour)
+        self.assertIn("href='?view=minute'>最近 1 小时</a>", hour)
+        self.assertIn("01-02 00:00–01:00 部分异常，部分异常 3 分钟，检测 3 次，成功 0 次", hour)
+        self.assertEqual(hour.count("title='"), 2 * 24)
+        minute = statuspage.page(self.doc, view="minute")
+        self.assertIn("01-02 00:01 部分失败（XHTTP 失败）", minute)
+        self.assertIn("近 60 分钟检测 3 次，成功 0 次", minute)
+        self.assertIn("连续 3 次失败才记为故障", minute)
+        self.assertIn("部分失败", minute)
+        day = statuspage.page(self.doc, "2026-01-02", view="day")
+        self.assertIn("href='?view=hour&amp;day=2026-01-02'>最近 24 小时</a>", day)
+        self.assertIn("近 5 天可用率", day)
+        old = {k: v for k, v in self.doc.items() if k not in ("hours", "minutes")}   # from an older console
+        old["nodes"] = [{k: v for k, v in n.items() if k not in ("hours", "minutes")} for n in old["nodes"]]
+        text = statuspage.page(statuspage.validate(old), view="minute")
+        self.assertNotIn("class='views'", text)
+        self.assertIn("近 5 天可用率", text)
 
     def test_recent_days_without_selection_and_missing_data(self):
         text = statuspage.page(self.doc, "not-a-day")
@@ -392,7 +457,11 @@ class PageTest(unittest.TestCase):
                        lambda d: d.update(nodes=[1]), lambda d: d.update(tz=[]), lambda d: d.update(events={}),
                        lambda d: d["events"][0].update(transports=[1]),
                        lambda d: d["events"][0].update(all_transports="2"),
-                       lambda d: d.update(generated_at=True), lambda d: d.update(days=["2026-02-30"] * 5)):
+                       lambda d: d.update(generated_at=True), lambda d: d.update(days=["2026-02-30"] * 5),
+                       lambda d: d["nodes"][0]["hours"].pop(), lambda d: d["nodes"][0]["hours"][0].append(1),
+                       lambda d: d["nodes"][0]["minutes"][0].__setitem__(1, "XHTTP"),
+                       lambda d: d["minutes"].update(step=0), lambda d: d.update(hours=[]),
+                       lambda d: d.update(fail_count=0), lambda d: d["nodes"][1].pop("minutes")):
             doc = json.loads(json.dumps(self.doc))
             mutate(doc)
             with self.assertRaises(statuspage.StatusError):
@@ -553,8 +622,11 @@ class AdminPageTest(unittest.TestCase):
             self.assertIn("beta [tag]", page)
             self.assertIn("各连接方式最近一次检测", page)
             self.assertIn("status 服务没有按时完成检测", page)   # T0 is long ago
-            self.assertIn("href='/status?day=", page)
+            self.assertIn("href='/status?view=hour&amp;day=", page)
             self.assertIn("<td>Vision</td>", page)
+            self.assertIn("检测耗时（最近 24 小时）", page)
+            self.assertIn("<b>最近 5 天</b>", srv.request("GET", "/status?view=day")[1])
+            self.assertIn("<b>最近 1 小时</b>", srv.request("GET", "/status?view=minute")[1])
             body = urllib.parse.urlencode({"csrf": csrf, "note": "上游线路中断"}).encode()
             code = srv.request("POST", "/incidents/1/note", body,
                                {"Content-Type": "application/x-www-form-urlencoded", "Origin": "http://" + HOST})[0]

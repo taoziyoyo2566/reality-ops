@@ -735,11 +735,12 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
         return back("/nodes")
 
     @app.get("/status", response_class=HTMLResponse)
-    def status_page(request: Request, day: str = ""):
+    def status_page(request: Request, day: str = "", view: str = ""):
         now = db.now()
         with db.connect(settings.db_path) as conn:
             nodes, _, _, _ = view_context(conn)
             doc = stat.build_document(conn, st, nodes, now)
+            latency = stat.latency_hours(conn, st, nodes, now)
             states = stat.load_states(conn)
             last = stat.last_round(conn)
             incidents = stat.incident_rows(conn, now - 30 * 86400)
@@ -747,8 +748,9 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
         for name, transport in stat.targets(nodes):
             state = states.get((name, transport)) or {}
             rows.append({**state, "node": name, "transport": stat.TRANSPORT_NAMES[transport]})
-        body = statuspage.body(doc, day, lambda d: f"/status?day={d}#events")
-        return page(request, "status.html", body=body, status_css=statuspage.CSS, rows=rows, last_round=last,
+        body = statuspage.body(doc, day, lambda v, d: "/status?" + urllib.parse.urlencode(
+            {"view": v, **({"day": d} if d else {})}), view=view)
+        return page(request, "status.html", body=body, status_css=statuspage.CSS, rows=rows, last_round=last, latency=latency,
                     stale=last is None or now - last > 3 * st.interval, incidents=incidents,
                     kinds=statuspage.KINDS, note_max=stat.NOTE_MAX, labels={n: nodes[n].label for n in nodes})
 
