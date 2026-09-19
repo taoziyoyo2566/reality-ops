@@ -37,6 +37,8 @@ services:
       CONSOLE_BOT_ENABLED: {{ bot_on | string | lower | to_json }}
       CONSOLE_SHARING_THRESHOLD: {{ console_sharing_threshold | string | to_json }}
       CONSOLE_XRAY_MEMORY_ALERT_MIB: {{ console_xray_memory_alert_mib | string | to_json }}
+      # 出口页的“立即检测”（plan-egress-console）：经临时 Xray 访问检测地址。
+      CONSOLE_EGRESS_CHECK_URL: {{ console_egress_check_url | to_json }}
 {% for key, value in status_env.items() %}
       {{ key }}: {{ value | to_json }}
 {% endfor %}

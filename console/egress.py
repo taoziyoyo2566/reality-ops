@@ -448,6 +448,16 @@ SPT_CHECK_SECONDS = 600
 USER_AGENT = "reality-console-egress/1"
 
 
+def check_one(xray, url, item):
+    """Check one egress from this host now (the admin's button); the caller records the result as checker "spt".
+
+    One attempt, so a dead egress answers within about 10 s; the admin can simply press again.
+    """
+    tag = outbound_tag(item["id"])
+    return egress_probe.probe(xray, [TYPES[item["type"]].outbound(tag, item["config"])], url, USER_AGENT,
+                              attempts=1)[tag]
+
+
 def check_unassigned(conn, xray, url, registered, new_only=False):
     """Check the enabled egress no enabled assignment on a registered node uses; recorded with checker "spt".
 

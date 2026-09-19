@@ -101,8 +101,9 @@ class ConsoleComposeTest(unittest.TestCase):
         web_env = self.services["web"]["environment"]
         self.assertEqual({k: v for k, v in web_env.items() if k.startswith("STATUS_")},
                          {k: v for k, v in env.items() if k.startswith("STATUS_")})
-        # proxy egress checks (plan-egress-console §3.3): the status service for spt, the report service for nodes
-        for service in ("status", "report"):
+        # proxy egress checks (plan-egress-console §3.3): the status service for spt, the report service for nodes,
+        # the admin pages for the check button
+        for service in ("status", "report", "web"):
             self.assertEqual(self.services[service]["environment"]["CONSOLE_EGRESS_CHECK_URL"],
                              "https://www.cloudflare.com/cdn-cgi/trace")
 

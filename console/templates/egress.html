@@ -9,7 +9,7 @@
 <h2>出口池</h2>
 {% if rows %}
 <table>
-<thead><tr><th>名称</th><th>类型</th><th>地址</th><th>标签</th><th>可用</th><th>出口 IP</th><th class="num">耗时</th><th>检测</th><th>用在</th></tr></thead>
+<thead><tr><th>名称</th><th>类型</th><th>地址</th><th>标签</th><th>可用</th><th>出口 IP</th><th class="num">耗时</th><th>检测</th><th>用在</th><th></th></tr></thead>
 <tbody>
 {% for r in rows %}
 <tr>
@@ -17,16 +17,19 @@
 <td>{{ r.type_label }}</td>
 <td>{{ r.summary }}</td>
 <td>{% for t in r.labels %}<span class="tag">{{ t }}</span>{% endfor %}</td>
-<td>{% if r.check is none %}<span class="muted">未检测</span>{% elif r.check.ok %}<span class="ok">可用</span>{% else %}<span class="bad" title="{{ r.check.error }}">不可用</span>{% endif %}</td>
+<td>{% if r.check is none %}<span class="muted">{{ '等待检测（约一分钟内）' if r.enabled else '停用，不自动检测' }}</span>{% elif r.check.ok %}<span class="ok">可用</span>{% else %}<span class="bad" title="{{ r.check.error }}">不可用</span>{% endif %}</td>
 <td>{% if r.check and r.check.exit_ip %}{{ r.check.exit_ip }}{% if r.check.country %} <span class="muted">{{ r.check.country }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
 <td class="num">{{ (r.check.latency_ms ~ ' ms') if r.check and r.check.latency_ms is not none else '—' }}</td>
 <td>{% if r.check %}{{ r.check.checked_at | time }}<br><span class="muted">{{ '由 ' ~ r.check.checker ~ ' 检测' if r.check.checker != 'spt' else '由 spt 检测（仅供参考）' }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
 <td>{% for n in r.nodes %}<a href="/nodes/{{ n }}#egress">{{ n }}</a>{{ '、' if not loop.last }}{% else %}<span class="muted">未分配</span>{% endfor %}</td>
+<td><form method="post" action="/egress/{{ r.id }}/check" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="back" value="list"><button>立即检测</button></form></td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
-<p class="muted">已分配的出口由用到它的节点每分钟检测；未分配的由 spt 检测：新加或修改后约一分钟内，之后每 10 分钟。在节点页把出口分配给用户、网站或整台节点。</p>
+<p class="muted">已分配的出口由用到它的节点每分钟检测；未分配的由 spt 检测：新加或修改后约一分钟内，之后每 10 分钟。
+“立即检测”马上从 spt 检测一次，可用的几秒内返回，失效的约 10 秒。已分配的出口以节点的检测为准：代理只允许特定来源 IP 连接时，
+spt 上会显示不可用。在节点页把出口分配给用户、网站或整台节点。</p>
 {% else %}
 <p class="muted">出口池是空的。在下面添加，或批量导入。</p>
 {% endif %}

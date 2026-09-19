@@ -683,7 +683,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
 
     # proxy egress (plan-egress-console): the pool and the assignments on a node
     egress_web.register(app, settings, egress_web.Pages(page=page, form=form, refused=refused, back=back, actor=actor,
-                                                        view_context=view_context, today=today))
+                                                        view_context=view_context, today=today), st.xray)
 
     @app.get("/nodes/{name}", response_class=HTMLResponse)
     def node_page(request: Request, name: str, error: str = ""):

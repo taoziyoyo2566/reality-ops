@@ -560,6 +560,25 @@ def check_egress(layout, admin):
            found and page.count('<span class="ok">可用</span>') == 2 and all(ip in page for ip in exit_ips),
            {n: [(c["checker"], c["ok"], c["latency_ms"], c["error"]) for c in rows] for n, rows in (found or {}).items()})
 
+    # the check button: the admin pages check an egress right away (the web service reaches the test servers on the bridge)
+    run(["docker", "network", "connect", "bridge", "console_e2e_web"])
+
+    def spt_check(name):
+        return next((c for c in (state().get("checks") or {}).get(name, []) if c["checker"] == "spt"), {})
+    started = int(time.time())
+    code = admin.post(f"/egress/{pool.get('e2e-b')}/check", back="list")
+    found = spt_check("e2e-b")
+    record("the check button checks an egress right away", code == 303 and found.get("ok") == 1
+           and found.get("checked_at", 0) >= started and found.get("exit_ip"), f"{int(time.time()) - started}s")
+    run(["docker", "pause", SOCKS[1]])
+    started = int(time.time())
+    code = admin.post(f"/egress/{pool.get('e2e-b')}/check", back="list")
+    found = spt_check("e2e-b")
+    record("the check button reports a dead egress within about 10 s", code == 303 and found.get("ok") == 0
+           and found.get("checked_at", 0) >= started, f"{int(time.time()) - started}s {found.get('error')}")
+    run(["docker", "unpause", SOCKS[1]])
+    run(["docker", "network", "disconnect", "bridge", "console_e2e_web"], check=False)
+
     # assign e2e-a to carol on the node, falling back to direct
     admin.post(f"/nodes/{NODE}/egress/new", egress_id=str(pool.get("e2e-a")), users="carol", domains="", ips="",
                network="tcp", on_failure="direct", priority="100")

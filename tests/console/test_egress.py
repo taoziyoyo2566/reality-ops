@@ -269,6 +269,37 @@ class PagesTest(unittest.TestCase):
                                    "egress-delete"])
         self.assertNotIn(SECRET, details)
 
+    def test_check_button(self):
+        answers = []
+        saved = egress_probe.probe
+        egress_probe.probe = lambda xray, outbounds, url, user_agent, attempts=2: (
+            self.assertEqual(attempts, 1) or {o["tag"]: answers.pop(0) for o in outbounds})
+        try:
+            with self.env.conn() as conn:
+                egress_id = egress.save(conn, None, "jp-1", "socks5", {"host": "203.0.113.10", "port": 1080}, [], "")
+            with Server(self.app) as srv:
+                self.assertIn("等待检测（约一分钟内）", srv.request("GET", "/egress")[1])
+                self.assertIn("约一分钟内自动检测", srv.request("GET", f"/egress/{egress_id}")[1])
+                answers.append({"ok": True, "latency_ms": 812, "exit_ip": "198.51.100.7", "country": "JP", "error": ""})
+                status, _, headers = self.post(srv, f"/egress/{egress_id}/check", back="list")
+                notice = urllib.parse.unquote(headers["location"])
+                self.assertEqual((status, notice), (303, "/egress?notice=jp-1：可用，出口 IP 198.51.100.7（JP），耗时 812 ms"))
+                self.assertIn('<span class="ok">可用</span>', srv.request("GET", "/egress")[1])
+                answers.append({"ok": False, "latency_ms": None, "exit_ip": "", "country": "", "error": "timeout"})
+                _, _, headers = self.post(srv, f"/egress/{egress_id}/check")
+                self.assertEqual(urllib.parse.unquote(headers["location"]), f"/egress/{egress_id}?error=jp-1：不可用（timeout）")
+                page = srv.request("GET", headers["location"])[1]
+                self.assertIn("jp-1：不可用（timeout）", page)
+                self.assertNotIn("切换以节点每分钟的检测为准", page)
+                with self.env.conn() as conn:
+                    egress.assign(conn, None, egress_id, "alpha", {}, "direct", "tcp", 100)
+                self.assertIn("切换以节点每分钟的检测为准", srv.request("GET", f"/egress/{egress_id}")[1])
+            with self.env.conn() as conn:
+                self.assertEqual([(c["checker"], c["ok"], c["error"]) for c in egress.checks(conn)[egress_id]],
+                                 [("spt", 0, "timeout")])
+        finally:
+            egress_probe.probe = saved
+
     def test_bulk_import_page(self):
         with Server(self.app) as srv:
             status, _, headers = self.post(srv, "/egress/import", links=f"socks5://u:{SECRET}@203.0.113.30:1080#a\nnope",

@@ -5,10 +5,12 @@ it reaches the nodes lives in egress.py. The node and user pages take their egre
 user_egress.
 """
 import dataclasses
+import threading
 import urllib.parse
 
 from fastapi import Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
+from starlette.concurrency import run_in_threadpool
 
 from . import db, egress, users as users_mod
 
@@ -25,8 +27,9 @@ class Pages:
     today: object                # () -> the day user rules are evaluated for
 
 
-def register(app, settings, pages):
+def register(app, settings, pages, xray):
     page, form, refused, back, actor = pages.page, pages.form, pages.refused, pages.back, pages.actor
+    checking = threading.Lock()      # one check at a time: the temporary Xray listens on fixed local ports
 
     def back_with_error(path, error):
         return back(path.replace("#", "?error=" + urllib.parse.quote(str(error)) + "#", 1) if "#" in path
@@ -88,8 +91,31 @@ def register(app, settings, pages):
             f"；{len(failed)} 行未导入：" + "；".join(f"第 {n} 行 {e}" for n, e in failed[:5]) if failed else "")
         return back("/egress?notice=" + urllib.parse.quote(notice))
 
+    def check_now(item):
+        with checking:
+            return egress.check_one(xray, settings.egress_check_url, item)
+
+    @app.post("/egress/{egress_id}/check")
+    async def egress_check(request: Request, egress_id: int):
+        data = await form(request)
+        if data is None:
+            return refused(request)
+        with db.connect(settings.db_path) as conn:
+            item = egress.get(conn, egress_id)
+        if item is None or item["type"] not in egress.TYPES:
+            return back("/egress")
+        result = await run_in_threadpool(check_now, item)      # up to about 10 s for a dead egress
+        with db.connect(settings.db_path) as conn:
+            egress.record_check(conn, egress_id, "spt", result)
+        path = "/egress" if data.get("back") == "list" else f"/egress/{egress_id}"
+        if not result["ok"]:
+            return back_with_error(path, f"{item['name']}：不可用（{result['error'] or '检测失败'}）")
+        where = result["exit_ip"] + (f"（{result['country']}）" if result["country"] else "")
+        return back(path + "?notice=" + urllib.parse.quote(
+            f"{item['name']}：可用，出口 IP {where or '未知'}，耗时 {result['latency_ms']} ms"))
+
     @app.get("/egress/{egress_id}", response_class=HTMLResponse)
-    def egress_item_page(request: Request, egress_id: int, error: str = ""):
+    def egress_item_page(request: Request, egress_id: int, error: str = "", notice: str = ""):
         with db.connect(settings.db_path) as conn:
             item = egress.get(conn, egress_id)
             if item is None or item["type"] not in egress.TYPES:
@@ -98,7 +124,7 @@ def register(app, settings, pages):
             uses = [dict(a, what=egress.describe_conditions(a["conditions"]))
                     for a in egress.assignments(conn) if a["egress_id"] == egress_id]
         return page(request, "egress_item.html", item=item, kind=egress.TYPES[item["type"]], checks=found, uses=uses,
-                    on_failure=egress.ON_FAILURE, error=error)
+                    on_failure=egress.ON_FAILURE, error=error, notice=notice)
 
     @app.post("/egress/{egress_id}/edit")
     async def egress_edit(request: Request, egress_id: int):
@@ -219,7 +245,7 @@ def node_context(conn, name, day):
 
     def status(egress_id):
         latest = (found.get(egress_id) or [None])[0]
-        return "未检测" if latest is None else ("可用" if latest["ok"] else "不可用")
+        return "等待检测" if latest is None else ("可用" if latest["ok"] else "不可用")
     choices = sorted(({"id": i, "name": e["name"], "status": status(i)} for i, e in items.items() if e["enabled"]),
                      key=lambda c: (c["status"] != "可用", c["name"]))
     return {"egress_rows": rows, "egress_choices": choices, "node_user_names": known,

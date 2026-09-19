@@ -3,6 +3,7 @@
 {% block content %}
 <h1>出口 {{ item.name }} <span class="tag">{{ kind.label }}</span>{% if not item.enabled %} <span class="tag">停用</span>{% endif %}</h1>
 {% if error %}<section><p class="bad">{{ error }}</p></section>{% endif %}
+{% if notice %}<section><p class="ok">{{ notice }}</p></section>{% endif %}
 
 <section>
 <h2>检测</h2>
@@ -18,8 +19,14 @@
 </tbody>
 </table>
 {% else %}
-<p class="muted">还没有检测结果。</p>
+<p class="muted">{{ '还没有检测结果，约一分钟内自动检测。' if item.enabled else '还没有检测结果；停用的出口不自动检测。' }}</p>
 {% endif %}
+<form method="post" action="/egress/{{ item.id }}/check" class="inline">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<button class="primary">立即检测</button>
+</form>
+<span class="muted">马上从 spt 检测一次，可用的几秒内返回，失效的约 10 秒。{% if uses %}这个出口已分配给节点，切换以节点每分钟的检测为准；
+代理只允许特定来源 IP 连接时，spt 上会显示不可用。{% endif %}</span>
 </section>
 
 <section>

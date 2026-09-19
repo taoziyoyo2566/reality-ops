@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 
 PORT = 21000                        # temporary HTTP inbounds on 127.0.0.1, one per egress
-ATTEMPTS = 2                        # one retry: a single lost packet is not a failed egress
+ATTEMPTS = 2                        # scheduled checks retry once: a single lost packet is not a failed egress
 
 
 def parse_exit(text):
@@ -35,7 +35,7 @@ def failed(error):
     return {"ok": False, "latency_ms": None, "exit_ip": "", "country": "", "error": error[:200]}
 
 
-def probe(xray, outbounds, url, user_agent, timeout=10):
+def probe(xray, outbounds, url, user_agent, timeout=10, attempts=ATTEMPTS):
     """{tag: {"ok", "latency_ms", "exit_ip", "country", "error"}} for each Xray outbound."""
     if not outbounds:
         return {}
@@ -59,7 +59,7 @@ def probe(xray, outbounds, url, user_agent, timeout=10):
         while time.monotonic() < deadline and not _port_open(PORT + len(outbounds) - 1):
             time.sleep(0.1)
         for tag, port in ports.items():
-            results[tag] = _check_through(port, url, user_agent, timeout)
+            results[tag] = _check_through(port, url, user_agent, timeout, attempts)
     finally:
         proc.terminate()
         try:
@@ -77,11 +77,11 @@ def _port_open(port):
         return False
 
 
-def _check_through(port, url, user_agent, timeout):
+def _check_through(port, url, user_agent, timeout, attempts):
     proxy = f"http://127.0.0.1:{port}"
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
     error = ""
-    for _ in range(ATTEMPTS):
+    for _ in range(attempts):
         start = time.monotonic()
         try:
             with opener.open(urllib.request.Request(url, headers={"User-Agent": user_agent}), timeout=timeout) as resp:
