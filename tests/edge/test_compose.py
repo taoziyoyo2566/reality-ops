@@ -137,6 +137,14 @@ class ComposeTemplateTest(unittest.TestCase):
         self.assertEqual(GROUP_VARS["edge_sync_enabled"],
                          "{{ edge_user_source == 'console' and (edge_report_enabled | bool) }}")
 
+    def test_tools_image_is_exported_once_for_parallel_nodes(self):
+        tasks = yaml.safe_load((REPO / "roles/xray_edge/tasks/tools_image.yml").read_text())
+        export = next(t for t in tasks if t["name"] == "在控制端导出工具镜像")
+        self.assertTrue(export["run_once"])
+        self.assertEqual(export["delegate_to"], "localhost")
+        block = next(t for t in tasks if t["name"] == "分发工具镜像")["block"]
+        self.assertFalse([t for t in block if "docker_image_export" in str(t) or t.get("delegate_to") == "localhost"])
+
     def test_tools_image_carries_the_nodes_xray(self):
         dockerfile = (REPO / "docker/edge-tools/Dockerfile").read_text()
         self.assertIn(f"FROM {GROUP_VARS['edge_xray_image']} AS xray", dockerfile)

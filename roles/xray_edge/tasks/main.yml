@@ -3,7 +3,7 @@
 # 合同：docs/reviews/data-plane-edge/plan-single-instance-443-2026-09-15.md；
 # compose 形态：docs/reviews/data-plane-edge/plan-edge-compose-2026-09-15.md（节点上只有 Docker + edge_root_dir）。
 
-# edge.yml 已按 edge_nodes 选主机并 serial: 1 逐台执行；这里防止角色被别的 playbook 用在其他主机上。
+# edge.yml 已按 edge_nodes 选主机（先一台试点，再其余同时）；这里防止角色被别的 playbook 用在其他主机上。
 - name: 只允许在 edge_nodes 列出的节点运行
   assert:
     that: inventory_hostname in edge_nodes

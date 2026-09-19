@@ -1,6 +1,6 @@
 # 节点状态页：订阅用户查看各节点当前与历史状态
 
-Status: **DEPLOYED — 2026-09-18 上线，结果见 [Changelog](node-status-page-2026-09-18.changelog.md)；§6.3 的 24 小时观察未完成。**
+Status: **DONE — 2026-09-18 上线，2026-09-19 §6.3 观察通过；结果见 [Changelog](node-status-page-2026-09-18.changelog.md)。**
 
 Created: 2026-09-18 JST
 

@@ -34,6 +34,24 @@
     name: "{{ edge_tools_image }}"
   register: edge_tools_control
 
+# 导出只做一次（每批一次，文件已是该镜像时跳过）：节点同时部署时各自导出到同一文件会互相覆盖。
+- name: 创建控制端导出目录
+  delegate_to: localhost
+  become: false
+  run_once: true
+  file:
+    path: "{{ edge_tools_export_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: 在控制端导出工具镜像
+  delegate_to: localhost
+  become: false
+  run_once: true
+  community.docker.docker_image_export:
+    names: ["{{ edge_tools_image }}"]
+    path: "{{ edge_tools_export_dir }}/{{ edge_tools_image | replace(':', '_') }}.tar"
+
 - name: 记录工具镜像的层摘要
   set_fact:
     edge_tools_image_layers: "{{ edge_tools_control.images[0].RootFS.Layers }}"
@@ -46,21 +64,6 @@
 - name: 分发工具镜像
   when: (edge_tools_node.images | default([]) | map(attribute='RootFS') | map(attribute='Layers') | first | default([])) != edge_tools_image_layers
   block:
-    - name: 创建控制端导出目录
-      delegate_to: localhost
-      become: false
-      file:
-        path: "{{ edge_tools_export_dir }}"
-        state: directory
-        mode: "0700"
-
-    - name: 在控制端导出工具镜像
-      delegate_to: localhost
-      become: false
-      community.docker.docker_image_export:
-        names: ["{{ edge_tools_image }}"]
-        path: "{{ edge_tools_export_dir }}/{{ edge_tools_image | replace(':', '_') }}.tar"
-
     - name: 复制工具镜像到节点
       copy:
         src: "{{ edge_tools_export_dir }}/{{ edge_tools_image | replace(':', '_') }}.tar"

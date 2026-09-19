@@ -124,7 +124,8 @@ class ConsoleComposeTest(unittest.TestCase):
         playbook = yaml.safe_load((REPO / "edge.yml").read_text())[0]
         self.assertEqual(playbook["tasks"][0]["when"], "inventory_hostname in edge_nodes")
         self.assertEqual((playbook["hosts"], playbook["serial"], playbook["gather_facts"]),
-                         ("reality_nodes", 1, False))
+                         ("reality_nodes", [1, "100%"], False))
+        self.assertNotIn("max_fail_percentage", playbook)       # batch 1 (the canary) failing stops the play by default
         dockerfile = (REPO / "docker/console/Dockerfile").read_text()
         self.assertIn(f"FROM {edge['edge_xray_image']} AS xray", dockerfile)
 

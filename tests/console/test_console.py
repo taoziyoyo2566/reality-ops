@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import pathlib
+import re
 import sqlite3
 import stat
 import sys
@@ -418,6 +419,48 @@ class WebAppTest(unittest.TestCase):
             self.assertEqual(self.post(srv, "/users/ghost/issue", csrf=self.csrf)[0], 303)
             self.assertIsNone(self.token("ghost"))      # neither a profile nor a node
             self.assertEqual(srv.request("GET", "/users/ghost")[0], 404)
+
+    def test_nodes_list_toggles_one_or_several(self):
+        with Server(self.app) as srv:
+            page = srv.request("GET", "/nodes")[1]
+            self.assertIn('formaction="/nodes/alpha/show?back_to=list"', page)
+            status, _, headers = self.post(srv, "/nodes/alpha/show?back_to=list", csrf=self.csrf, shown="1")
+            self.assertEqual((status, headers["location"]), (303, "/nodes"))
+            with self.env.conn() as conn:
+                db.set_shown(conn, "alpha", False)
+                before = conn.execute("SELECT COUNT(*) FROM publish_log").fetchone()[0]
+            body = urllib.parse.urlencode({"csrf": self.csrf, "shown": "1", "names": ["alpha", "beta", "ghost"]},
+                                          doseq=True).encode()
+            status, _, headers = srv.request("POST", "/nodes/bulk-show", body,
+                                             {"Content-Type": "application/x-www-form-urlencoded"})
+            self.assertEqual((status, headers["location"]), (303, "/nodes"))
+            with self.env.conn() as conn:
+                self.assertEqual(db.shown_nodes(conn), {"alpha", "beta"})              # ghost has no registration
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM publish_log").fetchone()[0], before + 1)
+                self.assertEqual(conn.execute("SELECT target FROM audit_log WHERE action = 'show' ORDER BY id DESC")
+                                 .fetchone()[0], "alpha,beta")
+            self.assertEqual(sorted(self.env.published()[0]["nodes"]), ["alpha", "beta"])
+            body = urllib.parse.urlencode({"csrf": self.csrf, "shown": "0", "names": ["beta"]}, doseq=True).encode()
+            srv.request("POST", "/nodes/bulk-show", body, {"Content-Type": "application/x-www-form-urlencoded"})
+            self.assertEqual(sorted(self.env.published()[0]["nodes"]), ["alpha"])
+
+    def test_form_tokens_survive_a_restart(self):
+        first = web_app.create_app(self.env.settings, start_watcher=False)
+        with Server(first) as srv:
+            token = re.search(r'name="csrf" value="([0-9a-f]{64})"', srv.request("GET", "/nodes")[1]).group(1)
+        second = web_app.create_app(self.env.settings, start_watcher=False)       # the console restarted
+        with Server(second) as srv:
+            self.assertEqual(self.post(srv, "/nodes/alpha/show?back_to=list", csrf=token, shown="1")[0], 303)
+            status, page, _ = srv.request("POST", "/nodes/alpha/show", b"csrf=" + b"0" * 64, {
+                "Content-Type": "application/x-www-form-urlencoded", "Referer": f"http://{HOST}/nodes/alpha"})
+            self.assertEqual(status, 403)
+            self.assertIn("这个页面已过期，操作没有执行", page)
+            self.assertIn("href='/nodes/alpha'", page)
+            page = srv.request("POST", "/nodes/alpha/show", b"", {
+                "Content-Type": "application/x-www-form-urlencoded", "Referer": "http://evil.example//x"})[1]
+            self.assertIn("href='/'", page)
+        with self.env.conn() as conn:
+            self.assertIn("alpha", db.shown_nodes(conn))
 
     def test_node_toggle_and_pages(self):
         with self.env.conn() as conn:

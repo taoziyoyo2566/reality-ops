@@ -1,12 +1,14 @@
 """Admin pages (plan-console-phase1 §3.2). Published only on the host's 127.0.0.1 and reached through SSH.
 
 There is no login in phase 1, so the app protects itself against the two ways a browser on the admin's machine
-could be turned against it: other Host headers are refused (DNS rebinding) and every form carries a token bound
-to this process (cross-site requests).
+could be turned against it: other Host headers are refused (DNS rebinding) and every form carries a token derived
+from a secret kept in the console database (cross-site requests). The secret survives restarts, so pages opened
+before a deployment keep working.
 """
 import datetime
 import hashlib
 import hmac
+import html
 import io
 import os
 import re
@@ -60,6 +62,16 @@ def make_timefmt(offset_hours, label):
             return "—"
         return datetime.datetime.fromtimestamp(epoch, zone).strftime("%Y-%m-%d %H:%M ") + label
     return fmt
+
+
+def form_secret(db_path):
+    """The secret behind form tokens, created once and kept in the console database."""
+    with db.connect(db_path) as conn:
+        value = db.setting(conn, "form_secret")
+        if value is None:
+            conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('form_secret', ?)", (secrets.token_hex(32),))
+            value = db.setting(conn, "form_secret")
+    return bytes.fromhex(value)
 
 
 def qr_svg(text):
@@ -119,7 +131,8 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     templates = Jinja2Templates(directory=TEMPLATES)
     registry = reg.Registry(settings.registry_dir)
-    secret = csrf_secret or secrets.token_bytes(32)
+    db.init(settings.db_path)
+    secret = csrf_secret or form_secret(settings.db_path)
     csrf = hmac.new(secret, b"console-form", hashlib.sha256).hexdigest()
     timefmt = make_timefmt(float(os.environ.get("CONSOLE_UTC_OFFSET_HOURS", "9")),
                            os.environ.get("CONSOLE_TZ_LABEL", "JST"))
@@ -130,7 +143,6 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     templates.env.globals["status_enabled"] = st.enabled
     templates.env.globals["status_tz"] = st.tz_label
     auth.check_mode(settings.auth_mode)
-    db.init(settings.db_path)
     watcher = Watcher(settings, registry, st)
     if start_watcher:
         threading.Thread(target=watcher.run, daemon=True).start()
@@ -161,8 +173,13 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             return None
         return FormData(data)
 
-    def refused():
-        return PlainTextResponse("form expired; reload the page and try again\n", status_code=403)
+    def refused(request):
+        """A form without a valid token: an old page or a cross-site post. Offer the way back, same-origin only."""
+        path = urllib.parse.urlsplit(request.headers.get("referer", "")).path
+        target = path if path.startswith("/") and not path.startswith("//") else "/"
+        return HTMLResponse(f"<!doctype html><meta charset='utf-8'><title>页面已过期</title>"
+                            f"<p>这个页面已过期，操作没有执行。请<a href='{html.escape(target)}'>返回并刷新页面</a>后再操作。</p>",
+                            status_code=403)
 
     def back(url):
         return RedirectResponse(url, status_code=303)
@@ -357,7 +374,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     async def user_create(request: Request):
         data = await form(request)
         if data is None:
-            return refused()
+            return refused(request)
         name = (data.get("name") or "").strip()
         with db.connect(settings.db_path) as conn:
             nodes, _, _, managed = view_context(conn)
@@ -397,7 +414,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     async def users_bulk_issue(request: Request):
         data = await form(request)
         if data is None:
-            return refused()
+            return refused(request)
         names = [n for n in data.getlist("names") if NAME_RE.match(n)]
         day = today()
         issued = []
@@ -418,7 +435,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
         """Telegram first (plan-user-migration §3): issue where missing, then a binding link for each unbound user."""
         data = await form(request)
         if data is None:
-            return refused()
+            return refused(request)
         names = [n for n in data.getlist("names") if NAME_RE.match(n)]
         day = today()
         issued, linked = [], []
@@ -500,7 +517,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     async def user_edit(request: Request, name: str):
         data = await form(request)
         if data is None:
-            return refused()
+            return refused(request)
         with db.connect(settings.db_path) as conn:
             nodes, _, _, managed = view_context(conn)
             if not managed or not NAME_RE.match(name):
@@ -524,7 +541,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     async def user_status(request: Request, name: str):
         data = await form(request)
         if data is None:
-            return refused()
+            return refused(request)
         status = data.get("status")
         with db.connect(settings.db_path) as conn:
             _, _, _, managed = view_context(conn)
@@ -540,7 +557,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     async def user_delete(request: Request, name: str):
         data = await form(request)
         if data is None:
-            return refused()
+            return refused(request)
         with db.connect(settings.db_path) as conn:
             _, _, _, managed = view_context(conn)
             if not managed or users_mod.get(conn, name) is None:
@@ -558,7 +575,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     async def change_token(request, name, action):
         data = await form(request)
         if data is None:
-            return refused()
+            return refused(request)
         if not NAME_RE.match(name):
             return PlainTextResponse("not found\n", status_code=404)
         day = today()
@@ -597,7 +614,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
         """Binding link and binding of a user's Telegram account (plan-console-phase2 §3.5)."""
         data = await form(request)
         if data is None:
-            return refused()
+            return refused(request)
         with db.connect(settings.db_path) as conn:
             _, _, _, managed = view_context(conn)
             if not managed or not NAME_RE.match(name) or users_mod.get(conn, name) is None:
@@ -673,7 +690,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     async def node_tiers_set(request: Request, name: str):
         data = await form(request)
         if data is None:
-            return refused()
+            return refused(request)
         with db.connect(settings.db_path) as conn:
             nodes, _, _, managed = view_context(conn)
             if not managed or name not in nodes:
@@ -684,21 +701,38 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             db.audit(conn, "node-tiers", name, ",".join(chosen) or "（无）", actor=actor(request))
         return back(f"/nodes/{name}#tiers")
 
+    def set_display(request, names, shown):
+        """Show or hide nodes in the subscription and publish once; only registered nodes can be shown."""
+        nodes, _, _ = registry.current()
+        with db.connect(settings.db_path) as conn:
+            current = db.shown_nodes(conn)
+            changed = [n for n in names if (n in nodes or not shown) and (n in current) != shown]
+            if not changed:
+                return
+            for name in changed:
+                db.set_shown(conn, name, shown)
+            ok, detail = pub.publish(settings, conn, registry, f"{'显示' if shown else '隐藏'} {'、'.join(changed)}")
+            db.audit(conn, "show" if shown else "hide", ",".join(changed), detail if ok else f"发布失败：{detail}",
+                     actor=actor(request))
+
     @app.post("/nodes/{name}/show")
-    async def node_show(request: Request, name: str):
+    async def node_show(request: Request, name: str, back_to: str = ""):
         data = await form(request)
         if data is None:
-            return refused()
-        nodes, _, _ = registry.current()
-        shown = data.get("shown") == "1"
-        if name not in nodes and shown:
+            return refused(request)
+        if not NAME_RE.match(name):
             return back("/nodes")
-        with db.connect(settings.db_path) as conn:
-            db.set_shown(conn, name, shown)
-            ok, detail = pub.publish(settings, conn, registry, f"{'显示' if shown else '隐藏'} {name}")
-            db.audit(conn, "show" if shown else "hide", name, detail if ok else f"发布失败：{detail}",
-                     actor=actor(request))
-        return back(f"/nodes/{name}" if name in nodes else "/nodes")
+        set_display(request, [name], data.get("shown") == "1")
+        nodes, _, _ = registry.current()
+        return back("/nodes" if back_to == "list" or name not in nodes else f"/nodes/{name}")
+
+    @app.post("/nodes/bulk-show")
+    async def nodes_bulk_show(request: Request):
+        data = await form(request)
+        if data is None:
+            return refused(request)
+        set_display(request, [n for n in data.getlist("names") if NAME_RE.match(n)], data.get("shown") == "1")
+        return back("/nodes")
 
     @app.get("/status", response_class=HTMLResponse)
     def status_page(request: Request, day: str = ""):
@@ -722,7 +756,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     async def incident_note(request: Request, incident_id: int):
         data = await form(request)
         if data is None:
-            return refused()
+            return refused(request)
         with db.connect(settings.db_path) as conn:
             ok, note = stat.set_note(conn, incident_id, data.get("note", ""))
             if ok:
@@ -733,7 +767,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
     async def publish_now(request: Request):
         data = await form(request)
         if data is None:
-            return refused()
+            return refused(request)
         with db.connect(settings.db_path) as conn:
             ok, detail = pub.publish(settings, conn, registry, "手动发布")
             db.audit(conn, "publish", "catalog", detail, actor=actor(request))

@@ -524,6 +524,16 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   new nodes in the last 30 days); the home page shows the counts, `/users?stage=` filters, and `POST /users/bulk-bind`
   issues where missing and makes a binding link for each unbound active user (`/users/links`, not stored). The old
   system is not touched by the migration (D-M1).
+- `[实测]` 2026-09-19 slow status probes (> 2 s, 3 days): dzire 56, legend 69, netcup 37, others 0-8; mostly 2-4 s,
+  not clustered at 5 or 10 s. DNS inside the node namespace: 50-80 ms cold, 2-20 ms warm (dzire, legend, usca).
+  TCP connect from spt: dzire ~270 ms, legend ~265, netcup ~170, kagoya ~125, usca and dcc ~30. So the slow probes
+  are the long path from spt plus occasional retransmits, not node DNS. legend and usca resolve through Tailscale
+  (`100.100.100.100`).
+- `[代码]` 2026-09-19 working tree: `edge.yml` runs `serial: [1, "100%"]` (first node alone, then the rest together;
+  a failed first batch stops the play by Ansible's default), and the tools image tar is exported with `run_once`.
+  The console's form secret is kept in `settings.form_secret`, so pages opened before a restart still post; a
+  refused form shows a Chinese page with a same-origin link back. The nodes list shows and hides nodes, one or
+  several at once (`POST /nodes/bulk-show`).
 - `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while

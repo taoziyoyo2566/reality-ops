@@ -2,16 +2,19 @@
 {% block title %}节点{% endblock %}
 {% block content %}
 <h1>节点</h1>
+<form method="post" action="/nodes/bulk-show">
+<input type="hidden" name="csrf" value="{{ csrf }}">
 <section>
 <table>
 <thead><tr>
-<th>节点</th><th>订阅中</th><th>上报</th><th>最后上报</th><th>443</th><th>用户同步</th><th class="num">用户数</th><th class="num">今日</th><th class="num">本月</th>
+<th></th><th>节点</th><th>订阅中</th><th>上报</th><th>最后上报</th><th>443</th><th>用户同步</th><th class="num">用户数</th><th class="num">今日</th><th class="num">本月</th>
 </tr></thead>
 <tbody>
 {% for r in rows %}
 <tr>
+<td><input type="checkbox" name="names" value="{{ r.name }}" aria-label="选择 {{ r.name }}"></td>
 <td>{% if r.node %}<a href="/nodes/{{ r.name }}">{{ r.name }}</a> <span class="muted">{{ r.node.label if r.node.label != r.name }}</span>{% else %}{{ r.name }} <span class="bad">无注册文件</span>{% endif %}</td>
-<td>{% if r.shown %}<span class="ok">显示</span>{% else %}<span class="muted">隐藏</span>{% endif %}</td>
+<td>{% if r.shown %}<span class="ok">显示</span> <button class="small" formaction="/nodes/{{ r.name }}/show?back_to=list" name="shown" value="0">隐藏</button>{% else %}<span class="muted">隐藏</span>{% if r.node %} <button class="small primary" formaction="/nodes/{{ r.name }}/show?back_to=list" name="shown" value="1">显示</button>{% endif %}{% endif %}</td>
 <td>{% if not r.node or not r.node.report_enabled %}<span class="muted">未开启</span>{% elif r.online %}<span class="ok">在线</span>{% elif r.status %}<span class="bad">离线</span>{% else %}<span class="warn">未收到</span>{% endif %}</td>
 <td>{% if r.status %}{{ r.status.received_at | time }}{% else %}<span class="muted">—</span>{% endif %}</td>
 <td>{% if r.status %}{% if r.status.report.listening %}<span class="ok">监听</span>{% else %}<span class="bad">未监听</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
@@ -23,7 +26,10 @@
 {% endfor %}
 </tbody>
 </table>
+<p><button class="primary" name="shown" value="1">在订阅中显示所选</button> <button name="shown" value="0">从订阅中隐藏所选</button>
+<span class="muted">切换后立即重新发布一次，用户刷新订阅后生效；没有注册文件的节点不能显示。</span></p>
 </section>
+</form>
 {% if problems %}
 <section><h2>无法读取的注册文件</h2><ul>{% for p in problems %}<li class="bad">{{ p }}</li>{% endfor %}</ul></section>
 {% endif %}

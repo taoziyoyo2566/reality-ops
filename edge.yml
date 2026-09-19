@@ -1,12 +1,14 @@
 ---
-# 部署与旧 single/multi 并行的 xray_edge 新实例。一次覆盖 edge_nodes 中的全部节点（逐台执行，其余主机跳过、不连接）：
+# 部署与旧 single/multi 并行的 xray_edge 新实例。一次覆盖 edge_nodes 中的全部节点（其余主机跳过、不连接）：
 #   ./monitor_venv/bin/ansible-playbook -i inventory.ini edge.yml -K --vault-password-file ~/.vault_pass
 # 只处理一台时加 --limit dzire。
+# 先部署清单中的第一台作试点，成功后其余节点同时部署（受 ansible.cfg 的 forks 限制）。试点失败时整批失败，
+# Ansible 就此停止，其余节点不动；第二批中个别节点失败不影响其他节点，结束时在 PLAY RECAP 中列出。
 # 合同：docs/reviews/data-plane-edge/plan-single-instance-443-2026-09-15.md
 - hosts: reality_nodes
   gather_facts: false
   become: true
-  serial: 1
+  serial: [1, "100%"]
   tasks:
     - name: 部署新实例（只处理 edge_nodes 中的节点）
       when: inventory_hostname in edge_nodes
