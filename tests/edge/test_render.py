@@ -283,6 +283,44 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(edge.classify(self.live, edge.render(desired(), "OTHER-PLACEHOLDER")), "restart")
 
 
+class ProxyEgressTest(unittest.TestCase):
+    """plan-egress-console: console-managed egress in the configuration, and no restart when only it changes."""
+
+    PROXY = {"runtime": True,
+             "outbounds": [{"tag": "egress-7", "protocol": "socks", "settings": {"address": "192.0.2.9", "port": 1080}}],
+             "rules": [{"ruleTag": "egress-7-a3", "outboundTag": "egress-7", "user": ["bob.node1"], "network": "tcp"}]}
+
+    def test_rendered_before_the_default_rule(self):
+        files = edge.render(desired(proxy_egress=self.PROXY), PRIVATE_KEY)
+        self.assertIn("egress-7", [o["tag"] for o in files["20-outbounds.json"]["outbounds"]])
+        self.assertEqual(files["20-outbounds.json"]["outbounds"][0]["tag"], "direct")        # still the first outbound
+        tags = [r["ruleTag"] for r in files["30-routing.json"]["routing"]["rules"]]
+        self.assertEqual(tags[-2:], ["egress-7-a3", "default"])
+        self.assertEqual(files["30-routing.json"]["routing"]["rules"][-2]["type"], "field")
+
+    def test_rejected(self):
+        cases = (
+            (dict(self.PROXY, outbounds=[dict(self.PROXY["outbounds"][0], tag="direct")]), "must start with egress-"),
+            (dict(self.PROXY, outbounds=[dict(self.PROXY["outbounds"][0], protocol="freedom")]), "unsupported protocol"),
+            (dict(self.PROXY, rules=[dict(self.PROXY["rules"][0], outboundTag="direct")]), "unknown outbound"),
+            (dict(self.PROXY, rules=[dict(self.PROXY["rules"][0], user=["carol.node1"])]), "not on this node"),
+            (dict(self.PROXY, rules=[dict(self.PROXY["rules"][0], inboundTag=["api"])]), "take only"),
+            (dict(self.PROXY, runtime="yes"), "runtime must be a boolean"),
+        )
+        for proxy, fragment in cases:
+            with self.subTest(fragment=fragment), self.assertRaises(edge.ApplyError) as ctx:
+                edge.render(desired(proxy_egress=proxy), PRIVATE_KEY)
+            self.assertIn(fragment, str(ctx.exception))
+
+    def test_only_egress_changed_needs_no_restart_when_the_agent_applies_it(self):
+        live = edge.render(desired(), PRIVATE_KEY)
+        rendered = edge.render(desired(proxy_egress=self.PROXY), PRIVATE_KEY)
+        self.assertEqual(edge.classify(live, rendered, proxy_runtime=True), "api")
+        self.assertEqual(edge.classify(live, rendered, proxy_runtime=False), "restart")
+        other = edge.render(desired(proxy_egress=self.PROXY, log={"level": "info"}), PRIVATE_KEY)
+        self.assertEqual(edge.classify(live, other, proxy_runtime=True), "restart")      # other changes still restart
+
+
 class ReportTokenTest(unittest.TestCase):
     def test_token_is_created_once_rotated_on_request_and_only_read_by_verify(self):
         import tempfile
@@ -316,6 +354,22 @@ class GoldenTest(unittest.TestCase):
             ],
             metrics={"enabled": True},
             probe={"enabled": True, "user": "status-probe", "target": "cp.example.com:80"},
+        ),
+        # proxy egress from the console (plan-egress-console): after the probe rule, before the default rule
+        "step4-proxy-egress": desired(
+            probe={"enabled": True, "user": "status-probe", "target": "cp.example.com:80"},
+            users=[
+                {"name": "alice", "uuid": "11111111-1111-4111-8111-111111111111", "short_id": "a1a1a1a1"},
+                {"name": "status-probe", "uuid": "33333333-3333-4333-8333-333333333333", "short_id": "c3c3c3c3"},
+            ],
+            proxy_egress={"runtime": True, "outbounds": [
+                {"tag": "egress-1", "protocol": "socks",
+                 "settings": {"address": "192.0.2.1", "port": 1080, "user": "u", "pass": "p"}},
+                {"tag": "egress-2", "protocol": "socks", "settings": {"address": "2001:db8::2", "port": 1081}}],
+                "rules": [
+                    {"ruleTag": "egress-1-a1", "outboundTag": "egress-1", "network": "tcp", "user": ["alice.node1"]},
+                    {"ruleTag": "egress-2-a2", "outboundTag": "blocked", "network": "tcp,udp",
+                     "domain": ["geosite:amazon", "domain:example.com"], "ip": ["203.0.113.0/24"]}]},
         ),
     }
 

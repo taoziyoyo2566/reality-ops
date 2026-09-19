@@ -64,6 +64,7 @@ services:
       CONSOLE_PORT: {{ console_report_port | string | to_json }}
       # 用户同步按用户时区判断到期（plan-console-phase2 §3.3），与页面一致
       STATUS_UTC_OFFSET_HOURS: {{ status_utc_offset_hours | string | to_json }}
+      CONSOLE_EGRESS_CHECK_URL: {{ console_egress_check_url | to_json }}
     volumes:
       - {{ (console_registry_dir ~ ':/registry:ro') | to_json }}
       - {{ (console_root_dir ~ '/db:/db') | to_json }}
@@ -82,6 +83,7 @@ services:
     command: ["python", "-m", "console.status"]
     init: true
     environment:
+      CONSOLE_EGRESS_CHECK_URL: {{ console_egress_check_url | to_json }}
 {% for key, value in status_env.items() %}
       {{ key }}: {{ value | to_json }}
 {% endfor %}

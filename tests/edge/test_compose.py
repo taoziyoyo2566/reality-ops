@@ -9,6 +9,7 @@ Run with a Python that has Jinja2 and PyYAML, e.g.: monitor_venv/bin/python test
 """
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -118,16 +119,18 @@ class ComposeTemplateTest(unittest.TestCase):
                          ("usca", "https://report.example.test/report", str(GROUP_VARS["edge_report_interval"])))
         # the xray service itself is unchanged by enabling the reporter
         self.assertEqual(services["xray"], yaml.safe_load(render("usca", USCA_PORTS))["services"]["xray"])
-        self.assertEqual(env["SYNC_ENABLED"], "false")
+        self.assertEqual((env["SYNC_ENABLED"], env["EGRESS_ENABLED"]), ("false", "false"))
 
     def test_agent_user_sync(self):
         services = yaml.safe_load(render("usca", USCA_PORTS, edge_report_enabled=True, edge_sync_enabled=True,
                                          edge_sync_url="https://report.example.test/sync", edge_xhttp_enabled=True,
-                                         edge_status_probe_enabled=True, status_probe_user="status-probe"))["services"]
+                                         edge_status_probe_enabled=True, status_probe_user="status-probe",
+                                         edge_egress_runtime=True))["services"]
         agent = services["reporter"]
         env = agent["environment"]
         self.assertEqual((env["SYNC_ENABLED"], env["SYNC_URL"], env["SYNC_INTERVAL"], env["SYNC_KEEP"], env["XHTTP_ENABLED"]),
                          ("true", "https://report.example.test/sync", "60", "status-probe", "true"))
+        self.assertEqual(env["EGRESS_ENABLED"], "true")
         # still no Docker socket, no configuration files, read-only and unprivileged
         self.assertNotIn("docker.sock", " ".join(agent["volumes"]))
         self.assertNotIn("conf.d", " ".join(agent["volumes"]))
@@ -136,6 +139,8 @@ class ComposeTemplateTest(unittest.TestCase):
         self.assertEqual(GROUP_VARS["edge_sync_url"], "https://{{ console_report_host }}/sync")
         self.assertEqual(GROUP_VARS["edge_sync_enabled"],
                          "{{ edge_user_source == 'console' and (edge_report_enabled | bool) }}")
+        self.assertEqual((GROUP_VARS["edge_egress_source"], GROUP_VARS["edge_egress_runtime"]),
+                         ("console", "{{ edge_egress_source == 'console' and (edge_sync_enabled | bool) }}"))
 
     def test_tools_image_is_exported_once_for_parallel_nodes(self):
         tasks = yaml.safe_load((REPO / "roles/xray_edge/tasks/tools_image.yml").read_text())
@@ -144,6 +149,19 @@ class ComposeTemplateTest(unittest.TestCase):
         self.assertEqual(export["delegate_to"], "localhost")
         block = next(t for t in tasks if t["name"] == "分发工具镜像")["block"]
         self.assertFalse([t for t in block if "docker_image_export" in str(t) or t.get("delegate_to") == "localhost"])
+
+    def test_tools_image_tag_covers_every_file_it_copies(self):
+        # a file copied into the image but left out of the tag's hash would never reach nodes that have the tag
+        copied = {line.split()[1] for line in (REPO / "docker/edge-tools/Dockerfile").read_text().splitlines()
+                  if line.startswith("COPY ") and "--from=" not in line}
+        allowed = {line[1:] for line in (REPO / "docker/edge-tools/Dockerfile.dockerignore").read_text().splitlines()
+                   if line.startswith("!")}
+        tasks = yaml.safe_load((REPO / "roles/xray_edge/tasks/tools_image.yml").read_text())
+        tag = next(t for t in tasks if "set_fact" in t and "edge_tools_image" in t["set_fact"])["set_fact"]["edge_tools_image"]
+        hashed = set(re.findall(r"edge_repo_dir ~ '/([^']+)'", tag))
+        self.assertIn("console/egress_probe.py", copied)
+        self.assertEqual(copied, allowed)
+        self.assertEqual(hashed, copied | {"docker/edge-tools/Dockerfile", "docker/edge-tools/Dockerfile.dockerignore"})
 
     def test_tools_image_carries_the_nodes_xray(self):
         dockerfile = (REPO / "docker/edge-tools/Dockerfile").read_text()

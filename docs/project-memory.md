@@ -558,6 +558,25 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   connection opened (`app/stats/online_map.go`); the agent therefore counts every listed address. The agent
   also sends `xray api statssys` (Alloc, Sys, NumGoroutine, Uptime) with each report; on 2026-09-19 usca and
   dzire used 45 and 19 MB (Sys) against the 300m container limit.
+- `[代码]` 2026-09-19 working tree, console-managed egress phase 1 ([`plan-egress-console`](reviews/console/plan-egress-console-2026-09-19.md)):
+  `console/egress.py` holds a type registry (SOCKS5 only) and a condition registry (users, domains, IP ranges; none =
+  whole node); proxies, credentials and assignments exist only as rows (`egress`, `egress_assignment`, `egress_check`,
+  `egress_node`). The admin routes are in `console/egress_web.py` (registered by `web_app` with its shared helpers),
+  the node side in `docker/edge-tools/edge_egress.py` (the agent passes in its Xray API call, error type and log),
+  and the check itself in `console/egress_probe.py` (standard library only), which the tools image copies next to the
+  agent; `tests/edge/test_compose.py` checks that every file the tools image copies is in its tag's hash. `/sync` sends a node its own egress (outbounds + assignments, hashed version) only when its agent
+  reports `egress_applied` and has not applied that version; `console.admin node-users` adds `proxy_egress`, so
+  `edge.yml` writes the same egress into the config with `runtime` true, and egress-only changes then need no restart.
+  The agent (`EGRESS_ENABLED` from `edge_egress_runtime`) checks each egress every sync through a temporary
+  `xray run -c stdin:` with one 127.0.0.1:21000+ HTTP inbound per egress (2 attempts); a failed egress drops its rules
+  (direct) or points them at `blocked`, and is used again after 2 good checks. It keeps switching with the last list
+  while the console is unreachable. Order of runtime changes: `rmrules <ours> default`, `rmo` stale, `ado`,
+  `adrules -append` (ours + default) — `adrules` without `-append` replaces the whole routing table. The status service
+  on spt checks unassigned egress every 10 minutes and new or changed ones every round. `edge_egress_source: files`
+  goes back to the `socks5.yml` profiles and turns the agent's egress off.
+- `[实测]` 2026-09-19 local spike with the pinned Xray: a runtime rule sent one user through a SOCKS outbound while
+  another stayed direct; pointing it at `blocked` cut that user off; removing it returned to direct; an Xray restart
+  dropped the runtime rules (the agent puts them back at the next sync).
 - `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while

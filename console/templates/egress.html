@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}出口{% endblock %}
+{% block content %}
+<h1>出口</h1>
+{% if error %}<section><p class="bad">{{ error }}</p></section>{% endif %}
+{% if notice %}<section><p class="ok">{{ notice }}</p></section>{% endif %}
+
+<section>
+<h2>出口池</h2>
+{% if rows %}
+<table>
+<thead><tr><th>名称</th><th>类型</th><th>地址</th><th>标签</th><th>可用</th><th>出口 IP</th><th class="num">耗时</th><th>检测</th><th>用在</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr>
+<td><a href="/egress/{{ r.id }}">{{ r.name }}</a>{% if not r.enabled %} <span class="muted">（停用）</span>{% endif %}{% if r.note %}<br><span class="muted">{{ r.note }}</span>{% endif %}</td>
+<td>{{ r.type_label }}</td>
+<td>{{ r.summary }}</td>
+<td>{% for t in r.labels %}<span class="tag">{{ t }}</span>{% endfor %}</td>
+<td>{% if r.check is none %}<span class="muted">未检测</span>{% elif r.check.ok %}<span class="ok">可用</span>{% else %}<span class="bad" title="{{ r.check.error }}">不可用</span>{% endif %}</td>
+<td>{% if r.check and r.check.exit_ip %}{{ r.check.exit_ip }}{% if r.check.country %} <span class="muted">{{ r.check.country }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+<td class="num">{{ (r.check.latency_ms ~ ' ms') if r.check and r.check.latency_ms is not none else '—' }}</td>
+<td>{% if r.check %}{{ r.check.checked_at | time }}<br><span class="muted">{{ '由 ' ~ r.check.checker ~ ' 检测' if r.check.checker != 'spt' else '由 spt 检测（仅供参考）' }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+<td>{% for n in r.nodes %}<a href="/nodes/{{ n }}#egress">{{ n }}</a>{{ '、' if not loop.last }}{% else %}<span class="muted">未分配</span>{% endfor %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+<p class="muted">已分配的出口由用到它的节点每分钟检测；未分配的由 spt 检测：新加或修改后约一分钟内，之后每 10 分钟。在节点页把出口分配给用户、网站或整台节点。</p>
+{% else %}
+<p class="muted">出口池是空的。在下面添加，或批量导入。</p>
+{% endif %}
+</section>
+
+<section id="new">
+<h2>添加出口</h2>
+{% for key, kind in types.items() %}
+<form method="post" action="/egress/new">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="type" value="{{ key }}">
+<p><strong>{{ kind.label }}</strong></p>
+<p><label>名称 <input type="text" name="name" required maxlength="48" placeholder="例如 jp-isp-1"></label></p>
+{% for f in kind.fields %}
+<p><label>{{ f.label }}{% if not f.required %} <span class="muted">（可空）</span>{% endif %}
+<input type="{{ 'password' if f.kind == 'secret' else 'text' }}" name="f_{{ f.name }}" placeholder="{{ f.placeholder }}" {{ 'required' if f.required }} autocomplete="off"></label></p>
+{% endfor %}
+<p><label>标签 <input type="text" name="labels" placeholder="用空格分隔，例如 japan isp"></label>
+<label>备注 <input type="text" name="note" maxlength="200"></label></p>
+<p><button class="primary">添加</button></p>
+</form>
+{% endfor %}
+</section>
+
+<section id="import">
+<h2>批量导入</h2>
+<form method="post" action="/egress/import">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<textarea name="links" rows="5" placeholder="每行一个，例如&#10;socks5://账号:密码@203.0.113.10:1080#jp-isp-1&#10;socks5://203.0.113.11:1080#jp-isp-2"></textarea>
+<p><label>标签 <input type="text" name="labels" placeholder="用空格分隔"></label> <button>导入</button></p>
+</form>
+<p class="muted">名称取自 # 后面的部分，没有时自动生成。账号密码只保存在控制台数据库，页面不回显。</p>
+</section>
+{% endblock %}

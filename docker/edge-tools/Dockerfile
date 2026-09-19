@@ -16,6 +16,9 @@ RUN apk add --no-cache logrotate docker-cli \
 COPY roles/xray_edge/files/xray_edge_apply.py /usr/local/bin/xray_edge_apply.py
 COPY docker/edge-tools/logrotate-loop.sh /usr/local/bin/logrotate-loop
 COPY docker/edge-tools/edge_reporter.py /usr/local/bin/edge-reporter
+# 出口检测与切换（plan-egress-console）；检测代码与控制台共用同一个文件。
+COPY docker/edge-tools/edge_egress.py /usr/local/bin/edge_egress.py
+COPY console/egress_probe.py /usr/local/bin/egress_probe.py
 RUN chmod 0755 /usr/local/bin/xray_edge_apply.py /usr/local/bin/logrotate-loop /usr/local/bin/edge-reporter
 
 LABEL org.opencontainers.image.title="reality-edge-tools"

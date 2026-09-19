@@ -42,6 +42,12 @@ SOCKS_NETWORKS = ("", "tcp", "udp", "tcp,udp")
 # destination the client asks for. Domain rules would not do: with routeOnly sniffing a client could send an IP
 # destination with the allowed name in SNI or Host and be relayed to that IP.
 PROBE_TAG = "probe"
+# Proxy egress managed in the console (plan-egress-console): outbounds and rules carry this prefix, so the node agent
+# can change exactly these at runtime and a difference in them alone needs no restart.
+PROXY_PREFIX = "egress-"
+PROXY_TAG_RE = re.compile(r"^egress-[A-Za-z0-9_-]{1,60}$")
+PROXY_PROTOCOLS = ("socks", "http", "shadowsocks", "vless", "trojan", "wireguard")
+PROXY_RULE_KEYS = {"type", "ruleTag", "outboundTag", "user", "domain", "ip", "network"}
 # Xray-docs sockopt.md / RFC 8305 recommended values; tryDelayMs 0 would disable racing.
 HAPPY_EYEBALLS = {"tryDelayMs": 250, "prioritizeIPv6": False, "interleave": 1, "maxConcurrentTry": 4}
 
@@ -149,6 +155,28 @@ def validate(desired):
     egress = desired.get("egress", {})
     _require(isinstance(egress, dict) and isinstance(egress.get("happy_eyeballs", False), bool),
              "egress.happy_eyeballs must be a boolean")
+
+    proxy = desired.get("proxy_egress", {})
+    _require(isinstance(proxy, dict) and isinstance(proxy.get("runtime", False), bool), "proxy_egress.runtime must be a boolean")
+    proxy_tags = set()
+    for outbound in proxy.get("outbounds", []):
+        _require(isinstance(outbound, dict) and isinstance(outbound.get("tag"), str) and PROXY_TAG_RE.match(outbound["tag"]),
+                 "proxy_egress outbound tags must start with egress-")
+        _require(outbound["tag"] not in proxy_tags, f"duplicate proxy_egress outbound {outbound['tag']}")
+        _require(outbound.get("protocol") in PROXY_PROTOCOLS and isinstance(outbound.get("settings"), dict),
+                 f"proxy_egress outbound {outbound['tag']} has an unsupported protocol or no settings")
+        proxy_tags.add(outbound["tag"])
+    emails = {f"{name}.{desired['node']}" for name in seen_names}
+    for rule in proxy.get("rules", []):
+        _require(isinstance(rule, dict) and set(rule) <= PROXY_RULE_KEYS, "proxy_egress rules take only user, domain, ip, network")
+        _require(isinstance(rule.get("ruleTag"), str) and PROXY_TAG_RE.match(rule["ruleTag"]),
+                 "proxy_egress rule tags must start with egress-")
+        _require(rule.get("outboundTag") in proxy_tags | {"blocked"}, f"proxy_egress rule {rule['ruleTag']} has an unknown outbound")
+        for key in ("user", "domain", "ip"):
+            if key in rule:
+                _str_list(rule[key], f"proxy_egress rule {rule['ruleTag']} {key}")
+        _require(not set(rule.get("user", [])) - emails, f"proxy_egress rule {rule['ruleTag']} routes users not on this node")
+        _require(rule.get("network", "tcp") in ("tcp", "udp", "tcp,udp"), f"proxy_egress rule {rule['ruleTag']} network")
 
     level = (desired.get("log") or {}).get("level", "warning")
     _require(level in ("debug", "info", "warning", "error", "none"), "log.level is invalid")
@@ -280,6 +308,9 @@ def render(desired, private_key):
         if profile.get("network"):
             rule["network"] = profile["network"]
         rules.append(rule)
+    proxy = desired.get("proxy_egress") or {}
+    outbounds.extend(copy.deepcopy(proxy.get("outbounds", [])))
+    rules.extend(dict(copy.deepcopy(rule), type="field") for rule in proxy.get("rules", []))
     # Explicit last rule: outbound ordering across merged files no longer decides the default exit.
     rules.append({"type": "field", "ruleTag": "default", "network": "tcp,udp", "outboundTag": "direct"})
 
@@ -315,13 +346,26 @@ def _without_clients(files):
     return stripped
 
 
-def classify(live, rendered):
-    """'none', 'api' (only users differ) or 'restart'."""
+def _without_proxy_egress(files):
+    """The files without the console-managed proxy egress, which the node agent applies at runtime."""
+    stripped = copy.deepcopy(files)
+    outbounds = (stripped.get("20-outbounds.json") or {}).get("outbounds")
+    if isinstance(outbounds, list):
+        outbounds[:] = [o for o in outbounds if not str(o.get("tag", "")).startswith(PROXY_PREFIX)]
+    rules = ((stripped.get("30-routing.json") or {}).get("routing") or {}).get("rules")
+    if isinstance(rules, list):
+        rules[:] = [r for r in rules if not str(r.get("ruleTag", "")).startswith(PROXY_PREFIX)]
+    return stripped
+
+
+def classify(live, rendered, proxy_runtime=False):
+    """'none', 'api' (only users differ, or only runtime-managed proxy egress) or 'restart'."""
     if live == rendered:
         return "none"
     if not live or set(live) != set(rendered):
         return "restart"
-    if _without_clients(live) != _without_clients(rendered):
+    strip = (lambda f: _without_proxy_egress(_without_clients(f))) if proxy_runtime else _without_clients
+    if strip(live) != strip(rendered):
         return "restart"
     # REALITY shortIds cannot be changed through the API: a new short id needs a restart,
     # while ids left over from removed users are harmless until the next restart.
@@ -561,7 +605,7 @@ def cmd_apply(args):
     report_digest = node.report_token_digest(rotate=args.rotate_report_token)
     rendered = render(desired, private_key)
     live = node.read_live()
-    action = classify(live, rendered)
+    action = classify(live, rendered, bool((desired.get("proxy_egress") or {}).get("runtime")))
     result = {"changed": action != "none" or args.rotate_report_token, "action": action, "public_key": public_key,
               "report_token_sha256": report_digest,
               "users": len(desired["users"]), "xhttp": desired["xhttp"]["enabled"]}

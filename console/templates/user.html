@@ -118,7 +118,7 @@
 <h2>节点</h2>
 {% if node_rows %}
 <table>
-<thead><tr><th>节点</th><th>显示名</th><th>订阅中</th><th>XHTTP</th><th>部署</th><th class="num">本月流量 {{ month }}</th></tr></thead>
+<thead><tr><th>节点</th><th>显示名</th><th>订阅中</th><th>XHTTP</th><th>部署</th><th>出口</th><th class="num">本月流量 {{ month }}</th></tr></thead>
 <tbody>
 {% for n in node_rows %}
 <tr>
@@ -127,6 +127,7 @@
 <td>{% if n.shown %}<span class="ok">显示</span>{% else %}<span class="muted">隐藏</span>{% endif %}</td>
 <td>{{ '开' if n.xhttp else '—' }}</td>
 <td>{% if n.allowed and n.deployed %}<span class="ok">已在节点上</span>{% elif n.allowed %}<span class="warn">待加入</span>{% else %}<span class="warn">待移除</span>{% endif %}</td>
+<td>{% if n.egress %}{{ n.egress | join('、') }}{% else %}<span class="muted">直连</span>{% endif %}</td>
 <td class="num">{{ (n.traffic.up + n.traffic.down) | bytes }}</td>
 </tr>
 {% endfor %}

@@ -84,6 +84,10 @@ edge_console_exec: "docker compose -f {{ console_root_dir }}/compose.yaml exec -
 edge_sync_enabled: "{{ edge_user_source == 'console' and (edge_report_enabled | bool) }}"
 edge_sync_url: "https://{{ console_report_host }}/sync"
 edge_sync_interval: 60
+# 出口来源（plan-egress-console）：console 为控制台的出口池（需要控制台用户来源），开启同步的节点由 agent 检测并在运行中切换；
+# files 为 socks5.yml 的 profile（回滚用），agent 不再改运行中的出口。
+edge_egress_source: "console"
+edge_egress_runtime: "{{ edge_egress_source == 'console' and (edge_sync_enabled | bool) }}"
 
 # 测试订阅链接写到控制端此目录（不在仓库内；目录 0700、文件 0600）。
 edge_subs_dir: "{{ lookup('env', 'HOME') }}/.local/share/reality-ops/edge-subs"

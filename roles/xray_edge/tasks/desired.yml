@@ -24,6 +24,11 @@
         edge_users: "{{ (edge_console_users.stdout_lines | last | from_json).users }}"
         # 共用 short_id 预先写入配置，使 agent 经 API 新增的用户无需重启即可连接（D-P2-5）。
         edge_extra_short_ids: "{{ (edge_console_users.stdout_lines | last | from_json).short_ids | default([]) }}"
+        # 出口池（plan-egress-console）：部署时写进配置；之后的改动与健康切换由 agent 在运行中完成。
+        edge_proxy_egress: >-
+          {{ (((edge_console_users.stdout_lines | last | from_json).proxy_egress | default({'outbounds': [], 'rules': []}))
+              if edge_egress_source == 'console' else {'outbounds': [], 'rules': []})
+             | combine({'runtime': edge_egress_runtime | bool}) }}
 
 - name: 组装新实例用户（ACL 结果 + 额外测试用户；导入控制台之前的做法）
   when: edge_user_source == 'files'
@@ -75,13 +80,14 @@
       {{ edge_users + ([{'name': status_probe_user, 'uuid': status_probe_uuid, 'short_id': status_probe_short_id}]
                        if (edge_status_probe_enabled | bool) else []) }}
 
+# 用户与出口都来自控制台时（plan-egress-console），socks5.yml 的 profile 不再用于新系统；edge_egress_source: files 时仍用它。
 - name: 计算本节点生效的 SOCKS5 profile（与旧模板相同的 D12 单一门控）
   no_log: true
   set_fact:
     edge_socks5: >-
       {%- set out = [] -%}
       {%- set module = socks5_egress | default({}) -%}
-      {%- if module.enabled | default(false) | bool -%}
+      {%- if (module.enabled | default(false) | bool) and not (edge_user_source == 'console' and edge_egress_source == 'console') -%}
         {%- set names = edge_users | map(attribute='name') | list -%}
         {%- for p in (module.profiles | default({})) | dict2items -%}
           {%- set prof = p.value -%}

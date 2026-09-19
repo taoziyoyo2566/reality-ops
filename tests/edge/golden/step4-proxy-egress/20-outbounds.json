@@ -1,0 +1,39 @@
+{
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "settings": {},
+      "tag": "direct"
+    },
+    {
+      "protocol": "blackhole",
+      "settings": {},
+      "tag": "blocked"
+    },
+    {
+      "protocol": "freedom",
+      "settings": {
+        "redirect": "cp.example.com:80"
+      },
+      "tag": "probe"
+    },
+    {
+      "protocol": "socks",
+      "settings": {
+        "address": "192.0.2.1",
+        "pass": "p",
+        "port": 1080,
+        "user": "u"
+      },
+      "tag": "egress-1"
+    },
+    {
+      "protocol": "socks",
+      "settings": {
+        "address": "2001:db8::2",
+        "port": 1081
+      },
+      "tag": "egress-2"
+    }
+  ]
+}

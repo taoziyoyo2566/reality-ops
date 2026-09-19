@@ -36,6 +36,7 @@
 {% endfor %}
   ],
   "egress": {"happy_eyeballs": {{ edge_happy_eyeballs_enabled | bool | to_json }}},
+  "proxy_egress": {{ edge_proxy_egress | default({}) | to_json }},
   "metrics": {"enabled": {{ edge_report_enabled | bool | to_json }}},
   "probe": {
     "enabled": {{ edge_status_probe_enabled | bool | to_json }},

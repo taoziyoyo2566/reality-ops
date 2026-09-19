@@ -10,13 +10,25 @@ import hmac
 import importlib.util
 import json
 import pathlib
+import sys
 import time
 import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("edge_reporter", REPO / "docker/edge-tools/edge_reporter.py")
-rep = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(rep)
+
+
+def load(name, path):
+    """The tools image puts the agent and its modules side by side; load them under the same names."""
+    spec = importlib.util.spec_from_file_location(name, REPO / path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+egress_probe = load("egress_probe", "console/egress_probe.py")
+edge_egress = load("edge_egress", "docker/edge-tools/edge_egress.py")
+rep = load("edge_reporter", "docker/edge-tools/edge_reporter.py")
 
 U = {n: f"{i:08d}-1111-4111-8111-111111111111" for i, n in enumerate(["alice", "bob", "carol", "dave", "erin",
                                                                         "frank", "gina", "hank", "status-probe"])}
@@ -35,6 +47,9 @@ class FakeXray:
         self.calls = []
         self.fail = None
         self.online = {}                                                        # email -> {ip: last seen}
+        self.outbounds = ["direct", "blocked", "api"]                           # routing state for proxy egress
+        self.rules = ["api", "block-bt", "block-private", "default"]
+        self.egress_configs = {}
 
     def api(self, cfg, command, *args, stdin=None):
         self.calls.append((command, args, json.loads(stdin) if stdin else None))
@@ -50,6 +65,27 @@ class FakeXray:
             tag = args[0].split("=", 1)[1]
             for email in args[1:]:
                 self.inbounds[tag].pop(email, None)
+            return ""
+        if command == "lsrules":
+            return json.dumps({"rules": [{"ruleTag": t} for t in self.rules]})
+        if command == "lso":
+            return json.dumps({"outbounds": [{"tag": t} for t in self.outbounds]})
+        if command == "rmrules":
+            self.rules = [t for t in self.rules if t not in args]
+            return ""
+        if command == "rmo":
+            self.outbounds = [t for t in self.outbounds if t not in args]
+            return ""
+        if command == "ado":
+            for outbound in json.loads(stdin)["outbounds"]:
+                self.outbounds.append(outbound["tag"])
+                self.egress_configs[outbound["tag"]] = outbound
+            return ""
+        if command == "adrules":
+            assert "-append" in args, "replacing the whole routing table would drop the base rules"
+            for rule in json.loads(stdin)["routing"]["rules"]:
+                self.rules.append(rule["ruleTag"])
+                self.egress_configs[rule["ruleTag"]] = rule
             return ""
         if command == "statsgetallonlineusers":
             return json.dumps({"users": [f"user>>>{e}>>>online" for e in self.online]} if self.online else {})
@@ -204,6 +240,140 @@ class TickTest(unittest.TestCase):
         self.xray.inbounds.pop(rep.XHTTP_TAG)
         self.assertTrue(rep.Sync(cfg).tick("tok"))
         self.assertEqual(self.xray.names(rep.REALITY_TAG)[:3], ["alice", "carol", "status-probe"])
+
+
+class EgressSwitchTest(unittest.TestCase):
+    """The agent's egress switch (EGRESS_ENABLED) and switching while the console cannot be reached."""
+
+    def setUp(self):
+        self.cfg = rep.config_from_env({"REPORT_URL": "x", "REPORT_NODE": "n1", "SYNC_ENABLED": "true",
+                                        "SYNC_URL": "http://console/sync", "LISTEN_PORT": "443"})
+        self.xray = FakeXray("n1", {rep.REALITY_TAG: emails("n1", ["alice", "bob"])})
+        self.console = FakeConsole([user("alice"), user("bob")])
+        self.ok = True
+        self._api, self._post, self._probe = rep.xray_api, rep.post_json, egress_probe.probe
+        rep.xray_api, rep.post_json = self.xray.api, self.console.post
+        egress_probe.probe = lambda xray, outbounds, url, user_agent: {
+            o["tag"]: {"ok": self.ok, "latency_ms": None, "exit_ip": "", "country": "", "error": "" if self.ok else "timeout"}
+            for o in outbounds}
+
+    def tearDown(self):
+        rep.xray_api, rep.post_json, egress_probe.probe = self._api, self._post, self._probe
+
+    def test_off_unless_enabled(self):
+        sync = rep.Sync(self.cfg)
+        self.assertIsNone(sync.egress)
+        self.assertTrue(sync.tick("tok"))
+        self.assertNotIn("egress_applied", self.console.requests[0])           # the console then sends no egress
+        self.assertEqual(self.xray.rules, ["api", "block-bt", "block-private", "default"])
+
+    def test_a_failed_egress_falls_back_while_the_console_is_unreachable(self):
+        sync = rep.Sync(dict(self.cfg, egress_enabled=True))
+        sync.egress.update({"egress": EgressTest.PAYLOAD, "egress_version": "0123456789abcdef",
+                            "egress_check_url": "https://check.example.test/"})
+        sync.tick("tok")
+        self.assertEqual(self.xray.rules[-3:], ["egress-7-a3", "egress-7-a4", "default"])
+        self.assertIn("egress_applied", self.console.requests[0])
+        self.console.status, self.ok = 502, False
+        sync.tick("tok")
+        self.assertIn("HTTP 502", sync.error)
+        self.assertEqual(self.xray.rules[-2:], ["egress-7-a4", "default"])
+        self.assertEqual(self.xray.egress_configs["egress-7-a4"]["outboundTag"], "blocked")
+
+
+class EgressTest(unittest.TestCase):
+    """Proxy egress (plan-egress-console §3.3-3.4): runtime rules in order, fallback or block, recovery."""
+
+    PAYLOAD = {"outbounds": [{"tag": "egress-7", "protocol": "socks", "settings": {"address": "192.0.2.9", "port": 1080}}],
+               "assignments": [
+                   {"id": 3, "outbound": "egress-7", "rule": {"network": "tcp", "user": ["bob.n1"]}, "on_failure": "direct"},
+                   {"id": 4, "outbound": "egress-7", "rule": {"network": "tcp", "domain": ["geosite:amazon"]},
+                    "on_failure": "block"}]}
+
+    def setUp(self):
+        self.xray = FakeXray("n1", {rep.REALITY_TAG: {}})
+        self._probe = egress_probe.probe
+        self.ok = True
+        egress_probe.probe = lambda xray, outbounds, url, user_agent: {
+            o["tag"]: {"ok": self.ok, "latency_ms": 5 if self.ok else None, "exit_ip": "198.51.100.4" if self.ok else "",
+                       "country": "JP", "error": "" if self.ok else "timeout"} for o in outbounds}
+        self.egress = self.make()
+        self.egress.update({"egress": self.PAYLOAD, "egress_version": "0123456789abcdef",
+                            "egress_check_url": "https://check.example.test/"})
+
+    def tearDown(self):
+        egress_probe.probe = self._probe
+
+    def make(self):
+        cfg = {"xray_bin": "xray", "xray_api": "127.0.0.1:10085", "node": "n1"}
+        return edge_egress.Egress("xray", lambda *args, stdin=None: self.xray.api(cfg, *args, stdin=stdin), rep.SyncError,
+                                  lambda message: None)
+
+    def cycle(self):
+        self.egress.check()
+        return self.egress.apply()
+
+    def test_rules_go_before_the_default_rule(self):
+        self.assertTrue(self.cycle())
+        self.assertEqual(self.xray.rules, ["api", "block-bt", "block-private", "egress-7-a3", "egress-7-a4", "default"])
+        self.assertEqual(self.xray.egress_configs["egress-7-a3"]["outboundTag"], "egress-7")
+        self.assertIn("egress-7", self.xray.outbounds)
+        self.assertEqual(self.egress.report(), {"egress_applied": "0123456789abcdef",
+                                                "egress_states": {"3": "active", "4": "active"},
+                                                "egress_checks": {"7": {"ok": True, "latency_ms": 5, "exit_ip": "198.51.100.4",
+                                                                        "country": "JP", "error": ""}}})
+        self.assertFalse(self.cycle())                                   # nothing changed: nothing touched
+
+    def test_failure_falls_back_or_blocks_and_recovery_needs_two_checks(self):
+        self.cycle()
+        self.ok = False
+        self.assertTrue(self.cycle())
+        self.assertEqual(self.xray.rules[-2:], ["egress-7-a4", "default"])        # a3 falls back: its rule is gone
+        self.assertEqual(self.xray.egress_configs["egress-7-a4"]["outboundTag"], "blocked")
+        self.assertEqual(self.egress.report()["egress_states"], {"3": "direct", "4": "blocked"})
+        self.ok = True
+        self.assertFalse(self.cycle())                                   # one good check is not enough
+        self.assertTrue(self.cycle())
+        self.assertEqual(self.egress.report()["egress_states"], {"3": "active", "4": "active"})
+
+    def test_an_xray_restart_is_repaired(self):
+        self.cycle()
+        self.xray.rules = ["api", "block-bt", "block-private", "default"]         # back to the configuration files
+        self.xray.outbounds = ["direct", "blocked", "api"]
+        self.assertTrue(self.cycle())
+        self.assertEqual(self.xray.rules[3:], ["egress-7-a3", "egress-7-a4", "default"])
+
+    def test_an_empty_payload_removes_what_it_added(self):
+        self.cycle()
+        self.egress.update({"egress": {"outbounds": [], "assignments": []}, "egress_version": "fedcba9876543210"})
+        self.assertTrue(self.cycle())
+        self.assertEqual(self.xray.rules, ["api", "block-bt", "block-private", "default"])
+        self.assertNotIn("egress-7", self.xray.outbounds)
+
+    def test_a_failed_apply_keeps_the_default_rule(self):
+        self.xray.fail = "ado"
+        self.assertFalse(self.cycle())
+        self.assertEqual(self.xray.rules, ["api", "block-bt", "block-private", "default"])   # no rule to a missing outbound
+        self.assertIsNone(self.egress.report()["egress_applied"])
+
+    def test_nothing_is_touched_without_a_payload(self):
+        idle = self.make()
+        self.assertFalse(idle.apply())
+        self.assertEqual(self.xray.calls, [])
+
+
+class ProbeTest(unittest.TestCase):
+    def test_exit_from_trace_or_json(self):
+        self.assertEqual(egress_probe.parse_exit("fl=1\nip=198.51.100.4\nloc=JP\n"), ("198.51.100.4", "JP"))
+        self.assertEqual(egress_probe.parse_exit('{"ip": "2001:db8::1", "country_iso": "DE"}'), ("2001:db8::1", "DE"))
+        self.assertEqual(egress_probe.parse_exit("<html>"), ("", ""))
+
+    def test_every_egress_fails_without_xray(self):
+        outbounds = [{"tag": "egress-1", "protocol": "socks", "settings": {}},
+                     {"tag": "egress-2", "protocol": "socks", "settings": {}}]
+        found = egress_probe.probe("/nonexistent/xray", outbounds, "https://check.example.test/", "test/1")
+        self.assertEqual({t: (r["ok"], r["error"]) for t, r in found.items()},
+                         {"egress-1": (False, "xray: FileNotFoundError"), "egress-2": (False, "xray: FileNotFoundError")})
 
 
 if __name__ == "__main__":

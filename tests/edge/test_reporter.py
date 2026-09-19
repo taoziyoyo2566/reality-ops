@@ -8,15 +8,27 @@ import importlib.util
 import json
 import os
 import pathlib
+import sys
 import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-SPEC = importlib.util.spec_from_file_location("edge_reporter", REPO / "docker/edge-tools/edge_reporter.py")
-rep = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(rep)
+
+
+def load(name, path):
+    """The tools image puts the agent and its modules side by side; load them under the same names."""
+    spec = importlib.util.spec_from_file_location(name, REPO / path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+load("egress_probe", "console/egress_probe.py")
+load("edge_egress", "docker/edge-tools/edge_egress.py")
+rep = load("edge_reporter", "docker/edge-tools/edge_reporter.py")
 
 
 def metrics(users):

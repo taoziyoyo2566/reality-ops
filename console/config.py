@@ -19,6 +19,7 @@ class Settings:
     bot_enabled: bool = False
     sharing_threshold: int = 3
     xray_memory_alert_mib: int = 240
+    egress_check_url: str = "https://www.cloudflare.com/cdn-cgi/trace"
 
 
 def from_env(env=None):
@@ -40,6 +41,7 @@ def from_env(env=None):
         bot_enabled=env.get("CONSOLE_BOT_ENABLED", "false").lower() == "true",
         sharing_threshold=int(env.get("CONSOLE_SHARING_THRESHOLD", "3")),
         xray_memory_alert_mib=int(env.get("CONSOLE_XRAY_MEMORY_ALERT_MIB", "240")),
+        egress_check_url=env.get("CONSOLE_EGRESS_CHECK_URL", "https://www.cloudflare.com/cdn-cgi/trace"),
     )
 
 

@@ -10,6 +10,10 @@ revokes the subscription. The status service probes the node through Vision and 
 the check breaks XHTTP only (partial), stops Xray (outage), hides the node (maintenance) and cuts the status
 service's network (no data). The Telegram bot runs against a fake Bot API (tests/console/fake_telegram.py) on the
 console's egress network: binding with a link from the admin page, /sub, /reset, and admin permissions.
+Proxy egress (plan-egress-console §6) uses two test SOCKS5 servers, one with an account: added in the admin pages,
+checked by the status service, assigned to one user on the node, paused to see the fallback to direct and the block
+mode, and unassigned; Xray must not restart. Both SOCKS servers leave through this host like the node, so which way
+traffic went is read from the SOCKS servers' access logs, not from the exit IP.
 
 Needs Docker with Compose and outbound HTTP/HTTPS. Run with a Python that has Jinja2 and PyYAML:
   monitor_venv/bin/python tests/console/e2e_local.py [--keep]
@@ -76,6 +80,13 @@ XHTTP_PATH = "/xp-e2e"
 TELEGRAM = "console_e2e_telegram"
 BOT_TOKEN = "123456:e2e-fake-bot-token-value"
 BOT_ADMIN, BOT_USER = 1001, 2002
+SOCKS = ("console-e2e-socks-a", "console-e2e-socks-b")
+USER_HOST = "speed.cloudflare.com"          # the users' traffic; the egress checks use CHECK_URL's host
+USER_URL = f"https://{USER_HOST}/__down?bytes=1000"
+EGRESS = ("import json; from console import config, db, egress; s = config.from_env();\n"
+          "with db.connect(s.db_path) as c: print(json.dumps({'pool': {e['name']: i for i, e in egress.pool(c).items()},"
+          " 'checks': {egress.get(c, i)['name']: rows for i, rows in egress.checks(c).items()},"
+          " 'assignments': egress.assignments(c), 'nodes': egress.node_states(c)}))")
 
 results = []
 
@@ -186,7 +197,7 @@ class Layout:
         text = edge_compose.render(NODE, [], edge_root_dir=self.node, edge_container_name=SRV,
                                    edge_compose_project=EDGE_PROJECT, edge_tools_image=TOOLS, edge_xray_image=IMAGE,
                                    edge_report_enabled=True, edge_report_url=report_url,
-                                   edge_report_interval=INTERVAL, edge_sync_enabled=sync,
+                                   edge_report_interval=INTERVAL, edge_sync_enabled=sync, edge_egress_runtime=sync,
                                    edge_sync_url=report_url.replace("/report", "/sync"), edge_sync_interval=INTERVAL,
                                    edge_xhttp_enabled=True, edge_status_probe_enabled=True,
                                    status_probe_user=PROBE["name"])
@@ -229,7 +240,9 @@ class Layout:
         for where in (self.node, self.console, self.subs):
             if os.path.exists(os.path.join(where, "compose.yaml")):
                 self.compose(where, "--profile", "tools", "down", "--remove-orphans", check=False)
-        run(["docker", "rm", "-f", CLI, SRV, f"{SRV}_logrotate", f"{SRV}_reporter", TELEGRAM], check=False)
+        run(["docker", "rm", "-f", CLI, SRV, f"{SRV}_logrotate", f"{SRV}_reporter", TELEGRAM, *SOCKS], check=False)
+        # the fake Bot API was still attached when compose went down, so the console's network is left behind
+        run(["docker", "network", "rm", f"{CONSOLE_PROJECT}_egress"], check=False)
         self.as_root("rm -rf ./* ./.[!.]*", check=False)
 
 
@@ -478,6 +491,140 @@ def check_sync(layout, admin, server_ip, public_key, report_url):
     record("the node page shows the sync as done", status == 200 and "已同步" in page)
 
 
+def check_egress(layout, admin):
+    """plan-egress-console §6 item 1: proxy egress from the console pool, applied by the agent without a restart."""
+    password = base64.b32encode(os.urandom(10)).decode().lower()
+    ips = []
+    for name, accounts in zip(SOCKS, ([{"user": "e2e", "pass": password}], [])):
+        path = os.path.join(layout.root, f"{name}.json")
+        inbound = {"listen": "0.0.0.0", "port": 1080, "protocol": "socks", "settings": {"udp": True}}
+        if accounts:
+            inbound["settings"].update(auth="password", accounts=accounts)
+        with open(path, "w") as fh:
+            json.dump({"log": {"loglevel": "info", "access": ""}, "inbounds": [inbound],
+                       "outbounds": [{"protocol": "freedom"}]}, fh)
+        os.chmod(path, 0o644)
+        run(["docker", "rm", "-f", name], check=False)
+        run(["docker", "run", "-d", "--name", name, "-v", f"{path}:/config.json:ro", IMAGE])
+        ips.append(wait_for(lambda: ip_of(name), 10))
+    socks_a = SOCKS[0]
+
+    def hits(name=socks_a):
+        return sum(1 for line in run(["docker", "logs", name], check=False).stdout.splitlines()
+                   if "accepted" in line and f":{USER_HOST}:" in line)
+
+    def state():
+        return layout.console_query(EGRESS) or {}
+
+    def rules():
+        out = run(["docker", "exec", SRV, "xray", "api", "lsrules", "-s", "127.0.0.1:10085"], check=False).stdout
+        try:
+            return [r.get("ruleTag", "") for r in json.loads(out).get("rules") or []]
+        except ValueError:
+            return []
+
+    def via(user_link):
+        start_client(layout, user_link)
+        before = hits()
+        code = run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "20",
+                    "-x", f"socks5h://127.0.0.1:{layout.client_port}", USER_URL], check=False).stdout.strip()
+        time.sleep(1)
+        return code, hits() - before
+
+    def link_of(user):
+        if not admin.token(user):
+            admin.post(f"/users/{user}/issue")
+        # after the Xray restart above, the node is back in a user's subscription once the agent reports the user again
+        return (wait_for(lambda: subscription(layout.subs_port, admin.token(user))[1], 90, 3) or [None])[0]
+
+    started_at = inspect(SRV, "{{.State.StartedAt}}")
+    carol, bob = link_of("carol"), link_of("bob")
+    record("the test users have links", carol and bob, {"carol": bool(carol), "bob": bool(bob)})
+    if not (carol and bob):
+        return
+
+    # the pool: one egress added in the page (with an account), one imported
+    admin.post("/egress/new", type="socks5", name="e2e-a", f_host=ips[0], f_port="1080", f_username="e2e",
+               f_password=password, labels="e2e")
+    admin.post("/egress/import", links=f"socks5://{ips[1]}:1080#e2e-b", labels="e2e")
+    pool = state().get("pool") or {}
+    record("two egress are in the pool", sorted(pool) == ["e2e-a", "e2e-b"], sorted(pool))
+
+    def checked():
+        found = state().get("checks") or {}
+        return found if all(any(c["ok"] and c["exit_ip"] for c in found.get(n, [])) for n in ("e2e-a", "e2e-b")) else None
+    found = wait_for(checked, INTERVAL * 12, 2)
+    page = admin.get("/egress")[1]
+    exit_ips = sorted({c["exit_ip"] for rows in (found or {}).values() for c in rows})
+    record("the status service checks new egress: the page shows both available with their exit IP",
+           found and page.count('<span class="ok">可用</span>') == 2 and all(ip in page for ip in exit_ips),
+           {n: [(c["checker"], c["ok"], c["latency_ms"], c["error"]) for c in rows] for n, rows in (found or {}).items()})
+
+    # assign e2e-a to carol on the node, falling back to direct
+    admin.post(f"/nodes/{NODE}/egress/new", egress_id=str(pool.get("e2e-a")), users="carol", domains="", ips="",
+               network="tcp", on_failure="direct", priority="100")
+    assignment = next((a["id"] for a in state().get("assignments") or []), None)
+    tag = f"egress-{pool.get('e2e-a')}-a{assignment}"
+    started = time.time()
+    placed = wait_for(lambda: tag in rules(), INTERVAL * 12, 2)
+    record("the node applies the assignment at runtime", placed, f"{time.time() - started:.0f}s {rules()}")
+    record("carol goes out through the egress", via(carol) == ("200", 1))
+    record("bob still goes out directly", via(bob) == ("200", 0))
+    start_client(layout, carol)
+
+    def node_state(expected):
+        return lambda: ((state().get("nodes") or {}).get(NODE) or {}).get("states", {}).get(str(assignment)) == expected
+    record("the node checks its egress and reports it in use",
+           wait_for(lambda: any(c["checker"] == NODE and c["ok"] for c in (state().get("checks") or {}).get("e2e-a", [])),
+                    INTERVAL * 8, 2) and wait_for(node_state("active"), INTERVAL * 4, 2))
+    record("the node page shows the assignment in use", "经出口" in admin.get(f"/nodes/{NODE}")[1])
+
+    # fallback to direct while the egress is down, back when it recovers
+    run(["docker", "pause", socks_a])
+    started = time.time()
+    fell_back = wait_for(lambda: tag not in rules() and node_state("direct")(), 120, 3)
+    record("a failed egress falls back to direct", fell_back and via(carol) == ("200", 0),
+           f"{time.time() - started:.0f}s {rules()}")
+    record("the home page warns about the failed egress", "已回退直连" in admin.get("/")[1])
+    run(["docker", "unpause", socks_a])
+    started = time.time()
+    record("the egress is used again after it recovers",
+           wait_for(lambda: tag in rules(), 120, 3) and via(carol) == ("200", 1), f"{time.time() - started:.0f}s")
+
+    # block mode: the same assignment, blocking when the egress fails
+    admin.post(f"/nodes/{NODE}/egress/{assignment}/delete")
+    admin.post(f"/nodes/{NODE}/egress/new", egress_id=str(pool.get("e2e-a")), users="carol", domains="", ips="",
+               network="tcp", on_failure="block", priority="100")
+    assignment = next((a["id"] for a in state().get("assignments") or []), None)
+    tag = f"egress-{pool.get('e2e-a')}-a{assignment}"
+    wait_for(lambda: tag in rules(), INTERVAL * 12, 2)
+    run(["docker", "pause", socks_a])
+    started = time.time()
+    blocked = wait_for(node_state("blocked"), 120, 3)
+    record("in block mode a failed egress cuts carol off", blocked and via(carol)[0] != "200",
+           f"{time.time() - started:.0f}s")
+    record("bob is not affected", via(bob) == ("200", 0))
+    run(["docker", "unpause", socks_a])
+    record("carol is back through the egress after it recovers",
+           wait_for(node_state("active"), 120, 3) and via(carol) == ("200", 1))
+
+    # unassign: direct again, the outbound gone
+    admin.post(f"/nodes/{NODE}/egress/{assignment}/delete")
+    gone = wait_for(lambda: not any(t.startswith("egress-") for t in rules()), INTERVAL * 12, 2)
+    outbounds = run(["docker", "exec", SRV, "xray", "api", "lso", "-s", "127.0.0.1:10085"], check=False).stdout
+    record("unassigning returns carol to direct and removes the outbound",
+           gone and via(carol) == ("200", 0) and "egress-" not in outbounds, rules())
+    record("Xray was not restarted for any of it", inspect(SRV, "{{.State.StartedAt}}") == started_at)
+    pages = "".join(admin.get(p)[1] for p in ("/egress", f"/egress/{pool.get('e2e-a')}", f"/nodes/{NODE}", "/audit"))
+    logs = "".join(run(["docker", "logs", n], check=False).stdout + run(["docker", "logs", n], check=False).stderr
+                   for n in (f"{SRV}_reporter", SRV)) + layout.compose(layout.console, "logs", check=False).stdout
+    record("the egress password is in no page or log", password not in pages and password not in logs)
+    usage = run(["docker", "stats", "--no-stream", "--format", "{{.MemUsage}} pids {{.PIDs}}", f"{SRV}_reporter"],
+                check=False).stdout.strip()
+    record("reporter memory and processes after the egress checks", bool(usage), usage)
+    run(["docker", "rm", "-f", *SOCKS], check=False)
+
+
 def check_bot(layout, admin):
     """plan-console-phase2 §6.1 item 1 and §6.2 item 4, locally: the bot container against a fake Bot API."""
     control = f"http://127.0.0.1:{layout.telegram_port}/control"
@@ -697,6 +844,7 @@ def main():
                and subscription(layout.subs_port, new_token)[0] == 200)
         check_status(layout, admin, new_token, server_ip, public_key, out.get("report_token_sha256"), published)
         check_sync(layout, admin, server_ip, public_key, report_url)
+        check_egress(layout, admin)
         check_bot(layout, admin)
 
         admin.post("/users/alice/revoke", confirm="alice")

@@ -18,7 +18,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import config, db, publish as pub, registry as reg
+from . import config, db, egress, publish as pub, registry as reg
 
 SCHEMA = 1
 TRANSPORTS = ("vision", "xhttp")
@@ -625,12 +625,24 @@ def main(argv=None):
     prober = Prober(settings, st)
     signal.signal(signal.SIGTERM, lambda *_: (prober.client.stop(), sys.exit(0)))
     print(f"status: probing every {st.interval}s", flush=True)
+    last_egress = 0
     while True:
         at = int(time.time()) // st.interval * st.interval
         try:
             prober.run_round(at)
         except Exception as exc:  # one bad round must not stop the service; the log says why
             print(f"status: round failed: {type(exc).__name__}: {exc}", flush=True)
+        # proxy egress no node uses (plan-egress-console §3.3): all of them every 10 minutes, new or changed ones
+        # every round; the nodes check their own
+        full = time.time() - last_egress >= egress.SPT_CHECK_SECONDS
+        if full:
+            last_egress = time.time()
+        try:
+            with db.connect(settings.db_path) as conn:
+                egress.check_unassigned(conn, st.xray, settings.egress_check_url, set(prober.registry.current()[0]),
+                                        new_only=not full)
+        except Exception as exc:  # the status page must keep running whatever a proxy does
+            print(f"status: egress check failed: {type(exc).__name__}", flush=True)
         time.sleep(max(1.0, at + st.interval - time.time()))
 
 

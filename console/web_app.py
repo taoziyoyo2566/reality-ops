@@ -25,7 +25,8 @@ from fastapi.templating import Jinja2Templates
 
 from subs import statuspage
 
-from . import auth, bot as bot_mod, config, db, publish as pub, queries, registry as reg, sharing, status as stat, users as users_mod
+from . import auth, bot as bot_mod, config, db, egress as egress_mod, egress_web, publish as pub, queries, registry as reg, \
+    sharing, status as stat, users as users_mod
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 TEMPLATES = os.path.join(os.path.dirname(__file__), "templates")
@@ -274,6 +275,7 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                                 + user_alerts(conn, nodes, users, managed)
                                 + stat.alerts(conn, st, nodes, db.now())
                                 + sharing.alerts(conn, settings.sharing_threshold, db.now())
+                                + egress_mod.alerts(conn, db.now(), set(nodes))
                                 + (bot_mod.alerts(conn, db.now()) if settings.bot_enabled else [])),
                         user_count=len(users), issued=len(db.tokens(conn)),
                         node_count=len(nodes), shown=len(db.shown_nodes(conn) & set(nodes)),
@@ -506,13 +508,14 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             bot = bot_mod.state(conn)
             link = users_mod.bind_link(conn, name) if managed and record else None
             online_days = sharing.daily_peaks(conn, name, db.now(), 7, st.utc_offset_hours)
+            user_egress = egress_web.user_egress(conn, name) if managed and record else {}
             online_peak = sharing.peaks(conn, db.now() - 86400).get(name, 0)
         url = subscription_url(token["token"]) if token else None
         bind_url = f"https://t.me/{bot['username']}?start={link['code']}" if link and bot["username"] else None
         names = sorted(nodes) if usable is not None else sorted(n for n, node in nodes.items() if name in node.users)
         node_rows = [{"name": n, "label": nodes[n].label, "shown": n in shown, "xhttp": nodes[n].xhttp["enabled"],
                       "deployed": name in nodes[n].users, "allowed": usable is None or n in usable,
-                      "traffic": per_node.get(n, {"up": 0, "down": 0})}
+                      "traffic": per_node.get(n, {"up": 0, "down": 0}), "egress": user_egress.get(n, [])}
                      for n in names if usable is None or n in usable or name in nodes[n].users]
         return page(request, "user.html", name=name, record=record, known=name in users, managed=managed,
                     state=user_state(record, day) if name in users else "unknown", token=token, url=url,
@@ -678,8 +681,12 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
                          "today": day_traffic.get(name, {"up": 0, "down": 0}), "month": month.get(name, {"up": 0, "down": 0})})
         return page(request, "nodes.html", rows=rows, problems=problems)
 
+    # proxy egress (plan-egress-console): the pool and the assignments on a node
+    egress_web.register(app, settings, egress_web.Pages(page=page, form=form, refused=refused, back=back, actor=actor,
+                                                        view_context=view_context, today=today))
+
     @app.get("/nodes/{name}", response_class=HTMLResponse)
-    def node_page(request: Request, name: str):
+    def node_page(request: Request, name: str, error: str = ""):
         with db.connect(settings.db_path) as conn:
             nodes, _, _, managed = view_context(conn)
             if name not in nodes:
@@ -692,7 +699,9 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             diff = users_mod.differences(conn, {name: nodes[name]}, today()).get(name) if managed else None
             wanted = len(users_mod.node_users(conn, name, today())) if managed else None
             sync_row = users_mod.sync_rows(conn).get(name)
+            egress_context = egress_web.node_context(conn, name, today()) if managed else {}
             return page(request, "node.html", name=name, node=nodes[name], shown=name in db.shown_nodes(conn),
+                        error=error, **egress_context,
                         incidents=incidents, managed=managed, tier_rules=tier_rules, node_tier=node_tier, diff=diff,
                         wanted=wanted, sync_row=sync_row, sync=sync_state(nodes[name], sync_row, db.now()),
                         status=queries.node_status(conn).get(name), per_user=per_user, month=month,

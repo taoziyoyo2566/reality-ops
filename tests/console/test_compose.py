@@ -99,7 +99,12 @@ class ConsoleComposeTest(unittest.TestCase):
         self.assertEqual(env["STATUS_CHECK_URL"], "http://cp.cloudflare.com/generate_204")
         # the admin pages read the same settings
         web_env = self.services["web"]["environment"]
-        self.assertEqual({k: v for k, v in web_env.items() if k.startswith("STATUS_")}, env)
+        self.assertEqual({k: v for k, v in web_env.items() if k.startswith("STATUS_")},
+                         {k: v for k, v in env.items() if k.startswith("STATUS_")})
+        # proxy egress checks (plan-egress-console §3.3): the status service for spt, the report service for nodes
+        for service in ("status", "report"):
+            self.assertEqual(self.services[service]["environment"]["CONSOLE_EGRESS_CHECK_URL"],
+                             "https://www.cloudflare.com/cdn-cgi/trace")
 
     def test_status_can_be_turned_off(self):
         services = yaml.safe_load(render(status_enabled=False))["services"]

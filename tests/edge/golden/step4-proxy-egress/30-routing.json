@@ -1,0 +1,67 @@
+{
+  "routing": {
+    "domainStrategy": "IPOnDemand",
+    "rules": [
+      {
+        "inboundTag": [
+          "api"
+        ],
+        "outboundTag": "api",
+        "ruleTag": "api",
+        "type": "field"
+      },
+      {
+        "outboundTag": "blocked",
+        "protocol": [
+          "bittorrent"
+        ],
+        "ruleTag": "block-bt",
+        "type": "field"
+      },
+      {
+        "ip": [
+          "geoip:private"
+        ],
+        "outboundTag": "blocked",
+        "ruleTag": "block-private",
+        "type": "field"
+      },
+      {
+        "outboundTag": "probe",
+        "ruleTag": "probe",
+        "type": "field",
+        "user": [
+          "status-probe.node1"
+        ]
+      },
+      {
+        "network": "tcp",
+        "outboundTag": "egress-1",
+        "ruleTag": "egress-1-a1",
+        "type": "field",
+        "user": [
+          "alice.node1"
+        ]
+      },
+      {
+        "domain": [
+          "geosite:amazon",
+          "domain:example.com"
+        ],
+        "ip": [
+          "203.0.113.0/24"
+        ],
+        "network": "tcp,udp",
+        "outboundTag": "blocked",
+        "ruleTag": "egress-2-a2",
+        "type": "field"
+      },
+      {
+        "network": "tcp,udp",
+        "outboundTag": "direct",
+        "ruleTag": "default",
+        "type": "field"
+      }
+    ]
+  }
+}

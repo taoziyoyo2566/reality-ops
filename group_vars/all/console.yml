@@ -36,6 +36,8 @@ console_bot_api_url: "https://api.telegram.org"
 console_sharing_threshold: 3
 # 节点 Xray 占用内存（statssys 的 Sys）达到此值（MiB）时首页提醒；edge_memory_limit 默认 300m，取其 80%。
 console_xray_memory_alert_mib: 240
+# 出口检测地址（plan-egress-console §3.3）：经出口访问它，取回出口 IP 与国家；可换成返回 {"ip", "country"} 的自建服务。
+console_egress_check_url: "https://www.cloudflare.com/cdn-cgi/trace"
 
 console_memory_limit: "128m"
 console_docker_log_max_size: "10m"

@@ -80,6 +80,8 @@ services:
       SYNC_INTERVAL: {{ edge_sync_interval | int | string | to_json }}
       SYNC_KEEP: {{ ([status_probe_user] if (edge_status_probe_enabled | bool) else []) | join(',') | to_json }}
       XHTTP_ENABLED: {{ (edge_xhttp_enabled | bool) | string | lower | to_json }}
+      # 出口（plan-egress-console）：检测控制台分配给本节点的出口，经 Xray API 在运行中切换。
+      EGRESS_ENABLED: {{ (edge_egress_runtime | bool) | string | lower | to_json }}
     volumes:
       - {{ (edge_root_dir ~ '/logs:/var/log/xray:ro') | to_json }}
       - {{ (edge_root_dir ~ '/secrets:/run/report:ro') | to_json }}

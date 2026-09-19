@@ -59,6 +59,22 @@ CREATE TABLE IF NOT EXISTS online_seen (
     user TEXT NOT NULL, slot INTEGER NOT NULL, family INTEGER NOT NULL, token TEXT NOT NULL,
     PRIMARY KEY (user, slot, family, token));
 CREATE INDEX IF NOT EXISTS online_seen_slot ON online_seen (slot);
+-- Proxy egress (plan-egress-console): the pool, assignments to nodes, checks, and what each node's agent applied.
+CREATE TABLE IF NOT EXISTS egress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, type TEXT NOT NULL, config TEXT NOT NULL,
+    labels TEXT NOT NULL DEFAULT '[]', note TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS egress_assignment (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, egress_id INTEGER NOT NULL, node TEXT NOT NULL,
+    conditions TEXT NOT NULL DEFAULT '{}', on_failure TEXT NOT NULL DEFAULT 'direct', network TEXT NOT NULL DEFAULT 'tcp',
+    priority INTEGER NOT NULL DEFAULT 100, enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS egress_check (
+    egress_id INTEGER NOT NULL, checker TEXT NOT NULL, ok INTEGER NOT NULL, latency_ms INTEGER, exit_ip TEXT NOT NULL DEFAULT '',
+    country TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', checked_at INTEGER NOT NULL,
+    PRIMARY KEY (egress_id, checker));
+CREATE TABLE IF NOT EXISTS egress_node (
+    node TEXT PRIMARY KEY, applied TEXT, states TEXT NOT NULL DEFAULT '{}', checked_at INTEGER NOT NULL);
 -- Telegram bot (plan-console-phase2 §3.5): one unexpired one-time binding code per user.
 CREATE TABLE IF NOT EXISTS bot_links (
     user TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);

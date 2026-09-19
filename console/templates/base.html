@@ -55,6 +55,7 @@ pre{white-space:pre-wrap;word-break:break-all;font-size:12px;margin:0}
 <a href="/" class="{{ 'on' if nav == 'home' }}">首页</a>
 <a href="/users" class="{{ 'on' if nav in ('users', 'user') }}">用户</a>
 <a href="/nodes" class="{{ 'on' if nav in ('nodes', 'node') }}">节点</a>
+<a href="/egress" class="{{ 'on' if nav in ('egress', 'egress_item') }}">出口</a>
 <a href="/status" class="{{ 'on' if nav == 'status' }}">状态</a>
 <a href="/traffic" class="{{ 'on' if nav == 'traffic' }}">流量</a>
 <a href="/audit" class="{{ 'on' if nav == 'audit' }}">记录</a>

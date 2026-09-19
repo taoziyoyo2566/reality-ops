@@ -298,6 +298,17 @@ canary 期间不改 `generate_subs_gist.py`、Gist 与 `/opt/reality/users`。`e
   可能落后于运行中的用户，Xray 重启后由 agent 在一分钟内补齐。
 - **2026-09-19 · `edge.yml` 先一台试点、再其余同时部署。** 起因：逐台部署 11 台约 15 分钟，操作者要求并行。改动：`serial: [1, "100%"]`——清单中第一台单独成批，成功后其余节点同时执行；试点失败即整批失败，Ansible 停止，其余节点不动；第二批中个别节点失败不影响其他节点。工具镜像的控制端导出改为 `run_once`（并行时各节点写同一文件会互相覆盖）。`[实测]` 本机假主机验证：试点失败时其余主机未执行；第二批一台失败时其余完成。
 - **2026-09-19 · agent 上报在线网络的哈希（账号共享迹象 B）。** 起因：操作者要判断账号是否被多人共用（[`plan-sharing-signals`](../console/plan-sharing-signals-2026-09-19.md)）。改动：agent 每次同步用 `xray api statsgetallonlineusers` 与 `statsonlineiplist` 读取在线 IP，按 IPv4 /24、IPv6 /48 归为网络，用控制台下发的当日密钥做 HMAC，随 `/sync` 上报哈希；IP 不离开节点，探测账号不上报。节点配置不变（`statsUserOnline` 已开启），部署只重建 reporter 容器，Xray 不重启。
+- **2026-09-19 · 出口改由控制台管理，agent 在运行中切换（[`plan-egress-console`](../console/plan-egress-console-2026-09-19.md)）。**
+  起因：操作者要在控制台维护代理出口池，把出口分配给节点上的用户、网站或整台节点，出口失效时按分配回退直连或断开。改动：
+  期望状态增加 `proxy_egress`（`outbounds`、`rules`、`runtime`），来自控制台的 `node-users` 输出；应用器校验出站 tag 以 `egress-`
+  开头、协议在允许列表内，规则只含 `user`、`domain`、`ip`、`network`，用户必须是本节点的用户，出站只能是本段的出口或 `blocked`；
+  渲染时出口排在 SOCKS5 profile 之后、默认规则之前（`block-private` 与探测账号的规则仍在前面）。`runtime` 为真（节点开启同步）时，
+  只有出口不同的变更按“无需重启”处理：写入配置、不重启 Xray，由 agent 经 `xray api ado / rmo / adrules / rmrules` 在运行中生效。
+  agent（出口部分在工具镜像的 `edge_egress.py`，检测代码 `egress_probe.py` 与控制台共用、构建时从 `console/` 复制，两者计入工具镜像标签）
+  每次同步在 reporter 容器内起一个临时 Xray（只监听容器内 127.0.0.1:21000 起的端口），经每个出口访问检测地址，
+  失效时去掉该分配的规则（回退直连）或改指 `blocked`（断开），连续两次成功后恢复。`edge_user_source: console` 时 `socks5.yml` 的
+  profile 不再用于新系统节点。影响：没有出口的节点渲染结果不变；有 SOCKS5 profile 的节点（`jp10` 的 `jpntt_isp`，已失效，操作者决定
+  不导入）在下次 `edge.yml` 时去掉该 profile，Xray 重启一次；reporter 仍无 Docker 套接字、不读写配置文件。
 - **2026-09-19 · agent 上报 Xray 运行状态。** 起因：操作者同意在节点页看到 Xray 的内存与运行时长（[`review-xray-features`](../console/review-xray-features-2026-09-19.md)）。
   改动：每次上报附带 `xray api statssys` 的 `Alloc`、`Sys`、`NumGoroutine`、`Uptime`（字段 `xray`，查询失败时不带）；
   控制台显示并在 `Sys` 达到提醒值时提示。节点配置不变。

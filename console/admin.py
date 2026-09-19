@@ -6,7 +6,8 @@ import-initial FILE   On a console that has never issued a token or shown a node
 import-users FILE     On a console without users, import {"users", "node_tiers", "rules"} built by console.yml from
                       users/*.yml, the inventory groups and acl_matrix (plan-console-phase2 §3.2). Prints how each
                       registered node's deployed users differ from what the console now says (empty: equivalent).
-node-users NODE       The users that belong on NODE today, for edge.yml (contains UUIDs). Exit 3 before the import.
+node-users NODE       The users that belong on NODE today, for edge.yml (contains UUIDs), and the proxy egress the
+                      deployment writes into NODE's configuration (contains proxy credentials). Exit 3 before the import.
 """
 import argparse
 import json
@@ -14,7 +15,7 @@ import sys
 
 from subs import catalog as cat
 
-from . import config, db, publish as pub, registry as reg, users as users_mod
+from . import config, db, egress, publish as pub, registry as reg, users as users_mod
 
 
 def import_initial(settings, path):
@@ -79,7 +80,9 @@ def node_users(settings, node):
             return 3
         users = users_mod.node_users(conn, node, day)
         short_ids = [users_mod.shared_short_id(conn)]
-    print(json.dumps({"node": node, "day": day, "users": users, "short_ids": short_ids}))
+        version, payload = egress.node_payload(conn, node, [u["name"] for u in users])
+    proxy = {"version": version, "outbounds": payload["outbounds"], "rules": egress.deploy_rules(payload)}
+    print(json.dumps({"node": node, "day": day, "users": users, "short_ids": short_ids, "proxy_egress": proxy}))
     return 0
 
 

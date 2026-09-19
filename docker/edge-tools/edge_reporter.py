@@ -11,6 +11,9 @@ console's list for this node; differences are applied through the Xray API (add 
 the configuration files). It refuses an empty list and removing more than half of the users at once; those need a
 deployment (edge.yml). Users named in SYNC_KEEP (the status probe account) are never touched.
 
+Proxy egress (plan-egress-console, EGRESS_ENABLED): with each sync the agent checks the egress the console assigned to
+this node and switches them at runtime; see edge_egress.py.
+
 Online places (plan-sharing-signals §3.2): with each sync the agent reads the online IP list of each user from Xray
 and sends keyed hashes of the networks they belong to (IPv4 /24, IPv6 /48), never the addresses; the key comes from
 the console and changes every day.
@@ -30,11 +33,12 @@ Environment:
   SYNC_INTERVAL      seconds between syncs (default 60)
   SYNC_KEEP          comma-separated users the agent never adds or removes
   XHTTP_ENABLED      "true" when the node has the XHTTP inbound
+  EGRESS_ENABLED     "true" to check and switch the proxy egress the console assigns (needs SYNC_ENABLED)
   XRAY_BIN           default /usr/local/bin/xray;  XRAY_API default 127.0.0.1:10085
 
 The reporter shares Xray's network namespace. When Xray restarts, that namespace is replaced and the reporter
 loses it, so after MAX_METRICS_FAILURES failed readings in a row it exits and Docker restarts it into the new one.
-Standard library only.
+Standard library only, with edge_egress.py and egress_probe.py next to this file.
 """
 import datetime
 import hashlib
@@ -49,6 +53,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
+import edge_egress              # next to this file in the tools image
 
 SCHEMA = 1
 ERROR_TAIL_LINES = 20
@@ -461,6 +467,8 @@ class Sync:
         self.error = ""
         self.online_key = None       # from the console; today's key for hashing networks
         self.online_day = None
+        self.egress = edge_egress.Egress(cfg["xray_bin"], lambda *args, stdin=None: xray_api(cfg, *args, stdin=stdin),
+                                         SyncError, log) if cfg.get("egress_enabled") else None
 
     def running(self):
         return {tag: running_users(self.cfg, tag) for tag in inbound_tags(self.cfg)}
@@ -481,12 +489,16 @@ class Sync:
                    "running": names, "error": self.error[:200]}
         if online:
             request.update(online=online, online_day=self.online_day)
+        if self.egress:
+            request.update(self.egress.report())
         status, doc = post_json(self.cfg["sync_url"], token, request)
         if status != 200 or not isinstance(doc, dict) or not isinstance(doc.get("version"), str):
             raise SyncError(f"console answered HTTP {status}")
         key, day = doc.get("online_key"), doc.get("online_day")
         if isinstance(key, str) and ONLINE_KEY_RE.match(key) and isinstance(day, str) and ONLINE_DAY_RE.match(day):
             self.online_key, self.online_day = key, day
+        if self.egress:
+            self.egress.update(doc)
         if not doc.get("unchanged"):
             users = doc.get("users")
             if not isinstance(users, list):
@@ -531,6 +543,13 @@ class Sync:
         except (OSError, ValueError) as exc:
             self.verified, self.error = False, f"console unreachable: {type(exc).__name__}"
             log(f"sync: {self.error}")
+        if self.egress:
+            # with the last list held: a failed egress still falls back while the console is unreachable
+            try:
+                self.egress.check()
+                self.egress.apply()
+            except (SyncError, OSError, ValueError) as exc:
+                log(f"egress: {type(exc).__name__}: {str(exc)[:200]}")
         return True
 
 
@@ -550,6 +569,7 @@ def config_from_env(env):
         "sync_interval": int(env.get("SYNC_INTERVAL", "60")),
         "sync_keep": [n for n in env.get("SYNC_KEEP", "").split(",") if n],
         "xhttp": env.get("XHTTP_ENABLED", "false").lower() == "true",
+        "egress_enabled": env.get("EGRESS_ENABLED", "false").lower() == "true",
         "xray_bin": env.get("XRAY_BIN", "/usr/local/bin/xray"),
         "xray_api": env.get("XRAY_API", "127.0.0.1:10085"),
     }
