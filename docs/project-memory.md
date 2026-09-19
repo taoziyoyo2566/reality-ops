@@ -574,6 +574,12 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   `adrules -append` (ours + default) — `adrules` without `-append` replaces the whole routing table. The status service
   on spt checks unassigned egress every 10 minutes and new or changed ones every round. `edge_egress_source: files`
   goes back to the `socks5.yml` profiles and turns the agent's egress off.
+- `[实测]` 2026-09-19 after deploying `0b354d7`: all 11 agents report `egress_applied` (empty pool), no sync errors;
+  Xray restarted only on jp10 (removing `jpntt_isp`). Node clocks against spt: jp05 -73 s and jp10 -72 s with no time
+  sync service (`NTPSynchronized=no`); legend has none either but was within 2 s; the other 8 are synced
+  (systemd-timesyncd, kagoya chrony). The rendered REALITY settings have no `maxTimeDiff`, so connections are not
+  affected; times the nodes stamp themselves (report periods, the Xray restart time) are off by that much. Turning
+  on time sync on those hosts is a host change awaiting the operator's decision.
 - `[实测]` 2026-09-19 local spike with the pinned Xray: a runtime rule sent one user through a SOCKS outbound while
   another stayed direct; pointing it at `blocked` cut that user off; removing it returned to direct; an Xray restart
   dropped the runtime rules (the agent puts them back at the next sync).

@@ -537,8 +537,8 @@ AND 没有优先级更高的显式拒绝
 | S7 新系统扩展与用户迁移 | 节点 11/12 台；用户迁移做法已定，未开始发放 | 2026-09-19 全部 `edge_nodes` 已部署（新增 netcup、ams、dcc、jp05、hk01、hk02、jp10，jp05 的旧实例已移除）；新节点尚未在订阅中显示；`spt` 为控制端不部署。用户迁移按 [`plan-user-migration`](console/plan-user-migration-2026-09-19.md)：旧系统不动、以 Telegram 为主、首页显示迁移进度；进度功能本地验证完成待部署，第一批试点名单待定 |
 | S8 功能演进 | 出站竞速试点中 | `usca`、`legend` 已启用；“IPv4 变慢时选 IPv6”尚未观察到 |
 | P2 控制台第二阶段 | 2a、2b、2c 已上线 | [`plan-console-phase2`](console/plan-console-phase2-2026-09-18.md)（2026-09-18 批准，D-P2-1～D-P2-9）：2a 网页管理用户已上线（2026-09-19，33 人导入，11 台节点名单一致）；2b 节点自动生效已上线（2026-09-19，11 台节点均已同步，网页上的用户变化约一分钟内到节点）；2c Telegram bot 已上线（2026-09-19，测试用户经 bot 取到地址并在客户端导入；[`runbooks/telegram-bot.md`](../runbooks/telegram-bot.md)） |
-| 账号共享迹象 | 本地验证完成，待部署 | [`plan-sharing-signals`](console/plan-sharing-signals-2026-09-19.md)：订阅拉取来源、同时在线处数（提醒阈值 3 处）；随同一批上线 Xray 运行状态上报（[`review-xray-features`](console/review-xray-features-2026-09-19.md)）；控制台端到端 75/75 |
-| 出口管理 | 第一期本地验证完成，待部署 | [`plan-egress-console`](console/plan-egress-console-2026-09-19.md)：出口池存在控制台数据库（不写死在代码与部署配置），显示可用状态与出口 IP；按节点和用户分配，运行中生效不重启 Xray；出口失效时按开关回退直连或断开；类型按注册表扩展，第一期 SOCKS5。控制台端到端 93/93（两个测试 SOCKS5：分配、回退直连、断开、恢复、取消分配，Xray 未重启）；操作步骤见 `operations.md` §14.13 |
+| 账号共享迹象 | 已部署（2026-09-19），等真实用户在线后核对处数 | [`plan-sharing-signals`](console/plan-sharing-signals-2026-09-19.md)：订阅拉取来源、同时在线处数（提醒阈值 3 处）；随同一批上线 Xray 运行状态上报（[`review-xray-features`](console/review-xray-features-2026-09-19.md)）；控制台端到端 75/75 |
+| 出口管理 | 第一期已部署（2026-09-19），出口池为空，待加入真实出口核对出口 IP | [`plan-egress-console`](console/plan-egress-console-2026-09-19.md)：出口池存在控制台数据库（不写死在代码与部署配置），显示可用状态与出口 IP；按节点和用户分配，运行中生效不重启 Xray；出口失效时按开关回退直连或断开；类型按注册表扩展，第一期 SOCKS5。控制台端到端 93/93（两个测试 SOCKS5：分配、回退直连、断开、恢复、取消分配，Xray 未重启）；操作步骤见 `operations.md` §14.13 |
 | P3–P4 控制台后续阶段 | 未计划 | 依赖关系见 §7.0 |
 
 2026-09-15 按决定 8 调整顺序：S3 数据面新实例先由新的 Ansible 实现落地并验证，不等待 S2；
