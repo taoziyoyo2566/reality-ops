@@ -578,8 +578,12 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   Xray restarted only on jp10 (removing `jpntt_isp`). Node clocks against spt: jp05 -73 s and jp10 -72 s with no time
   sync service (`NTPSynchronized=no`); legend has none either but was within 2 s; the other 8 are synced
   (systemd-timesyncd, kagoya chrony). The rendered REALITY settings have no `maxTimeDiff`, so connections are not
-  affected; times the nodes stamp themselves (report periods, the Xray restart time) are off by that much. Turning
-  on time sync on those hosts is a host change awaiting the operator's decision.
+  affected; times the nodes stamp themselves (report periods, the Xray restart time) are off by that much.
+- `[实测]` 2026-09-19, operator-approved: installed `systemd-timesyncd` (252.39-1~deb12u2, the only package; nothing
+  upgraded or removed) on jp05, jp10 and legend, all KVM with Debian 12 and no time sync package. Offsets against spt
+  went from -73.2 / -71.5 / +1.9 s to +0.7 / +0.7 / +1.7 s, synced from `0.debian.pool.ntp.org`; no container
+  restarted (Xray, agent and the old system's `reality_core` kept running). `timedatectl show-timesync` hangs on these
+  hosts; the journal shows the server. Procedure: [`runbooks/node-time-sync.md`](runbooks/node-time-sync.md).
 - `[实测]` 2026-09-19 local spike with the pinned Xray: a runtime rule sent one user through a SOCKS outbound while
   another stayed direct; pointing it at `blocked` cut that user off; removing it returned to direct; an Xray restart
   dropped the runtime rules (the agent puts them back at the next sync).

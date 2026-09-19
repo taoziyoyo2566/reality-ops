@@ -566,6 +566,8 @@ $PB subs.yml                    # 订阅服务只负责部署，把数据目录�
 $PB console.yml                 # 部署控制台；首次运行导入 console_initial_shown_nodes 并发布一次（§14.7）
 ```
 
+新节点加入 `edge_nodes` 前，按 [`runbooks/node-time-sync.md`](runbooks/node-time-sync.md) 检查时钟是否已同步。
+
 前提：Cloudflare 上 `report.taoziyoyo.com` 的路由在**控制台自己的隧道**里、指向 `http://report:8201`（不要加在订阅服务的隧道上），
 隧道 token 已写入 vault 的 `vault_console_tunnel_token`。新建隧道、写入 token、移动路由、轮换与删除的步骤见
 [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md)。
@@ -662,6 +664,7 @@ docker run --rm -v "$PWD":/repo:ro -w /repo --user 10001:10001 -e PYTHONDONTWRIT
 | 首页“节点 X 用户同步失败：refusing …” | agent 拒绝了一次删除超过一半用户或空名单的变更；确认控制台里的用户无误后运行 `edge.yml` 应用 |
 | 首页“节点 X 的用户同步超过 5 分钟没有联系控制台” | 节点上 `sudo docker logs --tail 20 xray_edge_reporter`；HTTP 401 表示登记的 token 与节点不一致，运行 `edge.yml`；刚部署的节点第一次联系会 401，5 分钟内自动重试 |
 | 首页“出口 X 在节点 Y 上不可用” | 出口详情页看各检测方的结果与错误：spt 也失败时是代理本身的问题（停用、换账号或换出口）；只有该节点失败时查代理是否限制来源 IP、节点能否连到代理（§14.13） |
+| 控制台显示的节点时间（上报周期、Xray 重启时间）与实际差很多 | 节点时钟没有同步：按 [`runbooks/node-time-sync.md`](runbooks/node-time-sync.md) 检查并安装校时服务 |
 | 某节点状态一直失败，但用户能连 | 节点页“状态检测”是否为“已加入探测账号”；未加入或登记文件较旧时对该节点运行 `edge.yml`（§14.8） |
 
 ### 14.7 首次导入、订阅 token 的保存与恢复
