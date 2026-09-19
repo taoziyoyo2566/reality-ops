@@ -25,7 +25,8 @@ from subs import statuspage
 
 from . import config, db, publish as pub, queries, registry as reg, status as stat, users as users_mod
 
-POLL_TIMEOUT = 50
+# From spt, a poll idle for about 30 s is usually cut by a connection reset (2026-09-19); stay well below that.
+POLL_TIMEOUT = 20
 HEALTHY_SECONDS = 180
 CONFIRM_SECONDS = 600
 RATE_LIMIT = 20                      # messages and button presses per sender per minute; the rest is ignored

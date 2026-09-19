@@ -514,6 +514,9 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
 - `[实测]` 2026-09-19 local, 2c: `tests/console/test_bot.py` 22/22, compose 13/13, console unit tests 20 + 35 + 15 + 5;
   console e2e 72/72 with the bot container against `tests/console/fake_telegram.py` on the egress network. The bot
   container used about 17 MiB. `spt` reached `api.telegram.org` directly (HTTP 302 in 0.4 s, plan §5 item 5).
+- `[实测]` 2026-09-19 live on `spt` (bot deployed 2026-09-18 17:35Z, one administrator): with 50 s long polls the bot
+  logged 370 `getUpdates: ConnectionResetError` in 10.5 h (30-40 per hour); the resets landed about 30-35 s into a
+  poll. The poll timeout is now 20 s. Where the reset comes from (a device on the path or Telegram's side) is `[未知]`.
 - `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while
