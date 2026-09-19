@@ -330,18 +330,21 @@ class Bot:
     def cmd_reset(self, conn, chat_id, user):
         if user["name"] not in db.tokens(conn):
             return self.send(chat_id, "你还没有订阅地址，不需要重置。")
-        self.ask(chat_id, "重置后旧地址立即失效，所有设备都要重新导入新地址。确定重置吗？",
+        self.ask(chat_id, "重置会同时更换地址和连接凭据：旧地址立即失效，用旧地址导入的节点约一分钟内无法连接，"
+                          "所有设备都要重新导入新地址。确定重置吗？",
                  "reset", user["name"], user["telegram_id"], "确认重置")
 
     def do_reset(self, conn, where, uid, user):
         name = user["name"]
         if name not in db.tokens(conn):
             return self.api.call("editMessageText", text="你还没有订阅地址。", **where)
-        db.rotate_token(conn, name, pub.new_token())
+        with db.transaction(conn):
+            db.rotate_token(conn, name, pub.new_token())
+            users_mod.rotate_credentials(conn, name)
         ok, _ = self.publish(conn, f"rotate {name}", "rotate", name, f"Telegram {uid}（{name}）")
         if not ok:
             return self.api.call("editMessageText", text="已重置，但订阅发布失败，新地址暂时不能使用。请联系管理员。", **where)
-        self.api.call("editMessageText", text="已重置，旧地址已失效。新地址如下：", **where)
+        self.api.call("editMessageText", text="已重置：旧地址已失效，旧节点约一分钟内停止连接。新地址如下（导入后约一分钟可用）：", **where)
         self.send_address(where["chat_id"], db.tokens(conn)[name])
 
     def cmd_unbind(self, conn, chat_id, user):

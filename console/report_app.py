@@ -101,7 +101,11 @@ def create_app(settings):
         except (ValueError, TypeError) as exc:
             return reply(400, error=str(exc)[:200])
         with db.connect(settings.db_path) as conn:
-            stored = reports.store(conn, node, doc)
+            # a syncing node also carries the users its agent added since the last deployment (plan-console-phase2 §3.3)
+            carried = set(node.users)
+            if node.sync:
+                carried |= set((users.sync_rows(conn).get(node.name) or {}).get("running") or [])
+            stored = reports.store(conn, node, doc, users=carried)
             if doc["seq"] % 288 == 0:
                 db.purge(conn)
         return reply(200 if stored else 409, stored=stored)

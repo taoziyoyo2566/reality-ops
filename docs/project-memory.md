@@ -539,6 +539,11 @@ Contract: [`plan-console-phase2`](reviews/console/plan-console-phase2-2026-09-18
   cell per round over the last hour: ok / partial / outage / nodata / maintenance with the failed transports);
   both optional in `subs/statuspage.validate`. `status.latency_hours` feeds the admin page only. With live data
   one build took about 70 ms and `status.json` was about 45 KiB for 11 nodes.
+- `[实测]` 2026-09-19: `test02` (created in the console after the 2b rollout, added by the agents) had no traffic
+  rows although 7 nodes reported it: `reports.store` only counted users in the registration file. The report
+  route now also counts the users a syncing node's agent last reported running. Resetting an address also
+  rotates the user's UUID (`users.rotate_credentials`), because imported configurations kept working with the
+  old UUID after a reset.
 - `[未知]` Whether the old system's configuration has the same loopback-through-domain path.
   Tunnel procedures: [`runbooks/cloudflare-tunnels.md`](runbooks/cloudflare-tunnels.md).
 - Rollout order when authorized: `edge.yml` on dzire, usca, legend, kagoya (registers them; no Xray restart while

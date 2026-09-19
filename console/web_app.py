@@ -589,7 +589,10 @@ def create_app(settings, start_watcher=True, csrf_secret=None, status_settings=N
             elif action == "rotate":
                 if not existing:
                     return back(f"/users/{name}")
-                db.rotate_token(conn, name, pub.new_token())
+                with db.transaction(conn):
+                    db.rotate_token(conn, name, pub.new_token())
+                    if users_mod.get(conn, name):         # the address and the credentials it carried
+                        users_mod.rotate_credentials(conn, name)
             elif action == "revoke":
                 if data.get("confirm") != name:
                     return back(f"/users/{name}")

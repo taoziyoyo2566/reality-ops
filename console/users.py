@@ -275,6 +275,13 @@ def update(conn, name, fields):
     return get(conn, name)
 
 
+def rotate_credentials(conn, name):
+    """A new UUID for the user. Syncing nodes replace it within about a minute, so configurations imported from an
+    old subscription address stop connecting; the short id stays."""
+    _require(get(conn, name) is not None, f"没有用户 {name}")
+    conn.execute("UPDATE users SET uuid = ?, updated_at = ? WHERE name = ?", (str(uuidlib.uuid4()), db.now(), name))
+
+
 def set_status(conn, name, status):
     _require(status in STATUSES, "状态不合法")
     _require(get(conn, name) is not None, f"没有用户 {name}")

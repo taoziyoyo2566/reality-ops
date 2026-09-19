@@ -191,10 +191,14 @@ class UserCommandTest(unittest.TestCase):
     def test_reset_rotates_publishes_and_sends_the_new_address(self):
         self.env.issue("alice")
         before = self.env.token("alice")
+        with self.env.conn() as conn:
+            uuid_before = users.get(conn, "alice")["uuid"]
         self.assertIn("确定重置吗", self.env.say(ALICE, "/reset"))
         self.env.press(ALICE)
         after = self.env.token("alice")
         self.assertNotEqual(before, after)
+        with self.env.conn() as conn:
+            self.assertNotEqual(users.get(conn, "alice")["uuid"], uuid_before)      # the credentials, too
         self.assertIn(after, self.env.api.sent(ALICE)[-1])
         catalog, tokens = self.env.published()
         self.assertIn("alice", catalog["users"])

@@ -17,7 +17,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from console import db, registry as reg, report_app, users, web_app  # noqa: E402
-from test_console import PBK_A, PBK_B, REPORT_TOKENS, Env, Server  # noqa: E402
+from test_console import PBK_A, PBK_B, REPORT_TOKENS, Env, Server, report_doc  # noqa: E402
 from test_users import import_doc  # noqa: E402
 
 
@@ -140,6 +140,55 @@ class EffectiveUsersTest(unittest.TestCase):
                 self.assertIn("节点 alpha 用户同步失败：refusing an empty user list", srv.request("GET", "/")[1])
                 node_page = srv.request("GET", "/nodes/alpha")[1]
                 self.assertIn("需要运行 <code>edge.yml</code> 后才能加入：dave", node_page)
+
+
+class AgentAddedUsersTest(unittest.TestCase):
+    """Users the agent added after the last deployment are not in the registration file."""
+
+    def setUp(self):
+        self.env = SyncEnv()
+        with self.env.conn() as conn:
+            self.carol = users.create(conn, "carol", users.clean_fields(["all"], [], [], "", ""))
+            conn.execute("INSERT INTO tokens (user, token, issued_at) VALUES ('carol', ?, 1)", ("c" * 43,))
+        with Server(report_app.create_app(self.env.settings)) as srv:
+            body = self.env.post(srv, {"running": ["alice", "test"]})[1]
+            self.env.post(srv, {"applied": body["version"], "running": ["alice", "carol", "test"]})
+
+    def tearDown(self):
+        self.env.close()
+
+    def test_their_traffic_is_counted(self):
+        doc = report_doc("alpha", traffic={"carol": {"up": 10, "down": 20}, "zed": {"up": 1, "down": 1},
+                                           "alice": {"up": 1, "down": 2}})
+        with Server(report_app.create_app(self.env.settings)) as srv:
+            status, _, _ = srv.request("POST", "/report", json.dumps(doc).encode(), {
+                "Authorization": f"Bearer {REPORT_TOKENS['alpha']}", "Content-Type": "application/json"})
+        self.assertEqual(status, 200)
+        with self.env.conn() as conn:
+            rows = {r["user"]: (r["up"], r["down"]) for r in conn.execute("SELECT * FROM traffic_daily WHERE node = 'alpha'")}
+        self.assertEqual(rows, {"carol": (10, 20), "alice": (1, 2)})         # zed is on no list: left out
+
+    def test_resetting_the_address_replaces_the_credentials(self):
+        app = web_app.create_app(self.env.settings, start_watcher=False, csrf_secret=b"k" * 32)
+        csrf = hmac.new(b"k" * 32, b"console-form", hashlib.sha256).hexdigest()
+        with self.env.conn() as conn:
+            before = users.node_payload(conn, reg.Registry(self.env.dirs["registry"]).current()[0]["alpha"],
+                                        users.today(8))
+        with Server(app) as srv:
+            status = srv.request("POST", "/users/carol/rotate", f"csrf={csrf}".encode(),
+                                 {"Content-Type": "application/x-www-form-urlencoded"})[0]
+        self.assertEqual(status, 303)
+        with self.env.conn() as conn:
+            carol = users.get(conn, "carol")
+            token = db.tokens(conn)["carol"]
+            after = users.node_payload(conn, reg.Registry(self.env.dirs["registry"]).current()[0]["alpha"],
+                                       users.today(8))
+        self.assertNotEqual(carol["uuid"], self.carol["uuid"])
+        self.assertNotEqual(token, "c" * 43)
+        self.assertNotEqual(before[0], after[0])                                 # the agent gets a new list
+        self.assertIn({"name": "carol", "uuid": carol["uuid"], "short_id": carol["short_id"]}, after[1])
+        catalog, tokens = self.env.published()
+        self.assertEqual(catalog["users"]["carol"]["nodes"]["alpha"]["uuid"], carol["uuid"])
 
 
 class RegistryTest(unittest.TestCase):

@@ -62,11 +62,13 @@ def validate(doc, node):
     return doc
 
 
-def store(conn, node, doc, received_at=None):
+def store(conn, node, doc, received_at=None, users=None):
     """Store one validated report; returns False when it was already stored.
 
     Sequence numbers are per reporter instance: a reporter that lost its spool starts a new instance at 1.
+    Traffic counts for `users` (default: the node's registered users); users a node no longer carries are left out.
     """
+    users = set(node.users) if users is None else set(users)
     received_at = received_at or db.now()
     with db.transaction(conn):
         cur = conn.execute("INSERT OR IGNORE INTO report_seq (node, instance, seq, received_at) VALUES (?, ?, ?, ?)",
@@ -75,7 +77,7 @@ def store(conn, node, doc, received_at=None):
             return False
         day = doc["period"]["to"][:10]
         for user, inc in doc["traffic"].items():
-            if user not in node.users:
+            if user not in users:
                 continue  # counters for users this node no longer carries are not attributed
             conn.execute(
                 "INSERT INTO traffic_daily (day, node, user, up, down) VALUES (?, ?, ?, ?, ?) "

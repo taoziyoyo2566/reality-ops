@@ -18,7 +18,7 @@
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <button>重置地址</button>
 </form>
-<span class="muted">重置后旧地址立即失效，用户需要重新导入。</span>
+<span class="muted">重置会同时更换地址和连接凭据：旧地址立即失效，用旧地址导入的节点约一分钟内无法连接，用户需要重新导入新地址。</span>
 <form method="post" action="/users/{{ name }}/revoke" style="margin-top:12px">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <input type="text" name="confirm" placeholder="输入用户名 {{ name }} 以确认" autocomplete="off">
